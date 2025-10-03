@@ -1,0 +1,28 @@
+# Build output
+bin/
+obj/
+
+# User-specific
+*.user
+*.userosscache
+*.suo
+*.swp
+*.swo
+.vs/
+
+# Dotnet
+*.dbmdl
+*.pdb
+*.cache
+TestResult*
+TestResults/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Tooling
+*.local.history
