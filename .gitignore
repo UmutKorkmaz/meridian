@@ -9,6 +9,9 @@ obj/
 *.swp
 *.swo
 .vs/
+.vscode/
+.idea/
+*.code-workspace
 
 # Dotnet
 *.dbmdl
