@@ -17,8 +17,11 @@ obj/
 *.dbmdl
 *.pdb
 *.cache
+*.nupkg
+*.snupkg
 TestResult*
 TestResults/
+artifacts/
 
 # OS junk
 .DS_Store
