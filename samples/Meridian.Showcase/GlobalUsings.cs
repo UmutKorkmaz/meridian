@@ -1,0 +1,9 @@
+global using Meridian.Mapping;
+global using Meridian.Mediator;
+global using Meridian.Mediator.Behaviors;
+global using Meridian.Mediator.Extensions;
+global using Meridian.Mediator.Streaming;
+global using Meridian.Mediator.Publishing;
+global using Meridian.Mapping.Converters;
+global using Meridian.Mapping.Execution;
+global using Meridian.Mapping.Configuration;

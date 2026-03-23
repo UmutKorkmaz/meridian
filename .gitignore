@@ -1,0 +1,34 @@
+# Build output
+bin/
+obj/
+
+# User-specific
+*.user
+*.userosscache
+*.suo
+*.swp
+*.swo
+.vs/
+.vscode/
+.idea/
+*.code-workspace
+
+# Dotnet
+*.dbmdl
+*.pdb
+*.cache
+*.nupkg
+*.snupkg
+TestResult*
+TestResults/
+artifacts/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Tooling
+*.local.history
