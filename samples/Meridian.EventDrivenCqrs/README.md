@@ -13,7 +13,7 @@ It demonstrates:
 - command/query handlers with cache invalidation
 - notification-based read model maintenance
 - stream request projection
-- transient validation and retry-friendly behaviors
+- transient validation plus logging and caching behaviors
 
 Run:
 

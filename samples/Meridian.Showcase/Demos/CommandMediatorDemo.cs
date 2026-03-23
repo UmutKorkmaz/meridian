@@ -49,7 +49,7 @@ public static class CommandMediatorDemo
 
         Console.WriteLine($"Command => {first.OrderId}:{first.Message}");
         Console.WriteLine($"Idempotency => Handler executed {PlaceOrderHandler.ExecutionCount} time(s)");
-        Console.WriteLine($"Cached response reused => {first.OrderId == second.OrderId}");
+        Console.WriteLine($"Idempotent response reused => {first.OrderId == second.OrderId}");
         Console.WriteLine();
     }
 }
