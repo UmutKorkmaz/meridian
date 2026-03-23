@@ -25,8 +25,11 @@ public class MeridianMediatorConfiguration
     internal List<Type> OpenStreamBehaviors { get; } = new();
     internal List<Type> PreProcessorTypes { get; } = new();
     internal List<Type> PostProcessorTypes { get; } = new();
+    internal List<Assembly> FluentValidationAssembliesToScan { get; } = new();
     internal bool RegisterPreProcessorBehavior { get; private set; }
     internal bool RegisterPostProcessorBehavior { get; private set; }
+    internal bool EnableHandlerDiagnostics { get; private set; }
+    internal bool ThrowOnStartupHandlerValidationFailure { get; private set; }
 
     /// <summary>
     /// Gets or sets the notification publisher instance. If set, this takes precedence over <see cref="NotificationPublisherType"/>.
@@ -58,6 +61,29 @@ public class MeridianMediatorConfiguration
     public MeridianMediatorConfiguration RegisterServicesFromAssemblyContaining<T>()
     {
         return RegisterServicesFromAssembly(typeof(T).Assembly);
+    }
+
+    /// <summary>
+    /// Registers all <see cref="global::FluentValidation.IValidator{T}"/> validators from the given assembly
+    /// and wires Meridian adapters for request validation compatibility.
+    /// </summary>
+    /// <param name="assembly">The assembly to scan.</param>
+    /// <returns>This configuration instance for fluent chaining.</returns>
+    public MeridianMediatorConfiguration AddFluentValidationFromAssembly(Assembly assembly)
+    {
+        FluentValidationAssembliesToScan.Add(assembly);
+        return this;
+    }
+
+    /// <summary>
+    /// Registers all <see cref="global::FluentValidation.IValidator{T}"/> validators from the assembly containing
+    /// the specified type.
+    /// </summary>
+    /// <typeparam name="T">A type in the target assembly.</typeparam>
+    /// <returns>This configuration instance for fluent chaining.</returns>
+    public MeridianMediatorConfiguration AddFluentValidationFromAssemblyContaining<T>()
+    {
+        return AddFluentValidationFromAssembly(typeof(T).Assembly);
     }
 
     /// <summary>
@@ -278,6 +304,20 @@ public class MeridianMediatorConfiguration
     public MeridianMediatorConfiguration AddIdempotencyBehavior(int order = 0)
     {
         OpenBehaviors.Add((typeof(IdempotencyBehavior<,>), order));
+        return this;
+    }
+
+    /// <summary>
+    /// Enables request/response registration diagnostics at service-registration time.
+    /// When enabled, startup logs diagnostics for unresolved handlers discovered in scanned assemblies.
+    /// Optionally throws on missing request handlers when <paramref name="throwOnFailure"/> is true.
+    /// </summary>
+    /// <param name="throwOnFailure">Throws <see cref="InvalidOperationException"/> when request-handler diagnostics fail.</param>
+    /// <returns>This configuration instance for fluent chaining.</returns>
+    public MeridianMediatorConfiguration AddStartupDiagnostics(bool throwOnFailure = false)
+    {
+        EnableHandlerDiagnostics = true;
+        ThrowOnStartupHandlerValidationFailure = throwOnFailure;
         return this;
     }
 }

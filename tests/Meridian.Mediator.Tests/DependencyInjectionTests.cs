@@ -62,6 +62,8 @@ public class GenericWorkflowCommandHandler<TRequest, TResponse>
     }
 }
 
+public record StartupDiagnosticMissingRequest(int Value) : IRequest<int>;
+
 #endregion
 
 [Collection("Pipeline")]
@@ -242,5 +244,58 @@ public class DependencyInjectionTests
         Assert.NotNull(result);
         Assert.Equal(42, result.Data);
         Assert.True(result.Success);
+    }
+
+    [Fact]
+    public async Task OpenGenericHandler_Is_AutoRegistered_ByAssemblyScanning()
+    {
+        var services = new ServiceCollection();
+        services.AddMeridianMediator(cfg =>
+        {
+            cfg.RegisterServicesFromAssemblyContaining<DependencyInjectionTests>();
+        });
+
+        var provider = services.BuildServiceProvider();
+        var mediator = provider.GetRequiredService<IMediator>();
+
+        var commandType = typeof(GenericWorkflowCommand<,>).MakeGenericType(typeof(string), typeof(string));
+        var command = Activator.CreateInstance(commandType)!;
+        commandType.GetProperty("Payload")!.SetValue(command, "from-scan");
+
+        var result = await mediator.Send(command);
+
+        Assert.NotNull(result);
+        var resultType = result.GetType();
+        Assert.Equal(typeof(GenericWorkflowResult<string>), resultType);
+        Assert.Equal("from-scan", resultType.GetProperty("Data")!.GetValue(result));
+        Assert.True((bool)resultType.GetProperty("Success")!.GetValue(result)!);
+    }
+
+    [Fact]
+    public void AddMeridianMediator_WithStartupDiagnostics_UsesScannedAssemblies()
+    {
+        var services = new ServiceCollection();
+        services.AddMeridianMediator(cfg =>
+        {
+            cfg.RegisterServicesFromAssemblyContaining<DependencyInjectionTests>();
+            cfg.AddStartupDiagnostics();
+        });
+
+        var provider = services.BuildServiceProvider();
+        Assert.NotNull(provider.GetService<IMediator>());
+    }
+
+    [Fact]
+    public void AddMeridianMediator_WithStartupDiagnostics_Throws_WhenRequiredHandlerMissing_And_Strict()
+    {
+        Assert.Throws<InvalidOperationException>(() =>
+        {
+            var services = new ServiceCollection();
+            services.AddMeridianMediator(cfg =>
+            {
+                cfg.RegisterServicesFromAssemblyContaining<DependencyInjectionTests>();
+                cfg.AddStartupDiagnostics(throwOnFailure: true);
+            });
+        });
     }
 }

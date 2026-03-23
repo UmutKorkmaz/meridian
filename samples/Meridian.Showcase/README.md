@@ -1,6 +1,19 @@
 # Meridian Showcase
 
-Run the sample from the repository root:
+This sample is a full feature-oriented demonstration of both Mapping and Mediator capabilities.
+
+- Mapping (`MappingDemo`): `Profile`, `ForAllOtherMembers`, `IMemberValueResolver`, `IncludeMembers`, `ReverseMap`, `ProjectTo`
+- Mediator query demo (`QueryMediatorDemo`): validation, logging, retry, caching, and correlation
+- Mediator command demo (`CommandMediatorDemo`): validation, logging, transaction, authorization, idempotency, cache invalidation
+- Notifications demo (`NotificationMediatorDemo`): resilient publisher type with handler failure handling
+- Streaming demo (`StreamingMediatorDemo`): open stream behavior
+
+Folders:
+
+- `Demos` contains one file per demo (mapping/query/command/notification/streaming)
+- `Shared` contains transport and domain model support
+
+Run from repository root:
 
 ```bash
 dotnet run --project samples/Meridian.Showcase
