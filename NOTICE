@@ -1,0 +1,28 @@
+Meridian Third-Party Notices
+Copyright (c) 2026 Meridian Contributors
+
+This repository includes two NuGet packages:
+- Meridian.Mapping
+- Meridian.Mediator
+
+The Meridian source code is licensed under the MIT License. See the LICENSE
+file in the repository root for the full license text.
+
+This notice lists the direct third-party package dependencies declared in the
+package project files at the time of publication. Transitive dependencies are
+not exhaustively listed here and may vary by target framework, SDK, or package
+resolution at restore time.
+
+Direct package dependencies
+
+Meridian.Mapping
+- Microsoft.Extensions.DependencyInjection.Abstractions 10.0.3 (MIT)
+
+Meridian.Mediator
+- FluentValidation 12.0.0 (Apache-2.0)
+- Microsoft.Extensions.DependencyInjection 10.0.3 (MIT)
+- Microsoft.Extensions.DependencyInjection.Abstractions 10.0.3 (MIT)
+
+Upstream packages remain subject to their own license terms, notices, and
+attribution requirements. Consumers should review the licenses of all direct
+and transitive dependencies in their final distribution as appropriate.
