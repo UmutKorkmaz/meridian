@@ -106,4 +106,4 @@ Package versions are derived from git release tags via MinVer.
 
 ## Notes
 
-- `Meridian` aims to provide familiar APIs for users moving from MediatR/AutoMapper patterns, while keeping dependencies small and explicit.
+- `Meridian` keeps the API surface small, the package footprint lean, and the setup explicit.
