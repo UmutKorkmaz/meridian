@@ -1,10 +1,7 @@
 using System.Reflection;
-using System.Text;
-using Meridian.Mediator.Behaviors;
 using Meridian.Mediator.Pipeline;
 using Meridian.Mediator.Publishing;
 using Meridian.Mediator.Streaming;
-using Meridian.Mediator.Wrappers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 
@@ -37,6 +34,7 @@ public static class ServiceCollectionExtensions
         });
         services.TryAddTransient<ISender>(sp => sp.GetRequiredService<IMediator>());
         services.TryAddTransient<IPublisher>(sp => sp.GetRequiredService<IMediator>());
+        services.TryAddTransient<IStreamSender>(sp => sp.GetRequiredService<IMediator>());
 
         // Register notification publisher if configured as a type
         if (config.NotificationPublisherType != null)
@@ -45,23 +43,9 @@ public static class ServiceCollectionExtensions
         }
 
         // Scan assemblies for handlers
-        var handlerAssemblies = config.AssembliesToScan.Distinct().ToArray();
-        var openRequestHandlerRegistry = new OpenRequestHandlerRegistry();
-        foreach (var assembly in handlerAssemblies)
+        foreach (var assembly in config.AssembliesToScan.Distinct())
         {
-            RegisterHandlersFromAssembly(services, assembly, openRequestHandlerRegistry, config.Lifetime);
-        }
-        if (openRequestHandlerRegistry.HasEntries)
-        {
-            services.AddSingleton(openRequestHandlerRegistry);
-            services.AddTransient(typeof(IRequestHandler<,>), typeof(OpenRequestHandlerAdapter<,>));
-        }
-
-        // Register FluentValidation adapters only when explicitly requested.
-        if (config.FluentValidationAssembliesToScan.Count > 0)
-        {
-            var fluentValidationAssemblies = config.FluentValidationAssembliesToScan.Distinct().ToArray();
-            RegisterFluentValidationAdapters(services, fluentValidationAssemblies);
+            RegisterHandlersFromAssembly(services, assembly, config.Lifetime);
         }
 
         // Register closed pipeline behaviors (sorted by order, then registration sequence)
@@ -109,11 +93,6 @@ public static class ServiceCollectionExtensions
             services.AddTransient(typeof(IPipelineBehavior<,>), typeof(RequestPostProcessorBehavior<,>));
         }
 
-        if (config.EnableHandlerDiagnostics)
-        {
-            ValidateHandlersAtStartup(services, handlerAssemblies, config.ThrowOnStartupHandlerValidationFailure);
-        }
-
         return services;
     }
 
@@ -132,11 +111,7 @@ public static class ServiceCollectionExtensions
         return new ForeachAwaitPublisher();
     }
 
-    private static void RegisterHandlersFromAssembly(
-        IServiceCollection services,
-        Assembly assembly,
-        OpenRequestHandlerRegistry openRequestHandlerRegistry,
-        ServiceLifetime lifetime = ServiceLifetime.Transient)
+    private static void RegisterHandlersFromAssembly(IServiceCollection services, Assembly assembly, ServiceLifetime lifetime = ServiceLifetime.Transient)
     {
         var handlerInterfaceTypes = new[]
         {
@@ -158,34 +133,38 @@ public static class ServiceCollectionExtensions
 
         foreach (var type in assembly.GetTypes().Where(t => t is { IsAbstract: false, IsInterface: false }))
         {
+            // Skip open generic type definitions — they cannot be resolved by MSDI's
+            // built-in open generic support for complex nested generic mappings.
+            // Projects with open generic handlers (e.g. workflow / saga / batch
+            // request patterns) must register closed constructions manually using
+            // MakeGenericType at startup. This matches MediatR 12.x behavior.
+            if (type.IsGenericTypeDefinition)
+                continue;
+
             foreach (var interfaceType in type.GetInterfaces())
             {
                 if (!interfaceType.IsGenericType) continue;
+
+                // Also skip interfaces with unresolved type parameters (partially-closed generics)
+                // which occur when a non-generic-definition type inherits from a generic base
+                // that leaves type parameters open.
+                if (interfaceType.ContainsGenericParameters)
+                    continue;
 
                 var genericDef = interfaceType.GetGenericTypeDefinition();
 
                 // Register request handlers
                 if (handlerInterfaceTypes.Contains(genericDef))
                 {
-                    if (genericDef == typeof(IRequestHandler<,>) &&
-                        interfaceType.ContainsGenericParameters &&
-                        type.IsGenericTypeDefinition)
+                    var descriptor = new ServiceDescriptor(interfaceType, type, lifetime);
+                    if (genericDef == typeof(INotificationHandler<>))
                     {
-                        openRequestHandlerRegistry.Add(type, interfaceType);
-                        continue;
+                        services.TryAddEnumerable(descriptor);
                     }
-
-                    if (!interfaceType.ContainsGenericParameters)
+                    else
                     {
-                        RegisterRequestHandler(services, interfaceType, type, genericDef, lifetime);
+                        services.TryAdd(descriptor);
                     }
-
-                    continue;
-                }
-
-                if (interfaceType.ContainsGenericParameters)
-                {
-                    continue;
                 }
 
                 // Register pipeline-related types
@@ -195,125 +174,6 @@ public static class ServiceCollectionExtensions
                 }
             }
         }
-    }
-
-    private static void RegisterRequestHandler(
-        IServiceCollection services,
-        Type serviceType,
-        Type implementationType,
-        Type handlerInterfaceType,
-        ServiceLifetime lifetime)
-    {
-        var descriptor = new ServiceDescriptor(serviceType, implementationType, lifetime);
-        if (handlerInterfaceType == typeof(INotificationHandler<>))
-        {
-            services.TryAddEnumerable(descriptor);
-            return;
-        }
-
-        services.TryAdd(descriptor);
-    }
-
-    private static void RegisterFluentValidationAdapters(IServiceCollection services, IEnumerable<Assembly> assemblies)
-    {
-        var fluentValidatorInterface = typeof(global::FluentValidation.IValidator<>);
-        var hasFluentValidators = false;
-
-        foreach (var assembly in assemblies.Distinct())
-        {
-            foreach (var type in assembly.GetTypes().Where(t => t is { IsAbstract: false, IsInterface: false }))
-            {
-                var hasValidatorInterface = false;
-                foreach (var iface in type.GetInterfaces())
-                {
-                    if (iface.IsGenericType && iface.GetGenericTypeDefinition() == fluentValidatorInterface)
-                    {
-                        services.AddTransient(iface, type);
-                        hasValidatorInterface = true;
-                    }
-                }
-
-                if (hasValidatorInterface)
-                {
-                    hasFluentValidators = true;
-                }
-            }
-        }
-
-        if (hasFluentValidators)
-        {
-            services.TryAddEnumerable(ServiceDescriptor.Transient(typeof(IValidator<>), typeof(FluentValidationAdapter<>)));
-        }
-    }
-
-    private static void ValidateHandlersAtStartup(
-        IServiceCollection services,
-        Assembly[] handlerAssemblies,
-        bool throwOnFailure)
-    {
-        if (handlerAssemblies.Length == 0)
-        {
-            return;
-        }
-
-        using var provider = services.BuildServiceProvider();
-        var hasIssues = provider.TryGetHandlerRegistrationDiagnostics(
-            out var errors,
-            out var warnings,
-            handlerAssemblies);
-
-        if (!hasIssues)
-        {
-            return;
-        }
-
-        var message = BuildDiagnosticMessage(errors, warnings);
-
-        if (errors.Count > 0)
-        {
-            if (throwOnFailure)
-            {
-                throw new InvalidOperationException(message);
-            }
-
-            System.Diagnostics.Trace.WriteLine(message);
-            return;
-        }
-
-        System.Diagnostics.Trace.WriteLine(message);
-    }
-
-    private static string BuildDiagnosticMessage(IReadOnlyList<string> errors, IReadOnlyList<string> warnings)
-    {
-        var message = new StringBuilder();
-
-        if (errors.Count > 0)
-        {
-            message.Append($"Meridian Mediator handler registration diagnostics found {errors.Count} error(s):\n");
-            foreach (var (entry, index) in errors.Select((item, index) => (item, index + 1)))
-            {
-                message.AppendLine($"  {index}. {entry}");
-            }
-        }
-
-        if (warnings.Count > 0)
-        {
-            if (message.Length == 0)
-            {
-                message.Append($"Meridian Mediator handler registration diagnostics found {warnings.Count} warning(s):\n");
-            }
-            else
-            {
-                message.Append($"\nAdditionally, {warnings.Count} warning(s):\n");
-            }
-
-            foreach (var (entry, index) in warnings.Select((item, index) => (item, index + 1)))
-            {
-                message.AppendLine($"  {index}. {entry}");
-            }
-        }
-
-        return message.ToString().TrimEnd();
     }
 
     private static void RegisterOpenOrClosedGeneric(IServiceCollection services, Type openServiceType, Type implementationType)

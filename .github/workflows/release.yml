@@ -1,0 +1,112 @@
+name: Release
+
+# Security review:
+# - Trigger restricted to tag pattern vX.Y.Z / vX.Y.Z-*, so only a maintainer
+#   pushing a matching tag can fire the workflow.
+# - github.ref_name is used only inside the safe `contains()` built-in for the
+#   prerelease flag — it is NOT interpolated into any `run:` block.
+# - NUGET_API_KEY is consumed via env:, never via ${{ secrets.* }} in run:.
+# - No attacker-controllable github.event.* fields flow anywhere.
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build + sign + publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write      # GitHub Release + asset upload
+      id-token: write      # Sigstore OIDC
+      attestations: write  # Provenance attestation
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore tests/Meridian.Mediator.Tests/Meridian.Mediator.Tests.csproj
+
+      - name: Build (Release, deterministic)
+        run: >
+          dotnet build tests/Meridian.Mediator.Tests/Meridian.Mediator.Tests.csproj
+          -c Release --no-restore -p:ContinuousIntegrationBuild=true
+
+      - name: Test (final gate)
+        run: >
+          dotnet test tests/Meridian.Mediator.Tests/Meridian.Mediator.Tests.csproj
+          -c Release --no-build --nologo
+
+      - name: Pack Meridian.Mediator
+        run: |
+          mkdir -p ./artifacts
+          dotnet pack src/Meridian.Mediator/Meridian.Mediator.csproj \
+            -c Release --no-build -o ./artifacts \
+            -p:ContinuousIntegrationBuild=true
+
+      - name: Attest build provenance (Sigstore)
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            ./artifacts/*.nupkg
+            ./artifacts/*.snupkg
+
+      - name: Install CycloneDX SBOM tool
+        run: dotnet tool install --global CycloneDX
+
+      - name: Generate SBOMs
+        run: |
+          mkdir -p ./sbom
+          dotnet CycloneDX src/Meridian.Mediator/Meridian.Mediator.csproj \
+            -o ./sbom -f meridian-mediator.sbom.json -j
+
+      - name: Upload packages artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: |
+            ./artifacts/*.nupkg
+            ./artifacts/*.snupkg
+            ./sbom/*.sbom.json
+          retention-days: 90
+
+      - name: Create GitHub Release with packages + SBOMs
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ./artifacts/*.nupkg
+            ./artifacts/*.snupkg
+            ./sbom/*.sbom.json
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+
+      - name: Publish to NuGet.org
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if [ -z "$NUGET_API_KEY" ]; then
+            echo "::error::NUGET_API_KEY secret is not set. Configure via: gh secret set NUGET_API_KEY"
+            exit 1
+          fi
+          dotnet nuget push "./artifacts/*.nupkg" \
+            --api-key "$NUGET_API_KEY" \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate

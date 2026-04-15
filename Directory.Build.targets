@@ -1,0 +1,56 @@
+<Project>
+
+  <!--
+    Post-csproj finalizers. Runs AFTER each csproj body, so $(IsPackable)
+    and $(PackageId) are available here. This is where packaging metadata,
+    MinVer, and README/LICENSE file pack steps live so they don't have to
+    be duplicated in every packable csproj.
+  -->
+
+  <PropertyGroup Condition="'$(IsPackable)' == 'true'">
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EnablePackageValidation>true</EnablePackageValidation>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <!--
+      License is declared via PackageLicenseExpression (SPDX = MIT) in each
+      csproj. We additionally pack LICENSE into the package root below so
+      consumers have the full text on disk, but we do NOT set
+      PackageLicenseFile here — NuGet forbids setting both expression and
+      file and the expression is the richer, machine-readable option.
+    -->
+    <PackageProjectUrl>https://github.com/UmutKorkmaz/meridian</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/UmutKorkmaz/meridian</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <Authors>Umut Korkmaz and contributors</Authors>
+    <Copyright>Copyright (c) 2026 Umut Korkmaz and contributors</Copyright>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(IsPackable)' == 'true'">
+    <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" />
+    <None Include="$(MSBuildThisFileDirectory)LICENSE"   Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <!-- Expose internals to first-party test and benchmark projects so they
+       can exercise diagnostic helpers (FastPathCompiler.DescribeRejection)
+       and MethodLookupCache without widening the public API surface. -->
+  <ItemGroup Condition="'$(IsPackable)' == 'true'">
+    <InternalsVisibleTo Include="Meridian.Mapping.Tests" />
+    <InternalsVisibleTo Include="Meridian.Mediator.Tests" />
+    <InternalsVisibleTo Include="Meridian.Benchmarks" />
+  </ItemGroup>
+
+  <!-- MinVer: derive semver from git tags (tag `v1.2.3` → package version 1.2.3) -->
+  <ItemGroup Condition="'$(IsPackable)' == 'true'">
+    <PackageReference Include="MinVer" Version="6.0.0" PrivateAssets="all" />
+  </ItemGroup>
+
+  <PropertyGroup Condition="'$(IsPackable)' == 'true'">
+    <MinVerTagPrefix>v</MinVerTagPrefix>
+    <MinVerDefaultPreReleaseIdentifiers>alpha.0</MinVerDefaultPreReleaseIdentifiers>
+  </PropertyGroup>
+
+</Project>

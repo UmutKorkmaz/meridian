@@ -34,9 +34,10 @@ public class DoubleMultiplier : IMultiplier
     public int Multiply(int value) => value * 2;
 }
 
-// Open generic command/handler pair — simulates DigiflowAPI's workflow pattern:
-// CreateWorkflowCommand<TRequest, TResponse> / CreateWorkflowCommandHandler<TRequest, TResponse>
-// Both the command and handler share the same type parameter arity (2) to match IRequestHandler<,>.
+// Open generic command/handler pair — covers the common workflow / saga
+// pattern: CreateWorkflowCommand<TRequest, TResponse> /
+// CreateWorkflowCommandHandler<TRequest, TResponse>. Both the command and
+// handler share the same type parameter arity (2) to match IRequestHandler<,>.
 public class GenericWorkflowCommand<TRequest, TResponse> : IRequest<GenericWorkflowResult<TResponse>>
 {
     public TRequest Payload { get; init; } = default!;
@@ -61,8 +62,6 @@ public class GenericWorkflowCommandHandler<TRequest, TResponse>
         });
     }
 }
-
-public record StartupDiagnosticMissingRequest(int Value) : IRequest<int>;
 
 #endregion
 
@@ -104,6 +103,16 @@ public class DependencyInjectionTests
 
         var publisher = provider.GetService<IPublisher>();
         Assert.NotNull(publisher);
+    }
+
+    [Fact]
+    public void AddMeridianMediator_RegistersIStreamSender()
+    {
+        var services = CreateServicesWithoutAssemblyScan();
+        var provider = services.BuildServiceProvider();
+
+        var streamSender = provider.GetService<IStreamSender>();
+        Assert.NotNull(streamSender);
     }
 
     [Fact]
@@ -156,7 +165,7 @@ public class DependencyInjectionTests
     }
 
     [Fact]
-    public void ISender_And_IPublisher_ResolveTo_SameMediator_Type()
+    public void ISender_IPublisher_And_IStreamSender_ResolveTo_SameMediator_Type()
     {
         var services = CreateServicesWithoutAssemblyScan();
         var provider = services.BuildServiceProvider();
@@ -164,10 +173,12 @@ public class DependencyInjectionTests
         var mediator = provider.GetRequiredService<IMediator>();
         var sender = provider.GetRequiredService<ISender>();
         var publisher = provider.GetRequiredService<IPublisher>();
+        var streamSender = provider.GetRequiredService<IStreamSender>();
 
         Assert.IsType<Meridian.Mediator.Mediator>(mediator);
         Assert.IsType<Meridian.Mediator.Mediator>(sender);
         Assert.IsType<Meridian.Mediator.Mediator>(publisher);
+        Assert.IsType<Meridian.Mediator.Mediator>(streamSender);
     }
 
     [Fact]
@@ -191,7 +202,7 @@ public class DependencyInjectionTests
     [Fact]
     public async Task OpenGenericHandler_ManualClosedRegistration_RuntimeDispatch()
     {
-        // Simulates DigiflowAPI's workflow pattern:
+        // Common open-generic dispatch pattern:
         // 1. Open generic handler exists: GenericWorkflowCommandHandler<TRequest, TResponse>
         // 2. At startup, all closed combinations are registered manually via MakeGenericType
         // 3. At runtime, commands are constructed and dispatched via mediator.Send(object)
@@ -244,58 +255,5 @@ public class DependencyInjectionTests
         Assert.NotNull(result);
         Assert.Equal(42, result.Data);
         Assert.True(result.Success);
-    }
-
-    [Fact]
-    public async Task OpenGenericHandler_Is_AutoRegistered_ByAssemblyScanning()
-    {
-        var services = new ServiceCollection();
-        services.AddMeridianMediator(cfg =>
-        {
-            cfg.RegisterServicesFromAssemblyContaining<DependencyInjectionTests>();
-        });
-
-        var provider = services.BuildServiceProvider();
-        var mediator = provider.GetRequiredService<IMediator>();
-
-        var commandType = typeof(GenericWorkflowCommand<,>).MakeGenericType(typeof(string), typeof(string));
-        var command = Activator.CreateInstance(commandType)!;
-        commandType.GetProperty("Payload")!.SetValue(command, "from-scan");
-
-        var result = await mediator.Send(command);
-
-        Assert.NotNull(result);
-        var resultType = result.GetType();
-        Assert.Equal(typeof(GenericWorkflowResult<string>), resultType);
-        Assert.Equal("from-scan", resultType.GetProperty("Data")!.GetValue(result));
-        Assert.True((bool)resultType.GetProperty("Success")!.GetValue(result)!);
-    }
-
-    [Fact]
-    public void AddMeridianMediator_WithStartupDiagnostics_UsesScannedAssemblies()
-    {
-        var services = new ServiceCollection();
-        services.AddMeridianMediator(cfg =>
-        {
-            cfg.RegisterServicesFromAssemblyContaining<DependencyInjectionTests>();
-            cfg.AddStartupDiagnostics();
-        });
-
-        var provider = services.BuildServiceProvider();
-        Assert.NotNull(provider.GetService<IMediator>());
-    }
-
-    [Fact]
-    public void AddMeridianMediator_WithStartupDiagnostics_Throws_WhenRequiredHandlerMissing_And_Strict()
-    {
-        Assert.Throws<InvalidOperationException>(() =>
-        {
-            var services = new ServiceCollection();
-            services.AddMeridianMediator(cfg =>
-            {
-                cfg.RegisterServicesFromAssemblyContaining<DependencyInjectionTests>();
-                cfg.AddStartupDiagnostics(throwOnFailure: true);
-            });
-        });
     }
 }

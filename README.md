@@ -1,82 +1,15 @@
 # Meridian
 
-Meridian ships two focused .NET packages:
+Meridian is a lightweight, framework-style toolset for .NET applications:
 
-| Package | Purpose |
-| --- | --- |
-| `Meridian.Mapping` | Object-to-object mapping with profiles, member configuration, reverse maps, resolvers, converters, and query projection support. |
-| `Meridian.Mediator` | In-process request/response, notifications, streams, and pipeline behaviors for CQRS-style application flow. |
+- `Meridian.Mapping` for high-performance object-to-object mapping
+- `Meridian.Mediator` for CQRS-style in-process request/response, notifications, and streams
 
-Use either package independently, or use both together in the same application.
+## Simple Setup
 
-## Install
-
-```bash
-dotnet add package Meridian.Mapping
-dotnet add package Meridian.Mediator
-```
-
-## Target Frameworks
-
-The packages currently ship assets for:
-
-- `net8.0`
-- `net9.0`
-- `net10.0`
-- `net11.0`
-
-## Meridian.Mapping
-
-Minimal setup with DI and a profile:
+The shortest useful mediator setup is:
 
 ```csharp
-using Meridian.Mapping;
-using Meridian.Mapping.Extensions;
-using Microsoft.Extensions.DependencyInjection;
-
-var services = new ServiceCollection();
-services.AddMeridianMapping(cfg => cfg.AddProfile<OrderProfile>());
-
-using var provider = services.BuildServiceProvider();
-using var scope = provider.CreateScope();
-
-var mapper = scope.ServiceProvider.GetRequiredService<IMapper>();
-var dto = mapper.Map<OrderDto>(new Order { Id = 42, CustomerName = "Ada" });
-
-public sealed class OrderProfile : Profile
-{
-    public OrderProfile()
-    {
-        CreateMap<Order, OrderDto>();
-    }
-}
-
-public sealed class Order
-{
-    public int Id { get; set; }
-    public string CustomerName { get; set; } = string.Empty;
-}
-
-public sealed class OrderDto
-{
-    public int Id { get; set; }
-    public string CustomerName { get; set; } = string.Empty;
-}
-```
-
-`Meridian.Mapping` includes:
-
-- `Profile`-based configuration
-- `CreateMap`, `ReverseMap`, `ForMember`, `ForPath`, and `IncludeMembers`
-- value resolvers, converters, and transformers
-- query projection support
-
-## Meridian.Mediator
-
-Minimal setup with assembly scanning:
-
-```csharp
-using Meridian.Mediator;
 using Meridian.Mediator.Extensions;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -84,48 +17,93 @@ var services = new ServiceCollection();
 
 services.AddMeridianMediator(cfg =>
 {
-    cfg.RegisterServicesFromAssemblyContaining<Ping>();
+    cfg.RegisterServicesFromAssemblyContaining<Program>();
 });
-
-using var provider = services.BuildServiceProvider();
-var mediator = provider.GetRequiredService<IMediator>();
-
-var result = await mediator.Send(new Ping("Meridian"));
-
-public sealed record Ping(string Message) : IRequest<string>;
-
-public sealed class PingHandler : IRequestHandler<Ping, string>
-{
-    public Task<string> Handle(Ping request, CancellationToken cancellationToken)
-    {
-        return Task.FromResult($"Hello, {request.Message}");
-    }
-}
 ```
 
-`Meridian.Mediator` includes:
+Use the focused abstractions from DI depending on what you need:
 
-- request/response handlers
-- notifications and publishers
-- stream requests
-- pipeline behaviors for validation, logging, retry, caching, transactions, authorization, idempotency, pre-processors, and post-processors
-- optional FluentValidation integration through `AddFluentValidationFromAssembly(...)`
+```csharp
+var sender = provider.GetRequiredService<ISender>();
+var publisher = provider.GetRequiredService<IPublisher>();
+var streamSender = provider.GetRequiredService<IStreamSender>();
+```
+
+For pipeline registration, prefer the explicit APIs:
+
+```csharp
+services.AddMeridianMediator(cfg =>
+{
+    cfg.RegisterServicesFromAssemblyContaining<Program>();
+    cfg.AddBehavior<MyClosedBehavior>();
+    cfg.AddStreamBehavior<MyClosedStreamBehavior>();
+    cfg.AddOpenBehavior(typeof(MyOpenBehavior<,>));
+    cfg.AddOpenStreamBehavior(typeof(MyOpenStreamBehavior<,>));
+});
+```
+
+`AddBehavior(Type, Type, ...)` and `AddStreamBehavior(Type, Type)` remain only as compatibility shims. Prefer the typed or explicit closed-registration APIs for new code.
+
+## Getting Started
+
+Install from NuGet:
+
+```bash
+dotnet add package Meridian.Mapping
+dotnet add package Meridian.Mediator
+```
 
 ## Samples
 
-The repository includes runnable samples for several architecture styles:
+This repo includes architecture-focused samples to show different ways to structure a project with the same core primitives:
 
-- Showcase: https://github.com/UmutKorkmaz/meridian/tree/main/samples/Meridian.Showcase
-- Clean Architecture: https://github.com/UmutKorkmaz/meridian/tree/main/samples/Meridian.CleanArchitecture
-- Hexagonal: https://github.com/UmutKorkmaz/meridian/tree/main/samples/Meridian.Hexagonal
-- Modular Monolith: https://github.com/UmutKorkmaz/meridian/tree/main/samples/Meridian.ModularMonolith
-- Vertical Slice: https://github.com/UmutKorkmaz/meridian/tree/main/samples/Meridian.VerticalSlice
-- Event-Driven CQRS: https://github.com/UmutKorkmaz/meridian/tree/main/samples/Meridian.EventDrivenCqrs
+| Sample | Architecture Style | Focus |
+| --- | --- | --- |
+| `samples/Meridian.Showcase` | Baseline | End-to-end mapping + mediator feature showcase |
+| `samples/Meridian.CleanArchitecture` | Clean Architecture | Domain/use-case boundaries, repository abstraction, transactional command flow |
+| `samples/Meridian.Hexagonal` | Hexagonal | Ports-and-adapters separation around mediator-driven application use cases |
+| `samples/Meridian.ModularMonolith` | Modular Monolith | Module-level service registration and cross-module notifications |
+| `samples/Meridian.VerticalSlice` | Vertical Slice | Feature-first request grouping with per-slice handlers and validation |
+| `samples/Meridian.EventDrivenCqrs` | Event-Driven CQRS | Write/read split using commands, notifications, and timeline stream |
 
-## Repository
+Run a sample:
 
-- Source: https://github.com/UmutKorkmaz/meridian
+```bash
+dotnet run --project samples/Meridian.CleanArchitecture/Meridian.CleanArchitecture.csproj
+```
 
-## License
+## Testing
 
-Meridian is released under the MIT License. See `LICENSE` and `NOTICE` in the repository for details.
+From repository root:
+
+```bash
+dotnet restore Meridian.sln
+dotnet build Meridian.sln -c Release
+dotnet test Meridian.sln -c Release
+```
+
+Validate every sample:
+
+```bash
+dotnet run --project samples/Meridian.Showcase/Meridian.Showcase.csproj -c Release
+dotnet run --project samples/Meridian.CleanArchitecture/Meridian.CleanArchitecture.csproj -c Release
+dotnet run --project samples/Meridian.Hexagonal/Meridian.Hexagonal.csproj -c Release
+dotnet run --project samples/Meridian.ModularMonolith/Meridian.ModularMonolith.csproj -c Release
+dotnet run --project samples/Meridian.VerticalSlice/Meridian.VerticalSlice.csproj -c Release
+dotnet run --project samples/Meridian.EventDrivenCqrs/Meridian.EventDrivenCqrs.csproj -c Release
+```
+
+## Preparing NuGet Packages
+
+```bash
+dotnet pack src/Meridian.Mapping/Meridian.Mapping.csproj -c Release --output ./artifacts
+dotnet pack src/Meridian.Mediator/Meridian.Mediator.csproj -c Release --output ./artifacts
+dotnet nuget push ./artifacts/Meridian.Mapping.*.nupkg --source https://api.nuget.org/v3/index.json --api-key <API_KEY>
+dotnet nuget push ./artifacts/Meridian.Mediator.*.nupkg --source https://api.nuget.org/v3/index.json --api-key <API_KEY>
+```
+
+Package versions are derived from git release tags via MinVer.
+
+## Notes
+
+- `Meridian` aims to provide familiar APIs for users moving from MediatR/AutoMapper patterns, while keeping dependencies small and explicit.

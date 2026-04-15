@@ -25,11 +25,8 @@ public class MeridianMediatorConfiguration
     internal List<Type> OpenStreamBehaviors { get; } = new();
     internal List<Type> PreProcessorTypes { get; } = new();
     internal List<Type> PostProcessorTypes { get; } = new();
-    internal List<Assembly> FluentValidationAssembliesToScan { get; } = new();
     internal bool RegisterPreProcessorBehavior { get; private set; }
     internal bool RegisterPostProcessorBehavior { get; private set; }
-    internal bool EnableHandlerDiagnostics { get; private set; }
-    internal bool ThrowOnStartupHandlerValidationFailure { get; private set; }
 
     /// <summary>
     /// Gets or sets the notification publisher instance. If set, this takes precedence over <see cref="NotificationPublisherType"/>.
@@ -64,38 +61,56 @@ public class MeridianMediatorConfiguration
     }
 
     /// <summary>
-    /// Registers all <see cref="global::FluentValidation.IValidator{T}"/> validators from the given assembly
-    /// and wires Meridian adapters for request validation compatibility.
+    /// Registers a closed pipeline behavior under its fully-constructed
+    /// <see cref="Pipeline.IPipelineBehavior{TRequest, TResponse}"/>
+    /// service type.
     /// </summary>
-    /// <param name="assembly">The assembly to scan.</param>
+    /// <param name="closedBehaviorServiceType">
+    /// The closed <see cref="Pipeline.IPipelineBehavior{TRequest, TResponse}"/>
+    /// service type, for example
+    /// <c>typeof(IPipelineBehavior&lt;Ping, Pong&gt;)</c>.
+    /// </param>
+    /// <param name="behaviorType">The closed behavior type.</param>
+    /// <param name="order">Execution order (lower values run first). Default is 0.</param>
     /// <returns>This configuration instance for fluent chaining.</returns>
-    public MeridianMediatorConfiguration AddFluentValidationFromAssembly(Assembly assembly)
+    public MeridianMediatorConfiguration AddClosedBehavior(Type closedBehaviorServiceType, Type behaviorType, int order = 0)
     {
-        FluentValidationAssembliesToScan.Add(assembly);
+        RegisterClosedBehavior(closedBehaviorServiceType, behaviorType, order);
         return this;
     }
 
     /// <summary>
-    /// Registers all <see cref="global::FluentValidation.IValidator{T}"/> validators from the assembly containing
-    /// the specified type.
+    /// Adds a closed pipeline behavior by request type or service type.
     /// </summary>
-    /// <typeparam name="T">A type in the target assembly.</typeparam>
-    /// <returns>This configuration instance for fluent chaining.</returns>
-    public MeridianMediatorConfiguration AddFluentValidationFromAssemblyContaining<T>()
-    {
-        return AddFluentValidationFromAssembly(typeof(T).Assembly);
-    }
-
-    /// <summary>
-    /// Adds a closed generic pipeline behavior.
-    /// </summary>
-    /// <param name="requestType">The closed request type.</param>
-    /// <param name="behaviorType">The closed behavior type.</param>
+    /// <remarks>
+    /// This overload is ambiguous and kept only for compatibility. Prefer
+    /// <see cref="AddClosedBehavior"/> for closed registrations or
+    /// <see cref="AddBehavior{TBehavior}"/> / <see cref="AddOpenBehavior"/>
+    /// for the common cases.
+    /// </remarks>
+    /// <param name="requestOrServiceType">
+    /// Either the closed request type or the closed
+    /// <see cref="Pipeline.IPipelineBehavior{TRequest, TResponse}"/> service
+    /// type.
+    /// </param>
+    /// <param name="behaviorType">The behavior type.</param>
     /// <param name="order">Execution order (lower values run first). Default is 0.</param>
     /// <returns>This configuration instance for fluent chaining.</returns>
-    public MeridianMediatorConfiguration AddBehavior(Type requestType, Type behaviorType, int order = 0)
+    [Obsolete("AddBehavior(Type, Type, ...) is ambiguous. Use AddClosedBehavior(...) for closed registrations or AddBehavior<TBehavior>() / AddOpenBehavior(...) for the common cases.")]
+    public MeridianMediatorConfiguration AddBehavior(Type requestOrServiceType, Type behaviorType, int order = 0)
     {
-        ClosedBehaviors.Add((requestType, behaviorType, order));
+        ArgumentNullException.ThrowIfNull(requestOrServiceType);
+        ArgumentNullException.ThrowIfNull(behaviorType);
+
+        var closedServiceType = ResolveClosedServiceType(
+            requestOrServiceType,
+            behaviorType,
+            typeof(Pipeline.IPipelineBehavior<,>),
+            nameof(requestOrServiceType),
+            nameof(behaviorType),
+            "AddOpenBehavior");
+
+        RegisterClosedBehavior(closedServiceType, behaviorType, order);
         return this;
     }
 
@@ -107,19 +122,19 @@ public class MeridianMediatorConfiguration
     public MeridianMediatorConfiguration AddBehavior<TBehavior>(int order = 0)
     {
         var behaviorType = typeof(TBehavior);
-        var interfaces = behaviorType.GetInterfaces()
-            .Where(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(Pipeline.IPipelineBehavior<,>))
-            .ToList();
+        var interfaces = GetClosedImplementedInterfaces(behaviorType, typeof(Pipeline.IPipelineBehavior<,>));
 
         foreach (var iface in interfaces)
         {
-            ClosedBehaviors.Add((iface, behaviorType, order));
+            RegisterClosedBehavior(iface, behaviorType, order);
         }
 
         if (interfaces.Count == 0)
         {
-            // Might be an open generic registered as a closed type
-            OpenBehaviors.Add((behaviorType, order));
+            throw new ArgumentException(
+                $"Type {behaviorType} must implement {typeof(Pipeline.IPipelineBehavior<,>)}. " +
+                $"Use {nameof(AddOpenBehavior)} for open generic registrations.",
+                nameof(TBehavior));
         }
 
         return this;
@@ -134,10 +149,19 @@ public class MeridianMediatorConfiguration
     /// <returns>This configuration instance for fluent chaining.</returns>
     public MeridianMediatorConfiguration AddOpenBehavior(Type openBehaviorType, int order = 0)
     {
+        ArgumentNullException.ThrowIfNull(openBehaviorType);
+
         if (!openBehaviorType.IsGenericTypeDefinition)
         {
             throw new ArgumentException(
                 $"Type {openBehaviorType} must be an open generic type definition.",
+                nameof(openBehaviorType));
+        }
+
+        if (!ImplementsOpenGenericInterface(openBehaviorType, typeof(Pipeline.IPipelineBehavior<,>)))
+        {
+            throw new ArgumentException(
+                $"Type {openBehaviorType} must implement {typeof(Pipeline.IPipelineBehavior<,>)}.",
                 nameof(openBehaviorType));
         }
 
@@ -146,14 +170,78 @@ public class MeridianMediatorConfiguration
     }
 
     /// <summary>
-    /// Adds a stream pipeline behavior.
+    /// Registers a closed stream pipeline behavior under its fully-constructed
+    /// <see cref="Streaming.IStreamPipelineBehavior{TRequest, TResponse}"/>
+    /// service type.
     /// </summary>
-    /// <param name="requestType">The stream request type.</param>
+    /// <param name="closedStreamBehaviorServiceType">
+    /// The closed <see cref="Streaming.IStreamPipelineBehavior{TRequest, TResponse}"/>
+    /// service type.
+    /// </param>
     /// <param name="behaviorType">The stream behavior type.</param>
     /// <returns>This configuration instance for fluent chaining.</returns>
-    public MeridianMediatorConfiguration AddStreamBehavior(Type requestType, Type behaviorType)
+    public MeridianMediatorConfiguration AddClosedStreamBehavior(Type closedStreamBehaviorServiceType, Type behaviorType)
     {
-        ClosedStreamBehaviors.Add((requestType, behaviorType));
+        RegisterClosedStreamBehavior(closedStreamBehaviorServiceType, behaviorType);
+        return this;
+    }
+
+    /// <summary>
+    /// Adds a closed stream pipeline behavior by request type or service type.
+    /// </summary>
+    /// <remarks>
+    /// This overload is ambiguous and kept only for compatibility. Prefer
+    /// <see cref="AddClosedStreamBehavior"/> or
+    /// <see cref="AddStreamBehavior{TBehavior}"/>.
+    /// </remarks>
+    /// <param name="requestOrServiceType">
+    /// Either the closed stream request type or the closed
+    /// <see cref="Streaming.IStreamPipelineBehavior{TRequest, TResponse}"/>
+    /// service type.
+    /// </param>
+    /// <param name="behaviorType">The stream behavior type.</param>
+    /// <returns>This configuration instance for fluent chaining.</returns>
+    [Obsolete("AddStreamBehavior(Type, Type) is ambiguous. Use AddClosedStreamBehavior(...) or AddStreamBehavior<TBehavior>() instead.")]
+    public MeridianMediatorConfiguration AddStreamBehavior(Type requestOrServiceType, Type behaviorType)
+    {
+        ArgumentNullException.ThrowIfNull(requestOrServiceType);
+        ArgumentNullException.ThrowIfNull(behaviorType);
+
+        var closedServiceType = ResolveClosedServiceType(
+            requestOrServiceType,
+            behaviorType,
+            typeof(Streaming.IStreamPipelineBehavior<,>),
+            nameof(requestOrServiceType),
+            nameof(behaviorType),
+            "AddOpenStreamBehavior");
+
+        RegisterClosedStreamBehavior(closedServiceType, behaviorType);
+        return this;
+    }
+
+    /// <summary>
+    /// Adds a closed stream pipeline behavior by implementation type.
+    /// </summary>
+    /// <typeparam name="TBehavior">The stream behavior type.</typeparam>
+    /// <returns>This configuration instance for fluent chaining.</returns>
+    public MeridianMediatorConfiguration AddStreamBehavior<TBehavior>()
+    {
+        var behaviorType = typeof(TBehavior);
+        var interfaces = GetClosedImplementedInterfaces(behaviorType, typeof(Streaming.IStreamPipelineBehavior<,>));
+
+        foreach (var iface in interfaces)
+        {
+            RegisterClosedStreamBehavior(iface, behaviorType);
+        }
+
+        if (interfaces.Count == 0)
+        {
+            throw new ArgumentException(
+                $"Type {behaviorType} must implement {typeof(Streaming.IStreamPipelineBehavior<,>)}. " +
+                $"Use {nameof(AddOpenStreamBehavior)} for open generic registrations.",
+                nameof(TBehavior));
+        }
+
         return this;
     }
 
@@ -164,10 +252,19 @@ public class MeridianMediatorConfiguration
     /// <returns>This configuration instance for fluent chaining.</returns>
     public MeridianMediatorConfiguration AddOpenStreamBehavior(Type openBehaviorType)
     {
+        ArgumentNullException.ThrowIfNull(openBehaviorType);
+
         if (!openBehaviorType.IsGenericTypeDefinition)
         {
             throw new ArgumentException(
                 $"Type {openBehaviorType} must be an open generic type definition.",
+                nameof(openBehaviorType));
+        }
+
+        if (!ImplementsOpenGenericInterface(openBehaviorType, typeof(Streaming.IStreamPipelineBehavior<,>)))
+        {
+            throw new ArgumentException(
+                $"Type {openBehaviorType} must implement {typeof(Streaming.IStreamPipelineBehavior<,>)}.",
                 nameof(openBehaviorType));
         }
 
@@ -308,16 +405,151 @@ public class MeridianMediatorConfiguration
     }
 
     /// <summary>
-    /// Enables request/response registration diagnostics at service-registration time.
-    /// When enabled, startup logs diagnostics for unresolved handlers discovered in scanned assemblies.
-    /// Optionally throws on missing request handlers when <paramref name="throwOnFailure"/> is true.
+    /// Adds the built-in <see cref="AuditBehavior{TRequest, TResponse}"/> to
+    /// the pipeline. Records an <see cref="AuditEntry"/> for every request
+    /// via the registered <see cref="IAuditSink"/>. Requires an
+    /// <see cref="IAuditSink"/> implementation in DI — register
+    /// <see cref="LoggerAuditSink"/> for the default <see cref="ILogger"/>-based
+    /// sink, or your own implementation for a database/SIEM destination.
     /// </summary>
-    /// <param name="throwOnFailure">Throws <see cref="InvalidOperationException"/> when request-handler diagnostics fail.</param>
+    /// <param name="order">
+    /// Execution order. Should be HIGHER than CorrelationIdBehavior (so the
+    /// audit record sees the established correlation ID) and LOWER than
+    /// ValidationBehavior (so failed validations are themselves audited).
+    /// Defaults to 10 to leave room for ordering tweaks on either side.
+    /// </param>
     /// <returns>This configuration instance for fluent chaining.</returns>
-    public MeridianMediatorConfiguration AddStartupDiagnostics(bool throwOnFailure = false)
+    public MeridianMediatorConfiguration AddAuditBehavior(int order = 10)
     {
-        EnableHandlerDiagnostics = true;
-        ThrowOnStartupHandlerValidationFailure = throwOnFailure;
+        OpenBehaviors.Add((typeof(AuditBehavior<,>), order));
         return this;
     }
+
+    /// <summary>
+    /// Adds the localising variant of <see cref="ValidationBehavior{TRequest, TResponse}"/>
+    /// — every <see cref="ValidationError.ErrorMessage"/> is routed through
+    /// <see cref="Microsoft.Extensions.Localization.IStringLocalizer{TRequest}"/>
+    /// before the resulting <see cref="ValidationException"/> is thrown.
+    /// Use this in place of <see cref="AddValidationBehavior"/>; do not
+    /// register both for the same request.
+    /// </summary>
+    /// <param name="order">Execution order. Default is 0.</param>
+    /// <returns>This configuration instance for fluent chaining.</returns>
+    public MeridianMediatorConfiguration AddLocalizedValidationBehavior(int order = 0)
+    {
+        OpenBehaviors.Add((typeof(LocalizedValidationBehavior<,>), order));
+        return this;
+    }
+
+    private void RegisterClosedBehavior(Type serviceType, Type behaviorType, int order)
+    {
+        EnsureClosedServiceType(serviceType, typeof(Pipeline.IPipelineBehavior<,>), nameof(serviceType));
+        EnsureConcreteClosedBehaviorType(serviceType, behaviorType, nameof(behaviorType), "AddOpenBehavior");
+        ClosedBehaviors.Add((serviceType, behaviorType, order));
+    }
+
+    private void RegisterClosedStreamBehavior(Type serviceType, Type behaviorType)
+    {
+        EnsureClosedServiceType(serviceType, typeof(Streaming.IStreamPipelineBehavior<,>), nameof(serviceType));
+        EnsureConcreteClosedBehaviorType(serviceType, behaviorType, nameof(behaviorType), "AddOpenStreamBehavior");
+        ClosedStreamBehaviors.Add((serviceType, behaviorType));
+    }
+
+    private static Type ResolveClosedServiceType(
+        Type requestOrServiceType,
+        Type behaviorType,
+        Type openBehaviorServiceType,
+        string requestOrServiceParamName,
+        string behaviorParamName,
+        string openRegistrationMethod)
+    {
+        if (IsClosedConstructedGeneric(requestOrServiceType, openBehaviorServiceType))
+        {
+            EnsureConcreteClosedBehaviorType(
+                requestOrServiceType,
+                behaviorType,
+                behaviorParamName,
+                openRegistrationMethod);
+            return requestOrServiceType;
+        }
+
+        if (behaviorType.IsGenericTypeDefinition)
+        {
+            throw new ArgumentException(
+                $"Type {behaviorType} is open generic. Use {openRegistrationMethod} for open generic registrations.",
+                behaviorParamName);
+        }
+
+        var matchingInterfaces = behaviorType.GetInterfaces()
+            .Where(i => IsClosedConstructedGeneric(i, openBehaviorServiceType))
+            .Where(i => i.GetGenericArguments()[0] == requestOrServiceType)
+            .ToList();
+
+        return matchingInterfaces.Count switch
+        {
+            1 => matchingInterfaces[0],
+            > 1 => throw new ArgumentException(
+                $"Type {behaviorType} implements multiple closed {openBehaviorServiceType.Name} interfaces for request type {requestOrServiceType}. " +
+                "Use the explicit closed service-type overload instead.",
+                requestOrServiceParamName),
+            _ => throw new ArgumentException(
+                $"Type {behaviorType} does not implement a closed {openBehaviorServiceType.Name} for request type {requestOrServiceType}. " +
+                "Pass the closed service type explicitly when the request type is ambiguous.",
+                behaviorParamName),
+        };
+    }
+
+    private static List<Type> GetClosedImplementedInterfaces(Type behaviorType, Type openBehaviorServiceType)
+    {
+        return behaviorType.GetInterfaces()
+            .Where(i => IsClosedConstructedGeneric(i, openBehaviorServiceType))
+            .ToList();
+    }
+
+    private static void EnsureClosedServiceType(Type serviceType, Type openBehaviorServiceType, string paramName)
+    {
+        if (!IsClosedConstructedGeneric(serviceType, openBehaviorServiceType))
+        {
+            throw new ArgumentException(
+                $"Type {serviceType} must be a closed {openBehaviorServiceType}.",
+                paramName);
+        }
+    }
+
+    private static void EnsureConcreteClosedBehaviorType(
+        Type serviceType,
+        Type behaviorType,
+        string paramName,
+        string openRegistrationMethod)
+    {
+        if (behaviorType.IsGenericTypeDefinition)
+        {
+            throw new ArgumentException(
+                $"Type {behaviorType} is open generic. Use {openRegistrationMethod} for open generic registrations.",
+                paramName);
+        }
+
+        if (behaviorType.IsInterface || behaviorType.IsAbstract)
+        {
+            throw new ArgumentException(
+                $"Type {behaviorType} must be a concrete implementation type.",
+                paramName);
+        }
+
+        if (!serviceType.IsAssignableFrom(behaviorType))
+        {
+            throw new ArgumentException(
+                $"Type {behaviorType} does not implement {serviceType}.",
+                paramName);
+        }
+    }
+
+    private static bool IsClosedConstructedGeneric(Type type, Type openGenericType) =>
+        type.IsGenericType &&
+        !type.ContainsGenericParameters &&
+        type.GetGenericTypeDefinition() == openGenericType;
+
+    private static bool ImplementsOpenGenericInterface(Type type, Type openInterfaceType) =>
+        type.GetInterfaces().Any(i =>
+            i.IsGenericType && i.GetGenericTypeDefinition() == openInterfaceType);
 }

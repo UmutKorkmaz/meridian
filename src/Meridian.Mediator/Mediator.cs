@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Reflection;
 using Meridian.Mediator.Publishing;
 using Meridian.Mediator.Streaming;
 using Meridian.Mediator.Wrappers;
@@ -22,7 +23,10 @@ public class Mediator : IMediator
     /// Subscribe to "Meridian.Mediator" in your telemetry configuration to receive spans.
     /// Zero cost when no listener is attached.
     /// </summary>
-    internal static readonly ActivitySource ActivitySourceInstance = new("Meridian.Mediator", "1.0.0");
+    private static readonly string ActivitySourceVersion =
+        typeof(Mediator).Assembly.GetName().Version?.ToString() ?? "1.0.0";
+
+    internal static readonly ActivitySource ActivitySourceInstance = new("Meridian.Mediator", ActivitySourceVersion);
 
     private readonly IServiceProvider _serviceProvider;
     private readonly INotificationPublisher _publisher;
@@ -53,15 +57,13 @@ public class Mediator : IMediator
         ArgumentNullException.ThrowIfNull(request);
 
         var requestType = request.GetType();
-
-        using var activity = ActivitySourceInstance.StartActivity($"Mediator.Send {requestType.Name}");
-        activity?.SetTag("meridian.request_type", requestType.FullName);
-        activity?.SetTag("meridian.response_type", typeof(TResponse).FullName);
-
         var handler = (RequestHandlerWrapper<TResponse>)_requestHandlers.GetOrAdd(requestType,
             static t => CreateRequestHandler(t, typeof(RequestHandlerWrapperImpl<,>)));
 
-        return handler.Handle(request, _serviceProvider, cancellationToken);
+        return ExecuteWithActivityAsync(
+            StartRequestActivity(requestType, typeof(TResponse)),
+            () => handler.Handle(request, _serviceProvider, cancellationToken),
+            cancellationToken);
     }
 
     /// <inheritdoc/>
@@ -71,14 +73,13 @@ public class Mediator : IMediator
         ArgumentNullException.ThrowIfNull(request);
 
         var requestType = request.GetType();
-
-        using var activity = ActivitySourceInstance.StartActivity($"Mediator.Send {requestType.Name}");
-        activity?.SetTag("meridian.request_type", requestType.FullName);
-
         var handler = (RequestHandlerWrapper<Unit>)_requestHandlers.GetOrAdd(requestType,
             static t => CreateRequestHandler(t, typeof(RequestHandlerWrapperImpl<,>)));
 
-        return handler.Handle(request, _serviceProvider, cancellationToken);
+        return ExecuteWithActivityAsync(
+            StartRequestActivity(requestType, typeof(Unit)),
+            () => handler.Handle(request, _serviceProvider, cancellationToken),
+            cancellationToken);
     }
 
     /// <inheritdoc/>
@@ -87,14 +88,13 @@ public class Mediator : IMediator
         ArgumentNullException.ThrowIfNull(request);
 
         var requestType = request.GetType();
-
-        using var activity = ActivitySourceInstance.StartActivity($"Mediator.Send {requestType.Name}");
-        activity?.SetTag("meridian.request_type", requestType.FullName);
-
         var handler = _requestHandlers.GetOrAdd(requestType,
             static t => CreateRequestHandler(t, typeof(RequestHandlerWrapperImpl<,>)));
 
-        return handler.Handle(request, _serviceProvider, cancellationToken);
+        return ExecuteWithActivityAsync(
+            StartRequestActivity(requestType, null),
+            () => handler.Handle(request, _serviceProvider, cancellationToken),
+            cancellationToken);
     }
 
     /// <inheritdoc/>
@@ -102,11 +102,10 @@ public class Mediator : IMediator
         where TNotification : INotification
     {
         ArgumentNullException.ThrowIfNull(notification);
-
-        using var activity = ActivitySourceInstance.StartActivity($"Mediator.Publish {typeof(TNotification).Name}");
-        activity?.SetTag("meridian.notification_type", typeof(TNotification).FullName);
-
-        return PublishNotification(notification, cancellationToken);
+        return ExecuteWithActivityAsync(
+            StartNotificationActivity(notification.GetType()),
+            () => PublishNotification(notification, cancellationToken),
+            cancellationToken);
     }
 
     /// <inheritdoc/>
@@ -118,11 +117,10 @@ public class Mediator : IMediator
         {
             throw new ArgumentException($"Object of type {notification.GetType()} does not implement {nameof(INotification)}.", nameof(notification));
         }
-
-        using var activity = ActivitySourceInstance.StartActivity($"Mediator.Publish {notification.GetType().Name}");
-        activity?.SetTag("meridian.notification_type", notification.GetType().FullName);
-
-        return PublishNotification(notif, cancellationToken);
+        return ExecuteWithActivityAsync(
+            StartNotificationActivity(notification.GetType()),
+            () => PublishNotification(notif, cancellationToken),
+            cancellationToken);
     }
 
     /// <inheritdoc/>
@@ -131,15 +129,15 @@ public class Mediator : IMediator
         ArgumentNullException.ThrowIfNull(request);
 
         var requestType = request.GetType();
-
-        using var activity = ActivitySourceInstance.StartActivity($"Mediator.CreateStream {requestType.Name}");
-        activity?.SetTag("meridian.stream_request_type", requestType.FullName);
-        activity?.SetTag("meridian.response_type", typeof(TResponse).FullName);
-
         var handler = (StreamRequestHandlerWrapper<TResponse>)_streamRequestHandlers.GetOrAdd(requestType,
             static t => CreateStreamHandler(t));
 
-        return handler.Handle(request, _serviceProvider, cancellationToken);
+        return ExecuteStreamWithActivity(
+            request,
+            requestType,
+            typeof(TResponse),
+            handler,
+            cancellationToken);
     }
 
     /// <inheritdoc/>
@@ -148,13 +146,14 @@ public class Mediator : IMediator
         ArgumentNullException.ThrowIfNull(request);
 
         var requestType = request.GetType();
-
-        using var activity = ActivitySourceInstance.StartActivity($"Mediator.CreateStream {requestType.Name}");
-        activity?.SetTag("meridian.stream_request_type", requestType.FullName);
-
         var handler = _streamRequestHandlers.GetOrAdd(requestType, static t => CreateStreamHandler(t));
 
-        return handler.Handle(request, _serviceProvider, cancellationToken);
+        return ExecuteStreamWithActivity(
+            request,
+            requestType,
+            null,
+            handler,
+            cancellationToken);
     }
 
     private Task PublishNotification(INotification notification, CancellationToken cancellationToken)
@@ -211,5 +210,241 @@ public class Mediator : IMediator
 
         throw new InvalidOperationException(
             $"Type {requestType} does not implement {typeof(IStreamRequest<>).Name}.");
+    }
+
+    private static Activity? StartRequestActivity(Type requestType, Type? responseType)
+    {
+        var activity = ActivitySourceInstance.StartActivity($"Mediator.Send {requestType.Name}");
+        activity?.SetTag("meridian.request_type", requestType.FullName);
+        if (responseType is not null)
+        {
+            activity?.SetTag("meridian.response_type", responseType.FullName);
+        }
+
+        return activity;
+    }
+
+    private static Activity? StartNotificationActivity(Type notificationType)
+    {
+        var activity = ActivitySourceInstance.StartActivity($"Mediator.Publish {notificationType.Name}");
+        activity?.SetTag("meridian.notification_type", notificationType.FullName);
+        return activity;
+    }
+
+    private static Activity? StartStreamActivity(Type requestType, Type? responseType)
+    {
+        var activity = ActivitySourceInstance.StartActivity($"Mediator.CreateStream {requestType.Name}");
+        activity?.SetTag("meridian.stream_request_type", requestType.FullName);
+        if (responseType is not null)
+        {
+            activity?.SetTag("meridian.response_type", responseType.FullName);
+        }
+
+        return activity;
+    }
+
+    private static async Task ExecuteWithActivityAsync(
+        Activity? activity,
+        Func<Task> operation,
+        CancellationToken cancellationToken)
+    {
+        using (activity)
+        {
+            try
+            {
+                await operation().ConfigureAwait(false);
+                activity?.SetStatus(ActivityStatusCode.Ok);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                MarkActivityFailure(activity, ex);
+                throw;
+            }
+        }
+    }
+
+    private static async Task<T> ExecuteWithActivityAsync<T>(
+        Activity? activity,
+        Func<Task<T>> operation,
+        CancellationToken cancellationToken)
+    {
+        using (activity)
+        {
+            try
+            {
+                var result = await operation().ConfigureAwait(false);
+                activity?.SetStatus(ActivityStatusCode.Ok);
+                return result;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                MarkActivityFailure(activity, ex);
+                throw;
+            }
+        }
+    }
+
+    private async IAsyncEnumerable<TResponse> ExecuteStreamWithActivity<TResponse>(
+        IStreamRequest<TResponse> request,
+        Type requestType,
+        Type? responseType,
+        StreamRequestHandlerWrapper<TResponse> handler,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        using var activity = StartStreamActivity(requestType, responseType);
+        IAsyncEnumerator<TResponse> enumerator;
+
+        try
+        {
+            enumerator = ExecuteWithCurrentActivity(
+                activity,
+                () => handler.Handle(request, _serviceProvider, cancellationToken)
+                    .GetAsyncEnumerator(cancellationToken));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            MarkActivityFailure(activity, ex);
+            throw;
+        }
+
+        await using (enumerator.ConfigureAwait(false))
+        {
+            while (true)
+            {
+                TResponse current;
+
+                try
+                {
+                    if (!await MoveNextAsync(enumerator, activity).ConfigureAwait(false))
+                    {
+                        activity?.SetStatus(ActivityStatusCode.Ok);
+                        yield break;
+                    }
+
+                    current = enumerator.Current;
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    MarkActivityFailure(activity, ex);
+                    throw;
+                }
+
+                yield return current;
+            }
+        }
+    }
+
+    private async IAsyncEnumerable<object?> ExecuteStreamWithActivity(
+        object request,
+        Type requestType,
+        Type? responseType,
+        StreamRequestHandlerBase handler,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        using var activity = StartStreamActivity(requestType, responseType);
+        IAsyncEnumerator<object?> enumerator;
+
+        try
+        {
+            enumerator = ExecuteWithCurrentActivity(
+                activity,
+                () => handler.Handle(request, _serviceProvider, cancellationToken)
+                    .GetAsyncEnumerator(cancellationToken));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            MarkActivityFailure(activity, ex);
+            throw;
+        }
+
+        await using (enumerator.ConfigureAwait(false))
+        {
+            while (true)
+            {
+                object? current;
+
+                try
+                {
+                    if (!await MoveNextAsync(enumerator, activity).ConfigureAwait(false))
+                    {
+                        activity?.SetStatus(ActivityStatusCode.Ok);
+                        yield break;
+                    }
+
+                    current = enumerator.Current;
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    MarkActivityFailure(activity, ex);
+                    throw;
+                }
+
+                yield return current;
+            }
+        }
+    }
+
+    private static void MarkActivityFailure(Activity? activity, Exception ex)
+    {
+        activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+        activity?.SetTag("exception.type", ex.GetType().FullName);
+        activity?.SetTag("exception.message", ex.Message);
+        activity?.SetTag("exception.stacktrace", ex.ToString());
+    }
+
+    private static T ExecuteWithCurrentActivity<T>(Activity? activity, Func<T> action)
+    {
+        var previous = Activity.Current;
+        Activity.Current = activity;
+
+        try
+        {
+            return action();
+        }
+        finally
+        {
+            Activity.Current = previous;
+        }
+    }
+
+    private static async ValueTask<bool> MoveNextAsync<T>(
+        IAsyncEnumerator<T> enumerator,
+        Activity? activity)
+    {
+        var previous = Activity.Current;
+        Activity.Current = activity;
+
+        try
+        {
+            return await enumerator.MoveNextAsync().ConfigureAwait(false);
+        }
+        finally
+        {
+            Activity.Current = previous;
+        }
     }
 }
