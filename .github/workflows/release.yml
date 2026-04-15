@@ -75,7 +75,7 @@ jobs:
         run: |
           mkdir -p ./sbom
           dotnet CycloneDX src/Meridian.Mediator/Meridian.Mediator.csproj \
-            -o ./sbom -f meridian-mediator.sbom.json -j
+            -o ./sbom -fn meridian-mediator.sbom.json -F Json
 
       - name: Upload packages artifact
         uses: actions/upload-artifact@v4
