@@ -36,6 +36,10 @@ public class IntRequestHandler : IRequestHandler<IntRequest, int>
 
 #endregion
 
+// Shares VoidCommandHandler.WasHandled / ReceivedData statics with
+// RequestResponseTests — see that class's collection attribute for why
+// they must serialize.
+[Collection("VoidCommandHandler-static-state")]
 public class EdgeCaseTests
 {
     private IMediator BuildMediator(Action<IServiceCollection>? configureServices = null)
