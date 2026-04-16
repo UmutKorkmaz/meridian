@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Meridian.QuickStart</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <!--
+      Treat warnings as errors here to catch sample-code drift. The
+      QuickStart sample doubles as a smoke test that the public API is
+      usable from a fresh consumer project — if a refactor breaks this,
+      we want the build to fail loudly rather than silently regressing
+      the docs.
+    -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.3" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="10.0.3" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.3" />
+    <PackageReference Include="Microsoft.Extensions.Localization" Version="10.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Meridian.Mapping\Meridian.Mapping.csproj" />
+    <ProjectReference Include="..\..\src\Meridian.Mediator\Meridian.Mediator.csproj" />
+    <ProjectReference Include="..\..\src\Meridian.Mapping.Generators\Meridian.Mapping.Generators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>

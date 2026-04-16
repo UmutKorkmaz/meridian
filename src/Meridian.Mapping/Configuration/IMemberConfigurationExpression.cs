@@ -71,6 +71,31 @@ public interface IMemberConfigurationExpression<TSource, TDestination>
     void NullSubstitute(object substitution);
 
     /// <summary>
+    /// Marks this member as explicit-expansion only for projection scenarios.
+    /// </summary>
+    void ExplicitExpansion();
+
+    /// <summary>
+    /// Reuses the existing destination member value when mapping onto an existing destination instance.
+    /// </summary>
+    void UseDestinationValue();
+
+    /// <summary>
+    /// Replaces the destination member value instead of reusing the existing destination value.
+    /// </summary>
+    void DoNotUseDestinationValue();
+
+    /// <summary>
+    /// Allows null assignment for this member regardless of the global null policy.
+    /// </summary>
+    void AllowNull();
+
+    /// <summary>
+    /// Disallows null assignment for this member regardless of the global null policy.
+    /// </summary>
+    void DoNotAllowNull();
+
+    /// <summary>
     /// Uses a constant value for this destination member, ignoring the source entirely.
     /// </summary>
     /// <param name="value">The constant value to assign.</param>

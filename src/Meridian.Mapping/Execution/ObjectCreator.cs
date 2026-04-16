@@ -77,12 +77,14 @@ public static class ObjectCreator
             {
                 var param = parameters[i];
 
-                // Check explicit mapping first
+                // Check explicit mapping first. The wrapper is cached per
+                // compiled delegate so repeated invocations (batch mapping)
+                // don't re-emit IL.
                 if (ctorParamMappings != null &&
                     ctorParamMappings.TryGetValue(param.Name!, out var expr))
                 {
                     var compiled = expr.Compile();
-                    args[i] = compiled.DynamicInvoke(source);
+                    args[i] = DelegateCompiler.WrapFunc1(compiled)(source);
                     continue;
                 }
 

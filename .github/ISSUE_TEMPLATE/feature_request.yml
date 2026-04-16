@@ -1,0 +1,43 @@
+name: Feature request
+description: Propose a new capability for Meridian.Mapping or Meridian.Mediator
+title: "[feature]: "
+labels: [enhancement, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, please check existing issues, discussions, and the
+        public roadmap items in this repository. Some gaps are intentional
+        scope limits rather than oversights.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What are you trying to do that Meridian does not support today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: API sketch, example usage, or link to a similar feature in another library.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What options did you consider, and why do they fall short for this case?
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Links to discussions, blog posts, RFCs.
+    validations:
+      required: false

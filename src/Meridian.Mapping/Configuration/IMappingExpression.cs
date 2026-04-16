@@ -1,4 +1,5 @@
 using System.Linq.Expressions;
+using Meridian.Mapping;
 using Meridian.Mapping.Converters;
 
 namespace Meridian.Mapping.Configuration;
@@ -31,6 +32,13 @@ public interface IMappingExpression<TSource, TDestination>
     IMappingExpression<TSource, TDestination> ForMember(
         string destinationMemberName,
         Action<IMemberConfigurationExpression<TSource, TDestination>> memberOptions);
+
+    /// <summary>
+    /// Configures an individual source member.
+    /// </summary>
+    IMappingExpression<TSource, TDestination> ForSourceMember(
+        Expression<Func<TSource, object?>> sourceMember,
+        Action<ISourceMemberConfigurationExpression> memberOptions);
 
     /// <summary>
     /// Creates a reverse mapping (TDestination to TSource) with sensible defaults.
@@ -126,12 +134,24 @@ public interface IMappingExpression<TSource, TDestination>
     IMappingExpression<TSource, TDestination> BeforeMap(Action<TSource, TDestination> beforeFunction);
 
     /// <summary>
+    /// Registers a DI-friendly mapping action to execute before property mapping occurs.
+    /// </summary>
+    IMappingExpression<TSource, TDestination> BeforeMap<TMappingAction>()
+        where TMappingAction : IMappingAction<TSource, TDestination>;
+
+    /// <summary>
     /// Registers an action to execute after all property mapping is complete.
     /// Multiple calls add additional actions executed in registration order.
     /// </summary>
     /// <param name="afterFunction">Action receiving the source and destination objects.</param>
     /// <returns>This expression for chaining.</returns>
     IMappingExpression<TSource, TDestination> AfterMap(Action<TSource, TDestination> afterFunction);
+
+    /// <summary>
+    /// Registers a DI-friendly mapping action to execute after property mapping completes.
+    /// </summary>
+    IMappingExpression<TSource, TDestination> AfterMap<TMappingAction>()
+        where TMappingAction : IMappingAction<TSource, TDestination>;
 
     /// <summary>
     /// Enables circular reference tracking for this type map. When enabled,

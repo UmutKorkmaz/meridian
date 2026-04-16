@@ -43,12 +43,15 @@
     <InternalsVisibleTo Include="Meridian.Benchmarks" />
   </ItemGroup>
 
-  <!-- MinVer: derive semver from git tags (tag `v1.2.3` → package version 1.2.3) -->
-  <ItemGroup Condition="'$(IsPackable)' == 'true'">
+  <!--
+    MinVer: derive semver from git tags only for packable projects that do
+    not declare an explicit package version in their csproj.
+  -->
+  <ItemGroup Condition="'$(IsPackable)' == 'true' and '$(Version)' == '' and '$(PackageVersion)' == ''">
     <PackageReference Include="MinVer" Version="6.0.0" PrivateAssets="all" />
   </ItemGroup>
 
-  <PropertyGroup Condition="'$(IsPackable)' == 'true'">
+  <PropertyGroup Condition="'$(IsPackable)' == 'true' and '$(Version)' == '' and '$(PackageVersion)' == ''">
     <MinVerTagPrefix>v</MinVerTagPrefix>
     <MinVerDefaultPreReleaseIdentifiers>alpha.0</MinVerDefaultPreReleaseIdentifiers>
   </PropertyGroup>

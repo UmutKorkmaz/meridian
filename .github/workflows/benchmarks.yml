@@ -1,0 +1,62 @@
+name: Benchmarks
+
+# Security review: only matrix.filter / matrix.name (internal) used in
+# expressions. The matrix.filter value is passed via env: FILTER to the
+# run: block so it cannot be used for shell injection — matches the
+# recommendation at
+# https://github.blog/security/vulnerability-research/how-to-catch-github-actions-workflow-injections-before-attackers-do/
+#
+# Note: GitHub-hosted runners are NOT reliable for absolute perf numbers
+# (shared hypervisor noise is typically ±10-30%). This workflow is intended
+# for (a) regression detection — big moves stand out — and (b) archiving
+# historical artifacts. For real tuning, run locally on dedicated hardware
+# and commit the output under benchmarks/Meridian.Benchmarks/results/.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * 1'  # Weekly Monday 03:00 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    name: BenchmarkDotNet (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - filter: "*MappingBenchmarks*"
+            name: mapping
+          - filter: "*MediatorBenchmarks*"
+            name: mediator
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Build benchmarks
+        run: dotnet build benchmarks/Meridian.Benchmarks -c Release
+
+      - name: Run benchmarks
+        env:
+          FILTER: ${{ matrix.filter }}
+        working-directory: benchmarks/Meridian.Benchmarks
+        run: dotnet run -c Release --no-build -- --filter "$FILTER" --job short --exporters json markdown
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-${{ matrix.name }}
+          path: benchmarks/Meridian.Benchmarks/BenchmarkDotNet.Artifacts/**
+          retention-days: 90

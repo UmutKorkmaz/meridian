@@ -1,0 +1,45 @@
+version: 2
+
+updates:
+  # NuGet dependencies across all csproj files in the repo
+  - package-ecosystem: nuget
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Istanbul
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - nuget
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      microsoft-extensions:
+        patterns:
+          - "Microsoft.Extensions.*"
+      xunit:
+        patterns:
+          - "xunit*"
+      test-tooling:
+        patterns:
+          - "coverlet.*"
+          - "Microsoft.NET.Test.Sdk"
+
+  # GitHub Actions versions (keep workflow actions fresh, sigstore pinning)
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Istanbul
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: chore
+      include: scope

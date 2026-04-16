@@ -30,6 +30,8 @@ public class MapperConfiguration : IConfigurationProvider
     private readonly Dictionary<(Type, Type), object> _openGenericMappings = new();
     private readonly bool _allowNullCollections;
     private readonly bool _allowNullDestinationValues;
+    private readonly int _defaultMaxDepth;
+    private readonly int _defaultMaxCollectionItems;
     private readonly Configuration.ValueTransformerCollection? _valueTransformers;
 
     /// <summary>
@@ -45,6 +47,8 @@ public class MapperConfiguration : IConfigurationProvider
 
         _allowNullCollections = expression.AllowNullCollections;
         _allowNullDestinationValues = expression.AllowNullDestinationValues;
+        _defaultMaxDepth = ValidatePositive(expression.DefaultMaxDepth, nameof(expression.DefaultMaxDepth));
+        _defaultMaxCollectionItems = ValidatePositive(expression.DefaultMaxCollectionItems, nameof(expression.DefaultMaxCollectionItems));
         _valueTransformers = expression.ValueTransformers.HasTransformers ? expression.ValueTransformers : null;
 
         CaptureOpenGenericMappings(expression);
@@ -52,6 +56,7 @@ public class MapperConfiguration : IConfigurationProvider
         CompileTypeMaps(expression, typeMaps);
         ApplyInheritance(expression, typeMaps);
         BuildPolymorphicDispatch(typeMaps);
+        CompileFastPaths(typeMaps);
         _frozenTypeMaps = typeMaps.ToFrozenDictionary();
     }
 
@@ -65,6 +70,8 @@ public class MapperConfiguration : IConfigurationProvider
 
         _allowNullCollections = expression.AllowNullCollections;
         _allowNullDestinationValues = expression.AllowNullDestinationValues;
+        _defaultMaxDepth = ValidatePositive(expression.DefaultMaxDepth, nameof(expression.DefaultMaxDepth));
+        _defaultMaxCollectionItems = ValidatePositive(expression.DefaultMaxCollectionItems, nameof(expression.DefaultMaxCollectionItems));
         _valueTransformers = expression.ValueTransformers.HasTransformers ? expression.ValueTransformers : null;
 
         CaptureOpenGenericMappings(expression);
@@ -72,7 +79,35 @@ public class MapperConfiguration : IConfigurationProvider
         CompileTypeMaps(expression, typeMaps);
         ApplyInheritance(expression, typeMaps);
         BuildPolymorphicDispatch(typeMaps);
+        CompileFastPaths(typeMaps);
         _frozenTypeMaps = typeMaps.ToFrozenDictionary();
+    }
+
+    private static int ValidatePositive(int value, string name)
+    {
+        if (value <= 0)
+            throw new ArgumentOutOfRangeException(name, value, $"{name} must be greater than 0.");
+        return value;
+    }
+
+    /// <summary>
+    /// After all TypeMaps have been built, ask <see cref="FastPathCompiler"/>
+    /// to emit a one-shot compiled delegate for each map that uses only the
+    /// simple <c>ForMember + MapFrom</c> subset. Fast paths are stored on
+    /// the type map and consumed by <see cref="MappingEngine.MapWithTypeMap"/>.
+    /// Compilation is best-effort: failures leave <c>CompiledFastPath = null</c>
+    /// and the interpreter handles the call.
+    /// </summary>
+    private void CompileFastPaths(Dictionary<(Type, Type), TypeMap> typeMaps)
+    {
+        var allowNullDest = _allowNullDestinationValues;
+        var hasTransformers = _valueTransformers is not null;
+
+        foreach (var typeMap in typeMaps.Values)
+        {
+            typeMap.CompiledFastPath =
+                FastPathCompiler.TryCompile(typeMap, allowNullDest, hasTransformers);
+        }
     }
 
     /// <inheritdoc />
@@ -335,6 +370,12 @@ public class MapperConfiguration : IConfigurationProvider
 
     /// <inheritdoc />
     public bool AllowNullDestinationValues => _allowNullDestinationValues;
+
+    /// <inheritdoc />
+    public int DefaultMaxDepth => _defaultMaxDepth;
+
+    /// <inheritdoc />
+    public int DefaultMaxCollectionItems => _defaultMaxCollectionItems;
 
     /// <inheritdoc />
     public string GetMappingPlan<TSource, TDestination>()
@@ -761,7 +802,7 @@ public class MapperConfiguration : IConfigurationProvider
         typeMap.ValidationMemberList = expr.GetValidationMemberList();
         typeMap.PreserveReferences = expr.GetPreserveReferencesEnabled();
 
-        // BeforeMap / AfterMap actions — wrap into Action<object, object>
+        // BeforeMap / AfterMap actions
         foreach (var action in expr.GetBeforeMapActions())
         {
             if (action is Delegate d)
@@ -771,6 +812,16 @@ public class MapperConfiguration : IConfigurationProvider
         {
             if (action is Delegate d)
                 typeMap.AfterMapActions.Add(WrapToObjectAction(d));
+        }
+        foreach (var actionType in expr.GetBeforeMapActionTypes())
+        {
+            if (actionType is Type type)
+                typeMap.BeforeMapActions.Add(WrapToObjectMappingAction(type));
+        }
+        foreach (var actionType in expr.GetAfterMapActionTypes())
+        {
+            if (actionType is Type type)
+                typeMap.AfterMapActions.Add(WrapToObjectMappingAction(type));
         }
 
         // Constructor parameter configs
@@ -819,6 +870,7 @@ public class MapperConfiguration : IConfigurationProvider
 
         // Member configs
         var memberConfigs = expr.GetMemberConfigs();
+        CopyIgnoredSourceMembers(typeMap, expr.GetSourceMemberConfigs());
         var hasForAllMembers = expr.GetHasForAllMembers();
         var forAllMembersAction = expr.GetForAllMembersAction();
         var hasForAllOtherMembers = expr.GetHasForAllOtherMembers();
@@ -1014,6 +1066,26 @@ public class MapperConfiguration : IConfigurationProvider
             }
         }
 
+        var beforeMapActionTypesProp = exprType.GetProperty("BeforeMapActionTypes", BindingFlags.NonPublic | BindingFlags.Instance);
+        if (beforeMapActionTypesProp?.GetValue(mappingExpression) is System.Collections.IList beforeActionTypes)
+        {
+            foreach (var actionType in beforeActionTypes)
+            {
+                if (actionType is Type type)
+                    typeMap.BeforeMapActions.Add(WrapToObjectMappingAction(type));
+            }
+        }
+
+        var afterMapActionTypesProp = exprType.GetProperty("AfterMapActionTypes", BindingFlags.NonPublic | BindingFlags.Instance);
+        if (afterMapActionTypesProp?.GetValue(mappingExpression) is System.Collections.IList afterActionTypes)
+        {
+            foreach (var actionType in afterActionTypes)
+            {
+                if (actionType is Type type)
+                    typeMap.AfterMapActions.Add(WrapToObjectMappingAction(type));
+            }
+        }
+
         var preserveRefsProp = exprType.GetProperty("PreserveReferencesEnabled", BindingFlags.NonPublic | BindingFlags.Instance);
         if (preserveRefsProp?.GetValue(mappingExpression) is bool preserveRefs && preserveRefs)
             typeMap.PreserveReferences = true;
@@ -1068,6 +1140,11 @@ public class MapperConfiguration : IConfigurationProvider
 
         var memberConfigsProp = exprType.GetProperty("MemberConfigs", BindingFlags.NonPublic | BindingFlags.Instance);
         var memberConfigs = memberConfigsProp?.GetValue(mappingExpression) as System.Collections.IDictionary;
+        var sourceMemberConfigsProp = exprType.GetProperty("SourceMemberConfigs", BindingFlags.NonPublic | BindingFlags.Instance);
+        if (sourceMemberConfigsProp?.GetValue(mappingExpression) is System.Collections.IDictionary sourceMemberConfigs)
+        {
+            CopyIgnoredSourceMembers(typeMap, sourceMemberConfigs);
+        }
 
         var hasForAllMembersProp = exprType.GetProperty("HasForAllMembers", BindingFlags.NonPublic | BindingFlags.Instance);
         var forAllMembersActionProp = exprType.GetProperty("ForAllMembersAction", BindingFlags.NonPublic | BindingFlags.Instance);
@@ -1278,6 +1355,10 @@ public class MapperConfiguration : IConfigurationProvider
             propMap.HasNullSubstitute = true;
             propMap.NullSubstitute = config.GetNullSubstituteValue();
         }
+
+        propMap.ExplicitExpansion = config.GetExplicitExpansion();
+        propMap.UseDestinationValue = config.GetUseDestinationValue();
+        propMap.AllowNull = config.GetAllowNull();
     }
 
     /// <summary>
@@ -1305,6 +1386,10 @@ public class MapperConfiguration : IConfigurationProvider
             propMap.HasNullSubstitute = true;
             propMap.NullSubstitute = config.GetNullSubstituteValue();
         }
+
+        propMap.ExplicitExpansion = config.GetExplicitExpansion();
+        propMap.UseDestinationValue = config.GetUseDestinationValue();
+        propMap.AllowNull = config.GetAllowNull();
     }
 
     private static void ApplyMemberConfig(PropertyMap propMap, object memberConfig, Type sourceType)
@@ -1394,6 +1479,15 @@ public class MapperConfiguration : IConfigurationProvider
             propMap.HasNullSubstitute = true;
             propMap.NullSubstitute = configType.GetProperty("NullSubstituteValue", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(memberConfig);
         }
+
+        if (configType.GetProperty("ExplicitExpansionEnabled", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(memberConfig) is bool explicitExpansion)
+            propMap.ExplicitExpansion = explicitExpansion;
+
+        if (configType.GetProperty("UseDestinationValueSetting", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(memberConfig) is bool useDestinationValue)
+            propMap.UseDestinationValue = useDestinationValue;
+
+        if (configType.GetProperty("AllowNullSetting", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(memberConfig) is bool allowNull)
+            propMap.AllowNull = allowNull;
     }
 
     private static void ApplyForAllMembersConfig(PropertyMap propMap, object memberConfig)
@@ -1428,6 +1522,15 @@ public class MapperConfiguration : IConfigurationProvider
             propMap.HasNullSubstitute = true;
             propMap.NullSubstitute = configType.GetProperty("NullSubstituteValue", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(memberConfig);
         }
+
+        if (configType.GetProperty("ExplicitExpansionEnabled", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(memberConfig) is bool explicitExpansion)
+            propMap.ExplicitExpansion = explicitExpansion;
+
+        if (configType.GetProperty("UseDestinationValueSetting", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(memberConfig) is bool useDestinationValue)
+            propMap.UseDestinationValue = useDestinationValue;
+
+        if (configType.GetProperty("AllowNullSetting", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(memberConfig) is bool allowNull)
+            propMap.AllowNull = allowNull;
     }
 
     /// <summary>
@@ -1448,11 +1551,62 @@ public class MapperConfiguration : IConfigurationProvider
     }
 
     /// <summary>
-    /// Wraps a typed Action&lt;TSource, TDest&gt; into Action&lt;object, object&gt;.
+    /// Wraps a typed Action&lt;TSource, TDest&gt; into Action&lt;object, object, ResolutionContext&gt;.
     /// </summary>
-    private static Action<object, object> WrapToObjectAction(Delegate del)
+    private static Action<object, object, ResolutionContext> WrapToObjectAction(Delegate del)
     {
-        return (src, dest) => del.DynamicInvoke(src, dest);
+        return (src, dest, _) => del.DynamicInvoke(src, dest);
+    }
+
+    /// <summary>
+    /// Wraps a DI-friendly <see cref="IMappingAction{TSource,TDestination}"/> into an object-based action.
+    /// </summary>
+    private static Action<object, object, ResolutionContext> WrapToObjectMappingAction(Type actionType)
+    {
+        var processMethod = MethodLookupCache.GetInvocableMethod(actionType, "Process")
+            ?? throw new InvalidOperationException(
+                $"Mapping action '{actionType.FullName}' does not expose a Process method.");
+
+        return (src, dest, context) =>
+        {
+            var action = ResolveConfiguredService(actionType, context);
+            processMethod.Invoke(action, [src, dest, context]);
+        };
+    }
+
+    private static void CopyIgnoredSourceMembers(TypeMap typeMap, System.Collections.IDictionary sourceMemberConfigs)
+    {
+        foreach (System.Collections.DictionaryEntry entry in sourceMemberConfigs)
+        {
+            if (entry.Key is not string sourceMemberName || entry.Value == null)
+                continue;
+
+            if (entry.Value is SourceMemberConfigurationExpression typed && !typed.ShouldValidate)
+            {
+                typeMap.IgnoredSourceMembers.Add(sourceMemberName);
+                continue;
+            }
+
+            var configType = entry.Value.GetType();
+            if (configType.GetProperty("ShouldValidate", BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(entry.Value) is bool shouldValidate
+                && !shouldValidate)
+            {
+                typeMap.IgnoredSourceMembers.Add(sourceMemberName);
+            }
+        }
+    }
+
+    private static object ResolveConfiguredService(Type serviceType, ResolutionContext context)
+    {
+        if (context.ServiceProvider != null)
+        {
+            var service = context.ServiceProvider.GetService(serviceType);
+            if (service != null)
+                return service;
+        }
+
+        return Activator.CreateInstance(serviceType)
+            ?? throw new InvalidOperationException($"Could not create instance of '{serviceType.FullName}'.");
     }
 
     /// <summary>

@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Reflection;
 using Meridian.Mapping.Configuration;
 
@@ -20,6 +21,12 @@ public class MapperConfigurationExpression : IMapperConfigurationExpression
     public bool AllowNullDestinationValues { get; set; } = true;
 
     /// <inheritdoc />
+    public int DefaultMaxDepth { get; set; } = 64;
+
+    /// <inheritdoc />
+    public int DefaultMaxCollectionItems { get; set; } = 10_000;
+
+    /// <inheritdoc />
     public ValueTransformerCollection ValueTransformers { get; } = new();
 
     /// <inheritdoc />
@@ -29,6 +36,12 @@ public class MapperConfigurationExpression : IMapperConfigurationExpression
         var expression = new MappingExpression<TSource, TDestination>(RegisterReverseMap);
         MappingExpressions[key] = expression;
         return expression;
+    }
+
+    /// <inheritdoc />
+    public IMappingExpression<TSource, TDestination> CreateProjection<TSource, TDestination>()
+    {
+        return CreateMap<TSource, TDestination>();
     }
 
     /// <inheritdoc />
@@ -78,6 +91,32 @@ public class MapperConfigurationExpression : IMapperConfigurationExpression
                 AddProfile(profile);
             }
         }
+    }
+
+    /// <inheritdoc />
+    public void AddMaps(params Assembly[] assemblies)
+    {
+        AddProfiles(assemblies);
+    }
+
+    /// <inheritdoc />
+    public void AddMaps(params Type[] markerTypes)
+    {
+        ArgumentNullException.ThrowIfNull(markerTypes);
+        AddMaps(markerTypes.Select(static t => t.Assembly).Distinct().ToArray());
+    }
+
+    /// <inheritdoc />
+    public void AddMaps(params string[] assemblyNames)
+    {
+        ArgumentNullException.ThrowIfNull(assemblyNames);
+
+        var assemblies = assemblyNames
+            .Where(static name => !string.IsNullOrWhiteSpace(name))
+            .Select(Assembly.Load)
+            .ToArray();
+
+        AddMaps(assemblies);
     }
 
     internal void RegisterReverseMap(Type sourceType, Type destType, object expression)

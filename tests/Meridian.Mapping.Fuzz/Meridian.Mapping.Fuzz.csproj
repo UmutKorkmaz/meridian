@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Meridian.Mapping.Fuzz</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <!--
+      This is not a xUnit test project. It is a fuzzer harness intended
+      to be driven by AFL (via SharpFuzz) or by running the binary
+      directly with a seed input file. The CI-friendly property-based
+      tests live in tests/Meridian.Mapping.Tests/PropertyBasedTests.cs;
+      this project is exclusively for coverage-guided byte-level fuzzing.
+    -->
+    <IsTestProject>false</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SharpFuzz" Version="2.2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Meridian.Mapping\Meridian.Mapping.csproj" />
+  </ItemGroup>
+
+</Project>

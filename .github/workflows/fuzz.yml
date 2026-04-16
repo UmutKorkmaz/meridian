@@ -1,0 +1,84 @@
+name: Fuzz
+
+# Security review: only scheduled/workflow_dispatch triggers and static
+# env vars used. No github.event.* fields are interpolated into run: blocks.
+# SharpFuzz + AFL requires an OS-level AFL install and is not reliable on
+# GitHub-hosted runners. Until a dedicated runner with AFL is provisioned,
+# this workflow runs the FsCheck property-based tests at elevated
+# iteration counts (10 000 vs the default 100). That covers the same
+# invariants — no StackOverflow, no OOM, no undocumented exceptions — at
+# lower fidelity but on every scheduled run. See
+# tests/Meridian.Mapping.Fuzz/README.md for the local coverage-guided
+# fuzz workflow.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 2 * * *'  # Nightly at 02:00 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  property-tests-high-count:
+    name: FsCheck properties (10k iterations)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Build tests
+        run: dotnet build tests/Meridian.Mapping.Tests -c Release
+
+      - name: Run FsCheck property tests with elevated iteration count
+        env:
+          FsCheck_MaxTest: "10000"
+        run: >
+          dotnet test tests/Meridian.Mapping.Tests -c Release --no-build
+          --filter "FullyQualifiedName~PropertyBasedTests"
+          --logger "console;verbosity=detailed"
+          --logger "trx;LogFileName=fuzz-properties.trx"
+          --results-directory ./fuzz-results
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-property-results
+          path: ./fuzz-results/
+          retention-days: 30
+
+  # Uncomment once a runner with AFL is provisioned:
+  #
+  # sharp-fuzz-afl:
+  #   name: SharpFuzz + AFL (1 hour)
+  #   runs-on: self-hosted-with-afl
+  #   timeout-minutes: 90
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-dotnet@v4
+  #       with:
+  #         global-json-file: global.json
+  #     - run: dotnet tool install --global SharpFuzz.CommandLine
+  #     - run: dotnet build tests/Meridian.Mapping.Fuzz -c Release
+  #     - run: sharpfuzz tests/Meridian.Mapping.Fuzz/bin/Release/net10.0/Meridian.Mapping.dll
+  #     - run: |
+  #         afl-fuzz -V 3600 \
+  #           -i tests/Meridian.Mapping.Fuzz/corpus \
+  #           -o findings -- \
+  #           tests/Meridian.Mapping.Fuzz/bin/Release/net10.0/Meridian.Mapping.Fuzz @@
+  #     - uses: actions/upload-artifact@v4
+  #       if: always()
+  #       with:
+  #         name: fuzz-findings
+  #         path: findings/
+  #         retention-days: 90

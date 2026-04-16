@@ -22,6 +22,7 @@ obj/
 TestResult*
 TestResults/
 artifacts/
+BenchmarkDotNet.Artifacts/
 
 # OS junk
 .DS_Store

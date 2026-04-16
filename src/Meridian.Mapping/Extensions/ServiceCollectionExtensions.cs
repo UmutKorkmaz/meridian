@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Reflection;
 using Meridian.Mapping.Converters;
 using Microsoft.Extensions.DependencyInjection;
@@ -26,15 +27,7 @@ public static class ServiceCollectionExtensions
 
         foreach (var assembly in assemblies)
         {
-            // Discover and add profiles
-            var profileTypes = assembly.GetTypes()
-                .Where(t => t.IsClass && !t.IsAbstract && typeof(Profile).IsAssignableFrom(t));
-
-            foreach (var profileType in profileTypes)
-            {
-                var profile = (Profile)Activator.CreateInstance(profileType)!;
-                configExpression.AddProfile(profile);
-            }
+            configExpression.AddMaps(assembly);
 
             // Register converters and resolvers as transient
             RegisterConverters(services, assembly);
@@ -46,6 +39,15 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IMapper>(sp => new Mapper(config, sp));
 
         return services;
+    }
+
+    /// <summary>
+    /// Adds Meridian.Mapping services using marker types to discover assemblies.
+    /// </summary>
+    public static IServiceCollection AddMeridianMapping(this IServiceCollection services, params Type[] markerTypes)
+    {
+        ArgumentNullException.ThrowIfNull(markerTypes);
+        return AddMeridianMapping(services, markerTypes.Select(static t => t.Assembly).Distinct().ToArray());
     }
 
     /// <summary>
@@ -65,6 +67,30 @@ public static class ServiceCollectionExtensions
         services.AddScoped<IMapper>(sp => new Mapper(config, sp));
 
         return services;
+    }
+
+    /// <summary>
+    /// AutoMapper-style alias for <see cref="AddMeridianMapping(IServiceCollection,Assembly[])"/>.
+    /// </summary>
+    public static IServiceCollection AddAutoMapper(this IServiceCollection services, params Assembly[] assemblies)
+    {
+        return AddMeridianMapping(services, assemblies);
+    }
+
+    /// <summary>
+    /// AutoMapper-style alias for <see cref="AddMeridianMapping(IServiceCollection,Type[])"/>.
+    /// </summary>
+    public static IServiceCollection AddAutoMapper(this IServiceCollection services, params Type[] markerTypes)
+    {
+        return AddMeridianMapping(services, markerTypes);
+    }
+
+    /// <summary>
+    /// AutoMapper-style alias for <see cref="AddMeridianMapping(IServiceCollection,Action{IMapperConfigurationExpression})"/>.
+    /// </summary>
+    public static IServiceCollection AddAutoMapper(this IServiceCollection services, Action<IMapperConfigurationExpression> configure)
+    {
+        return AddMeridianMapping(services, configure);
     }
 
     private static void RegisterConverters(IServiceCollection services, Assembly assembly)

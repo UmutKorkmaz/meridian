@@ -1,35 +1,43 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>net8.0;net9.0;net10.0;net11.0</TargetFrameworks>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
+    <IsPackable>true</IsPackable>
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <RootNamespace>Meridian.Mapping</RootNamespace>
     <AssemblyName>Meridian.Mapping</AssemblyName>
-    <Title>Meridian.Mapping</Title>
-    <Company>Meridian</Company>
-    <Version>1.0.1</Version>
-    <Authors>Meridian Contributors</Authors>
-    <Description>A lightweight, high-performance object-to-object mapping library for .NET. Drop-in replacement for AutoMapper with zero licensing fees.</Description>
     <PackageId>Meridian.Mapping</PackageId>
-    <PackageTags>mapping;automapper;object-mapper;dto;transform</PackageTags>
-    <RepositoryType>git</RepositoryType>
-    <RepositoryUrl>https://github.com/UmutKorkmaz/meridian</RepositoryUrl>
-    <PackageProjectUrl>https://github.com/UmutKorkmaz/meridian</PackageProjectUrl>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PublishRepositoryUrl>true</PublishRepositoryUrl>
-    <Copyright>Copyright (c) 2026 Meridian Contributors</Copyright>
-    <IncludeSymbols>true</IncludeSymbols>
-    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <Version>2.1.0</Version>
+    <Description>A lightweight, high-performance object-to-object mapping library for .NET. Reflection today with safe-by-default recursion and collection caps; opt-in source-gen for hot paths.</Description>
+    <PackageTags>mapping;automapper;object-mapper;dto;transform;aot</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <GenerateDocumentationFile>true</GenerateDocumentationFile>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.3" />
-    <None Include="..\\..\\LICENSE" Pack="true" PackagePath="" />
-    <None Include="..\\..\\README.md" Pack="true" PackagePath="" />
-    <None Include="..\\..\\NOTICE" Pack="true" PackagePath="" />
+  </ItemGroup>
+
+  <!--
+    Ship the source generator as an analyzer alongside Meridian.Mapping
+    so consumers get [GenerateMapper] for free without a second package
+    reference. ReferenceOutputAssembly=false keeps the generator's DLL
+    out of the runtime output — it's only needed at compile time.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\Meridian.Mapping.Generators\Meridian.Mapping.Generators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <!--
+    Explicitly pack the generator DLL under analyzers/dotnet/cs so NuGet
+    installs it as an analyzer rather than a runtime reference for
+    downstream consumers of the Meridian.Mapping package.
+  -->
+  <ItemGroup>
+    <None Include="..\Meridian.Mapping.Generators\bin\$(Configuration)\netstandard2.0\Meridian.Mapping.Generators.dll"
+          Pack="true"
+          PackagePath="analyzers/dotnet/cs"
+          Visible="false" />
   </ItemGroup>
 
 </Project>

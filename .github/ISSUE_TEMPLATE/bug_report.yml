@@ -1,0 +1,63 @@
+name: Bug report
+description: Report a defect in Meridian.Mapping or Meridian.Mediator
+title: "[bug]: "
+labels: [bug, triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report. If you believe this
+        is a security vulnerability, please stop and report privately via
+        [SECURITY.md](../SECURITY.md) instead.
+
+  - type: input
+    id: version
+    attributes:
+      label: Meridian package version
+      placeholder: "Meridian.Mapping 1.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: dotnet
+    attributes:
+      label: .NET SDK version
+      description: Output of `dotnet --version`
+      placeholder: "10.0.103"
+    validations:
+      required: true
+
+  - type: input
+    id: platform
+    attributes:
+      label: Operating system
+      placeholder: "Ubuntu 24.04 / Windows 11 / macOS 14.5"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you observe? What did you expect?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: |
+        Smallest code snippet that reproduces the issue. A gist or linkable
+        repo is ideal. Stack traces go in the code block below.
+      render: csharp
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Stack trace / exception output
+      render: text
+    validations:
+      required: false

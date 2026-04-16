@@ -1,3 +1,5 @@
+using Meridian.Mapping.Execution;
+
 namespace Meridian.Mapping.Configuration;
 
 /// <summary>
@@ -6,9 +8,15 @@ namespace Meridian.Mapping.Configuration;
 /// assigned to the destination member. Multiple transformers can be registered
 /// for the same type and they are applied in registration order.
 /// </summary>
+/// <remarks>
+/// Transformer delegates are wrapped into <c>Func&lt;object, object?&gt;</c>
+/// form at registration time via <see cref="DelegateCompiler.WrapFunc1"/>,
+/// so the hot <see cref="Apply"/> path avoids <see cref="Delegate.DynamicInvoke"/>
+/// entirely.
+/// </remarks>
 public class ValueTransformerCollection
 {
-    private readonly List<(Type ValueType, Delegate Transformer)> _transformers = new();
+    private readonly List<(Type ValueType, Func<object, object?> Wrapper)> _transformers = new();
 
     /// <summary>
     /// Adds a value transformer for the specified value type.
@@ -19,7 +27,7 @@ public class ValueTransformerCollection
     public void Add<TValue>(Func<TValue, TValue> transformer)
     {
         ArgumentNullException.ThrowIfNull(transformer);
-        _transformers.Add((typeof(TValue), transformer));
+        _transformers.Add((typeof(TValue), DelegateCompiler.WrapFunc1(transformer)));
     }
 
     /// <summary>
@@ -32,11 +40,11 @@ public class ValueTransformerCollection
     {
         var valueType = value.GetType();
 
-        foreach (var (type, transformer) in _transformers)
+        foreach (var (type, wrapper) in _transformers)
         {
             if (type.IsAssignableFrom(valueType))
             {
-                value = transformer.DynamicInvoke(value)!;
+                value = wrapper(value)!;
             }
         }
 

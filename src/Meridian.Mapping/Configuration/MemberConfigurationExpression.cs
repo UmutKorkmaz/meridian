@@ -29,6 +29,9 @@ public class MemberConfigurationExpression<TSource, TDestination> : IMemberConfi
     internal Delegate? MemberConverterFunc { get; private set; }
     internal LambdaExpression? MemberConverterSourceExpression { get; private set; }
     internal object? MemberConverterInstance { get; private set; }
+    internal bool ExplicitExpansionEnabled { get; private set; }
+    internal bool? UseDestinationValueSetting { get; private set; }
+    internal bool? AllowNullSetting { get; private set; }
 
     /// <inheritdoc />
     public void MapFrom<TResult>(Expression<Func<TSource, TResult>> mapExpression)
@@ -83,6 +86,36 @@ public class MemberConfigurationExpression<TSource, TDestination> : IMemberConfi
     {
         NullSubstituteValue = substitution;
         HasNullSubstitute = true;
+    }
+
+    /// <inheritdoc />
+    public void ExplicitExpansion()
+    {
+        ExplicitExpansionEnabled = true;
+    }
+
+    /// <inheritdoc />
+    public void UseDestinationValue()
+    {
+        UseDestinationValueSetting = true;
+    }
+
+    /// <inheritdoc />
+    public void DoNotUseDestinationValue()
+    {
+        UseDestinationValueSetting = false;
+    }
+
+    /// <inheritdoc />
+    public void AllowNull()
+    {
+        AllowNullSetting = true;
+    }
+
+    /// <inheritdoc />
+    public void DoNotAllowNull()
+    {
+        AllowNullSetting = false;
     }
 
     /// <inheritdoc />
@@ -141,4 +174,7 @@ public class MemberConfigurationExpression<TSource, TDestination> : IMemberConfi
     Delegate? ICompiledMemberConfig.GetPreConditionFunc() => PreConditionFunc;
     bool ICompiledMemberConfig.GetHasNullSubstitute() => HasNullSubstitute;
     object? ICompiledMemberConfig.GetNullSubstituteValue() => NullSubstituteValue;
+    bool ICompiledMemberConfig.GetExplicitExpansion() => ExplicitExpansionEnabled;
+    bool? ICompiledMemberConfig.GetUseDestinationValue() => UseDestinationValueSetting;
+    bool? ICompiledMemberConfig.GetAllowNull() => AllowNullSetting;
 }

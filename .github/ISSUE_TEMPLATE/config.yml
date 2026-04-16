@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/UmutKorkmaz/meridian/security/advisories/new
+    about: Report privately via GitHub Security Advisory. Do NOT open a public issue.
+  - name: Question / usage help
+    url: https://github.com/UmutKorkmaz/meridian/discussions
+    about: Ask in Discussions. Bug tracker is for confirmed defects only.

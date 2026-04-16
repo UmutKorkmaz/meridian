@@ -37,23 +37,8 @@ public class MappingEngine
     {
         if (source == null)
         {
-            // For collection types, respect AllowNullCollections setting
-            if (!destinationType.IsValueType && IsCollectionType(destinationType, out var destElemType))
-            {
-                if (_configurationProvider.AllowNullCollections)
-                    return null;
-
-                return CreateEmptyCollection(destinationType, destElemType!);
-            }
-
-            return destinationType.IsValueType ? Activator.CreateInstance(destinationType) : null;
+            return CreateDefaultValue(destinationType, allowNullOverride: null);
         }
-
-        var declaredSourceType = sourceType;
-
-        // Runtime source type may be more derived than the declared source type.
-        var runtimeSourceType = source.GetType();
-        sourceType = runtimeSourceType;
 
         // Check for collection mapping
         if (IsCollectionMapping(sourceType, destinationType, out var srcElementType, out var destElementType))
@@ -61,27 +46,12 @@ public class MappingEngine
             return MapCollection(source, sourceType, destinationType, srcElementType!, destElementType!, context);
         }
 
-        // Try to find type map
-        var typeMap = _configurationProvider.FindTypeMap(sourceType, destinationType);
-
-        // If no exact runtime map exists, fall back to declared map and select a derived dispatch target.
-        if (typeMap == null)
-        {
-            var baseTypeMap = _configurationProvider.FindTypeMap(declaredSourceType, destinationType);
-            if (baseTypeMap != null)
-            {
-                typeMap = SelectMostSpecificDerivedTypeMap(baseTypeMap, runtimeSourceType, destinationType) ?? baseTypeMap;
-            }
-        }
-
-        // If exact map found, still try to dispatch to a more specific derived map
-        if (typeMap != null)
-        {
-            typeMap = SelectMostSpecificDerivedTypeMap(typeMap, runtimeSourceType, destinationType) ?? typeMap;
-        }
+        var typeMap = ResolveTypeMap(source, sourceType, destinationType);
 
         if (typeMap == null)
         {
+            sourceType = source.GetType();
+
             // Handle assignable types (same type, base type, etc.)
             if (destinationType.IsAssignableFrom(sourceType))
                 return source;
@@ -112,18 +82,83 @@ public class MappingEngine
     /// </summary>
     public object MapToExisting(object source, object destination, Type sourceType, Type destinationType, ResolutionContext context)
     {
-        var typeMap = _configurationProvider.FindTypeMap(sourceType, destinationType)
+        if (IsCollectionMapping(sourceType, destinationType, out var srcElementType, out var destElementType))
+        {
+            var reusedCollection = TryMapCollectionOntoExisting(
+                source,
+                destination,
+                srcElementType!,
+                destElementType!,
+                context);
+
+            if (reusedCollection != null)
+                return reusedCollection;
+        }
+
+        var typeMap = ResolveTypeMap(source, sourceType, destinationType)
             ?? throw new InvalidOperationException(
                 $"Missing mapping configuration for {sourceType.FullName} -> {destinationType.FullName}.");
 
         return MapProperties(source, destination, typeMap, context);
     }
 
+    private TypeMap? ResolveTypeMap(object source, Type declaredSourceType, Type destinationType)
+    {
+        var runtimeSourceType = source.GetType();
+        var typeMap = _configurationProvider.FindTypeMap(runtimeSourceType, destinationType);
+
+        if (typeMap == null)
+        {
+            var baseTypeMap = _configurationProvider.FindTypeMap(declaredSourceType, destinationType);
+            if (baseTypeMap != null)
+            {
+                typeMap = SelectMostSpecificDerivedTypeMap(baseTypeMap, runtimeSourceType, destinationType) ?? baseTypeMap;
+            }
+        }
+
+        if (typeMap != null)
+        {
+            typeMap = SelectMostSpecificDerivedTypeMap(typeMap, runtimeSourceType, destinationType) ?? typeMap;
+        }
+
+        return typeMap;
+    }
+
+    private object? CreateDefaultValue(Type destinationType, bool? allowNullOverride)
+    {
+        if (!destinationType.IsValueType && IsCollectionType(destinationType, out var destElemType))
+        {
+            if (allowNullOverride ?? _configurationProvider.AllowNullCollections)
+                return null;
+
+            return CreateEmptyCollection(destinationType, destElemType!);
+        }
+
+        if (!destinationType.IsValueType && (allowNullOverride ?? true))
+            return null;
+
+        return destinationType.IsValueType ? Activator.CreateInstance(destinationType) : null;
+    }
+
     private object? MapWithTypeMap(object source, TypeMap typeMap, ResolutionContext context)
     {
-        // Check max depth
-        if (typeMap.MaxDepth.HasValue && context.Depth >= typeMap.MaxDepth.Value)
+        // Check max depth — per-map override wins, otherwise fall back to the
+        // global default (default 64, matching System.Text.Json / Newtonsoft v13+).
+        // Hitting the cap returns default(TDestination) instead of throwing,
+        // mirroring AutoMapper's MaxDepth semantics. The only difference vs
+        // AutoMapper v14 is that the cap is ALWAYS active — no opt-in required.
+        var effectiveMaxDepth = typeMap.MaxDepth ?? _configurationProvider.DefaultMaxDepth;
+        if (context.Depth >= effectiveMaxDepth)
             return typeMap.DestinationType.IsValueType ? Activator.CreateInstance(typeMap.DestinationType) : null;
+
+        // Fast path: if the TypeMap uses only the simple ForMember+MapFrom
+        // subset, a single compiled Func<> replaces the per-property
+        // interpreter. FastPathCompiler guarantees behavioural equivalence
+        // with the interpreter for the shapes it accepts. The engine + context
+        // are passed through so nested calls respect DefaultMaxDepth and
+        // PreserveReferences identity.
+        if (typeMap.CompiledFastPath is { } fast)
+            return fast(source, this, context);
 
         // PreserveReferences: check if we have already mapped this source object
         if (typeMap.PreserveReferences && context.TryGetMapped(source, typeMap.DestinationType, out var cached))
@@ -142,14 +177,13 @@ public class MappingEngine
             return typeMap.CompiledTypeConverter(source, defaultDest, context);
         }
 
-        // Type converter type (DI)
+        // Type converter type (DI). Method lookup is cached.
         if (typeMap.TypeConverterType != null)
         {
             var converter = ResolveService(typeMap.TypeConverterType, context);
-            var convertMethod = typeMap.TypeConverterType.GetMethod("Convert")
-                ?? typeMap.TypeConverterType.GetInterfaces()
-                    .SelectMany(i => i.GetMethods())
-                    .First(m => m.Name == "Convert");
+            var convertMethod = MethodLookupCache.GetInvocableMethod(typeMap.TypeConverterType, "Convert")
+                ?? throw new InvalidOperationException(
+                    $"Type converter '{typeMap.TypeConverterType.FullName}' does not expose a Convert method.");
             var defaultDest = typeMap.DestinationType.IsValueType
                 ? Activator.CreateInstance(typeMap.DestinationType)
                 : null;
@@ -208,10 +242,10 @@ public class MappingEngine
             }
         }
 
-        // Execute BeforeMap actions — compiled into Action<object, object> wrappers
+        // Execute BeforeMap actions
         foreach (var beforeAction in typeMap.BeforeMapActions)
         {
-            beforeAction(source, destination);
+            beforeAction(source, destination, context);
         }
 
         foreach (var propertyMap in typeMap.PropertyMaps)
@@ -219,10 +253,10 @@ public class MappingEngine
             if (propertyMap.Ignored)
                 continue;
 
-            // Pre-condition
+            // Pre-condition — typed wrapper avoids DynamicInvoke reflection cost.
             if (propertyMap.PreCondition != null)
             {
-                var preResult = (bool)propertyMap.PreCondition.DynamicInvoke(source)!;
+                var preResult = DelegateCompiler.WrapPredicate(propertyMap.PreCondition)(source);
                 if (!preResult) continue;
             }
 
@@ -239,22 +273,16 @@ public class MappingEngine
 
                 if (propertyMap.MemberConverterInstance != null)
                 {
-                    var convertMethod = propertyMap.MemberConverterInstance.GetType().GetMethod("Convert")
-                        ?? propertyMap.MemberConverterInstance.GetType().GetInterfaces()
-                            .SelectMany(i => i.GetMethods())
-                            .FirstOrDefault(m => m.Name == "Convert");
-
-                    if (convertMethod == null)
-                    {
-                        throw new InvalidOperationException(
-                            $"Member converter '{propertyMap.MemberConverterInstance.GetType().FullName}' does not expose Convert method.");
-                    }
+                    var converterType = propertyMap.MemberConverterInstance.GetType();
+                    var convertMethod = MethodLookupCache.GetInvocableMethod(converterType, "Convert")
+                        ?? throw new InvalidOperationException(
+                            $"Member converter '{converterType.FullName}' does not expose a Convert method.");
 
                     value = convertMethod.Invoke(propertyMap.MemberConverterInstance, [sourceMember, context]);
                 }
                 else if (propertyMap.MemberConverterFunc != null)
                 {
-                    value = propertyMap.MemberConverterFunc.DynamicInvoke(sourceMember);
+                    value = DelegateCompiler.WrapFunc1(propertyMap.MemberConverterFunc)(sourceMember!);
                 }
                 else
                 {
@@ -271,7 +299,7 @@ public class MappingEngine
             }
             else if (propertyMap.CustomMapFunc != null)
             {
-                value = propertyMap.CustomMapFunc.DynamicInvoke(source, destination);
+                value = DelegateCompiler.WrapFunc2(propertyMap.CustomMapFunc)(source, destination);
             }
             else if (propertyMap.CompiledGetter != null)
             {
@@ -286,17 +314,17 @@ public class MappingEngine
             if (value == null && propertyMap.HasNullSubstitute)
                 value = propertyMap.NullSubstitute;
 
-            // Condition
+            // Condition — typed wrapper.
             if (propertyMap.Condition != null)
             {
-                var condResult = (bool)propertyMap.Condition.DynamicInvoke(source)!;
+                var condResult = DelegateCompiler.WrapPredicate(propertyMap.Condition)(source);
                 if (!condResult) continue;
             }
 
-            // 3-arg Condition (src, dest, resolvedMember)
+            // 3-arg Condition (src, dest, resolvedMember) — typed wrapper.
             if (propertyMap.Condition3Arg != null)
             {
-                var condResult = (bool)propertyMap.Condition3Arg.DynamicInvoke(source, destination, value)!;
+                var condResult = DelegateCompiler.WrapPredicate3(propertyMap.Condition3Arg)(source, destination, value);
                 if (!condResult) continue;
             }
 
@@ -305,9 +333,14 @@ public class MappingEngine
 
             if (value == null && IsCollectionType(destPropType, out var destElemType))
             {
-                value = _configurationProvider.AllowNullCollections
+                value = (propertyMap.AllowNull ?? _configurationProvider.AllowNullCollections)
                     ? null
                     : CreateEmptyCollection(destPropType, destElemType!);
+            }
+
+            if (value != null && propertyMap.UseDestinationValue == true)
+            {
+                value = TryMapOntoExistingDestinationValue(value, destination, propertyMap, childContext);
             }
 
             if (value != null && !destPropType.IsAssignableFrom(value.GetType()))
@@ -322,7 +355,7 @@ public class MappingEngine
             }
 
             // AllowNullDestinationValues: when false, skip setting null on reference-type properties
-            if (value == null && !_configurationProvider.AllowNullDestinationValues
+            if (value == null && !(propertyMap.AllowNull ?? _configurationProvider.AllowNullDestinationValues)
                 && !destPropType.IsValueType
                 && !IsCollectionType(destPropType, out _))
             {
@@ -342,10 +375,85 @@ public class MappingEngine
             }
         }
 
-        // Execute AfterMap actions — compiled into Action<object, object> wrappers
+        // Execute AfterMap actions
         foreach (var afterAction in typeMap.AfterMapActions)
         {
-            afterAction(source, destination);
+            afterAction(source, destination, context);
+        }
+
+        return destination;
+    }
+
+    private object? TryMapOntoExistingDestinationValue(
+        object value,
+        object destination,
+        PropertyMap propertyMap,
+        ResolutionContext context)
+    {
+        var existingValue = GetCurrentDestinationValue(destination, propertyMap);
+        if (existingValue == null)
+            return value;
+
+        var destPropType = propertyMap.DestinationProperty.PropertyType;
+        var valueType = value.GetType();
+
+        if (IsCollectionMapping(valueType, destPropType, out var srcElementType, out var destElementType))
+        {
+            var reusedCollection = TryMapCollectionOntoExisting(
+                value,
+                existingValue,
+                srcElementType!,
+                destElementType!,
+                context);
+
+            if (reusedCollection != null)
+                return reusedCollection;
+        }
+
+        var nestedTypeMap = ResolveTypeMap(value, valueType, destPropType);
+        if (nestedTypeMap != null)
+            return MapProperties(value, existingValue, nestedTypeMap, context);
+
+        return value;
+    }
+
+    private object? GetCurrentDestinationValue(object destination, PropertyMap propertyMap)
+    {
+        if (propertyMap.DestinationPropertyChain == null || propertyMap.DestinationPropertyChain.Length <= 1)
+            return propertyMap.DestinationProperty.GetValue(destination);
+
+        object? current = destination;
+        for (int i = 0; i < propertyMap.DestinationPropertyChain.Length; i++)
+        {
+            if (current == null)
+                return null;
+
+            current = propertyMap.DestinationPropertyChain[i].GetValue(current);
+        }
+
+        return current;
+    }
+
+    private object? TryMapCollectionOntoExisting(
+        object source,
+        object destination,
+        Type srcElementType,
+        Type destElementType,
+        ResolutionContext context)
+    {
+        if (source is not IEnumerable enumerable || destination is not IList destinationList || destination is Array)
+            return null;
+
+        destinationList.Clear();
+        foreach (var item in enumerable)
+        {
+            if (item == null)
+            {
+                destinationList.Add(destElementType.IsValueType ? Activator.CreateInstance(destElementType) : null);
+                continue;
+            }
+
+            destinationList.Add(Map(item, srcElementType, destElementType, context));
         }
 
         return destination;
@@ -408,9 +516,38 @@ public class MappingEngine
             return CreateEmptyCollection(destType, destElementType);
         }
 
+        var maxItems = _configurationProvider.DefaultMaxCollectionItems;
+
+        // Fast path: ICollection/ICollection<T>/array expose Count cheaply,
+        // so we can reject oversized input before touching a single element.
+        // We check both the non-generic and the generic interfaces because a
+        // type can implement one without the other (e.g. custom collection
+        // classes that only expose ICollection<T>).
+        var knownCount = GetKnownCount(source);
+        if (knownCount is int fastCount && fastCount > maxItems)
+        {
+            throw new MeridianMappingLimitException(
+                MeridianMappingLimit.MaxCollectionItems,
+                maxItems,
+                fastCount,
+                sourceType,
+                destType);
+        }
+
         var items = new List<object?>();
+        var count = 0;
         foreach (var item in enumerable)
         {
+            if (++count > maxItems)
+            {
+                throw new MeridianMappingLimitException(
+                    MeridianMappingLimit.MaxCollectionItems,
+                    maxItems,
+                    count,
+                    sourceType,
+                    destType);
+            }
+
             if (item == null)
             {
                 items.Add(destElementType.IsValueType ? Activator.CreateInstance(destElementType) : null);
@@ -490,14 +627,9 @@ public class MappingEngine
     private object? ResolveWithValueResolver(object source, object destination, PropertyMap propertyMap, ResolutionContext context)
     {
         var resolver = ResolveService(propertyMap.ValueResolverType!, context);
-        var resolveMethod = propertyMap.ValueResolverType!.GetMethod("Resolve")
-            ?? propertyMap.ValueResolverType.GetInterfaces()
-                .SelectMany(i => i.GetMethods())
-                .FirstOrDefault(m => m.Name == "Resolve");
-
-        if (resolveMethod == null)
-            throw new InvalidOperationException(
-                $"Value resolver type '{propertyMap.ValueResolverType.FullName}' does not implement a Resolve method.");
+        var resolveMethod = MethodLookupCache.GetInvocableMethod(propertyMap.ValueResolverType!, "Resolve")
+            ?? throw new InvalidOperationException(
+                $"Value resolver type '{propertyMap.ValueResolverType!.FullName}' does not implement a Resolve method.");
 
         var destDefault = propertyMap.DestinationProperty.PropertyType.IsValueType
             ? Activator.CreateInstance(propertyMap.DestinationProperty.PropertyType)
@@ -509,22 +641,16 @@ public class MappingEngine
     private object? ResolveWithMemberValueResolver(object source, object destination, PropertyMap propertyMap, ResolutionContext context)
     {
         var resolver = ResolveService(propertyMap.MemberValueResolverType!, context);
-        var resolveMethod = propertyMap.MemberValueResolverType!.GetMethod("Resolve")
-            ?? propertyMap.MemberValueResolverType.GetInterfaces()
-                .SelectMany(i => i.GetMethods())
-                .FirstOrDefault(m => m.Name == "Resolve");
-
-        if (resolveMethod == null)
-            throw new InvalidOperationException(
-                $"Member value resolver type '{propertyMap.MemberValueResolverType.FullName}' does not implement a Resolve method.");
+        var resolveMethod = MethodLookupCache.GetInvocableMethod(propertyMap.MemberValueResolverType!, "Resolve")
+            ?? throw new InvalidOperationException(
+                $"Member value resolver type '{propertyMap.MemberValueResolverType!.FullName}' does not implement a Resolve method.");
 
         // Get source member value via the compiled getter
         var sourceMember = propertyMap.MemberValueResolverSourceGetter?.Invoke(source);
 
         // Get current destination member value
-        var destMember = propertyMap.CompiledSetter != null && propertyMap.CompiledGetter != null
-            ? propertyMap.CompiledGetter(destination)
-            : (propertyMap.DestinationProperty.PropertyType.IsValueType
+        var destMember = GetCurrentDestinationValue(destination, propertyMap)
+            ?? (propertyMap.DestinationProperty.PropertyType.IsValueType
                 ? Activator.CreateInstance(propertyMap.DestinationProperty.PropertyType)
                 : null);
 
@@ -612,6 +738,33 @@ public class MappingEngine
     {
         type = Nullable.GetUnderlyingType(type) ?? type;
         return typeof(IConvertible).IsAssignableFrom(type);
+    }
+
+    /// <summary>
+    /// Returns the item count of <paramref name="source"/> without touching
+    /// its enumerator, if the type exposes one. Checks the non-generic
+    /// <see cref="System.Collections.ICollection"/> first (covers arrays,
+    /// <see cref="List{T}"/>, <see cref="Dictionary{TKey,TValue}"/>, and
+    /// most BCL collections), then falls back to <c>ICollection&lt;T&gt;.Count</c>
+    /// via reflection for custom collections that only implement the
+    /// generic interface. Returns <c>null</c> when the count is not
+    /// cheaply available.
+    /// </summary>
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, System.Reflection.PropertyInfo?> _genericCountPropertyCache = new();
+
+    private static int? GetKnownCount(object source)
+    {
+        if (source is System.Collections.ICollection nonGeneric)
+            return nonGeneric.Count;
+
+        var countProp = _genericCountPropertyCache.GetOrAdd(source.GetType(), static t =>
+        {
+            var iface = t.GetInterfaces().FirstOrDefault(i =>
+                i.IsGenericType && i.GetGenericTypeDefinition() == typeof(ICollection<>));
+            return iface?.GetProperty("Count");
+        });
+
+        return countProp is null ? null : (int?)countProp.GetValue(source);
     }
 
     /// <summary>

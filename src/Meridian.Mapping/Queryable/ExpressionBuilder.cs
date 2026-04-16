@@ -80,9 +80,10 @@ public static class ExpressionBuilder
             if (propertyMap.Ignored)
                 continue;
 
-            // Skip properties with value resolvers or custom funcs (not translatable to expressions)
-            if (propertyMap.ValueResolverType != null || propertyMap.CustomMapFunc != null)
+            if (propertyMap.ExplicitExpansion && !IsExpanded(expandedMembers, propertyMap.DestinationProperty.Name))
                 continue;
+
+            EnsureProjectionSupported(propertyMap, $"{destType.Name}.{propertyMap.DestinationProperty.Name}");
 
             // Skip constant values for projection
             if (propertyMap.HasConstantValue)
@@ -116,11 +117,16 @@ public static class ExpressionBuilder
             if (valueExpression == null)
                 continue;
 
+            if (propertyMap.HasNullSubstitute)
+            {
+                valueExpression = ApplyNullSubstitute(valueExpression, propertyMap);
+            }
+
             var destPropType = propertyMap.DestinationProperty.PropertyType;
             var valuePropType = valueExpression.Type;
 
             // Check if this is a complex type that needs sub-projection
-            if (ShouldProjectNested(configurationProvider, valuePropType, destPropType, expandedMembers, propertyMap.DestinationProperty.Name))
+            if (ShouldProjectNested(configurationProvider, valuePropType, destPropType))
             {
                 valueExpression = BuildNestedProjection(
                     configurationProvider, valueExpression, valuePropType, destPropType);
@@ -170,12 +176,15 @@ public static class ExpressionBuilder
         return names.Count > 0 ? names : null;
     }
 
+    private static bool IsExpanded(HashSet<string>? expandedMembers, string memberName)
+    {
+        return expandedMembers != null && expandedMembers.Contains(memberName);
+    }
+
     private static bool ShouldProjectNested(
         IConfigurationProvider configurationProvider,
         Type sourcePropertyType,
-        Type destPropertyType,
-        HashSet<string>? expandedMembers,
-        string memberName)
+        Type destPropertyType)
     {
         if (sourcePropertyType.IsPrimitive || sourcePropertyType == typeof(string) ||
             sourcePropertyType == typeof(decimal) || sourcePropertyType == typeof(DateTime) ||
@@ -189,6 +198,43 @@ public static class ExpressionBuilder
         // Check if a type map exists for the nested type
         var typeMap = configurationProvider.FindTypeMap(sourcePropertyType, destPropertyType);
         return typeMap != null;
+    }
+
+    private static void EnsureProjectionSupported(PropertyMap propertyMap, string memberPath)
+    {
+        if (propertyMap.ValueResolverType != null)
+            throw new InvalidOperationException($"Projection for '{memberPath}' is not supported because it uses a value resolver.");
+
+        if (propertyMap.MemberValueResolverType != null)
+            throw new InvalidOperationException($"Projection for '{memberPath}' is not supported because it uses a member value resolver.");
+
+        if (propertyMap.MemberConverterInstance != null || propertyMap.MemberConverterFunc != null)
+            throw new InvalidOperationException($"Projection for '{memberPath}' is not supported because it uses a member converter.");
+
+        if (propertyMap.CustomMapFunc != null && propertyMap.CustomMapExpression == null)
+            throw new InvalidOperationException($"Projection for '{memberPath}' is not supported because it uses a runtime mapping function.");
+
+        if (propertyMap.PreCondition != null || propertyMap.Condition != null || propertyMap.Condition3Arg != null)
+            throw new InvalidOperationException($"Projection for '{memberPath}' is not supported because it uses runtime conditions.");
+
+        if (propertyMap.DestinationPropertyChain != null)
+            throw new InvalidOperationException($"Projection for '{memberPath}' is not supported because it maps a destination path.");
+    }
+
+    private static Expression ApplyNullSubstitute(Expression valueExpression, PropertyMap propertyMap)
+    {
+        if (valueExpression.Type.IsValueType && Nullable.GetUnderlyingType(valueExpression.Type) == null)
+            return valueExpression;
+
+        var substituteType = propertyMap.NullSubstitute?.GetType() ?? propertyMap.DestinationProperty.PropertyType;
+        Expression substitute = Expression.Constant(propertyMap.NullSubstitute, substituteType);
+
+        if (substitute.Type != valueExpression.Type)
+        {
+            substitute = Expression.Convert(substitute, valueExpression.Type);
+        }
+
+        return Expression.Coalesce(valueExpression, substitute);
     }
 
     private static Expression BuildNestedProjection(

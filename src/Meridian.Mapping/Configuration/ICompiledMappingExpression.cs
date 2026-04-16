@@ -26,10 +26,13 @@ internal interface ICompiledMappingExpression
     Delegate? GetForAllOtherMembersAction();
     IList GetBeforeMapActions();
     IList GetAfterMapActions();
+    IList GetBeforeMapActionTypes();
+    IList GetAfterMapActionTypes();
     bool GetPreserveReferencesEnabled();
     IList GetForPathConfigs();
     IList GetIncludedMemberExpressions();
     IDictionary GetMemberConfigs();
+    IDictionary GetSourceMemberConfigs();
     IDictionary GetCtorParamConfigs();
 }
 
@@ -56,6 +59,9 @@ internal interface ICompiledMemberConfig
     Delegate? GetPreConditionFunc();
     bool GetHasNullSubstitute();
     object? GetNullSubstituteValue();
+    bool GetExplicitExpansion();
+    bool? GetUseDestinationValue();
+    bool? GetAllowNull();
 }
 
 /// <summary>

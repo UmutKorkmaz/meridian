@@ -3,16 +3,16 @@ name: Release
 # Security review:
 # - Trigger restricted to tag pattern vX.Y.Z / vX.Y.Z-*, so only a maintainer
 #   pushing a matching tag can fire the workflow.
-# - github.ref_name is used only inside the safe `contains()` built-in for the
-#   prerelease flag — it is NOT interpolated into any `run:` block.
+# - github.ref_name is used only after stripping the trusted `v` prefix to
+#   match package versions declared in repository csproj files.
 # - NUGET_API_KEY is consumed via env:, never via ${{ secrets.* }} in run:.
 # - No attacker-controllable github.event.* fields flow anywhere.
 
 on:
   push:
     tags:
-      - 'v*.*.*'
-      - 'v*.*.*-*'
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-*'
 
 permissions:
   contents: read
@@ -42,24 +42,57 @@ jobs:
           global-json-file: global.json
 
       - name: Restore
-        run: dotnet restore tests/Meridian.Mediator.Tests/Meridian.Mediator.Tests.csproj
+        run: dotnet restore Meridian.sln
 
       - name: Build (Release, deterministic)
-        run: >
-          dotnet build tests/Meridian.Mediator.Tests/Meridian.Mediator.Tests.csproj
-          -c Release --no-restore -p:ContinuousIntegrationBuild=true
+        run: dotnet build Meridian.sln -c Release --no-restore -p:ContinuousIntegrationBuild=true
 
       - name: Test (final gate)
-        run: >
-          dotnet test tests/Meridian.Mediator.Tests/Meridian.Mediator.Tests.csproj
-          -c Release --no-build --nologo
+        run: dotnet test Meridian.sln -c Release --no-build --nologo
 
-      - name: Pack Meridian.Mediator
+      - name: Select packages for this tag
+        id: versions
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          mapping_version="$(dotnet msbuild src/Meridian.Mapping/Meridian.Mapping.csproj -nologo -getProperty:Version | tail -n 1 | tr -d '\r')"
+          mediator_version="$(dotnet msbuild src/Meridian.Mediator/Meridian.Mediator.csproj -nologo -getProperty:Version | tail -n 1 | tr -d '\r')"
+
+          echo "tag_version=$tag_version" >> "$GITHUB_OUTPUT"
+          echo "mapping_version=$mapping_version" >> "$GITHUB_OUTPUT"
+          echo "mediator_version=$mediator_version" >> "$GITHUB_OUTPUT"
+
+          if [ "$mapping_version" = "$tag_version" ]; then
+            echo "pack_mapping=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "pack_mapping=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ "$mediator_version" = "$tag_version" ]; then
+            echo "pack_mediator=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "pack_mediator=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ "$mapping_version" != "$tag_version" ] && [ "$mediator_version" != "$tag_version" ]; then
+            echo "::error::No package version matches tag $GITHUB_REF_NAME"
+            exit 1
+          fi
+
+      - name: Pack
         run: |
           mkdir -p ./artifacts
-          dotnet pack src/Meridian.Mediator/Meridian.Mediator.csproj \
-            -c Release --no-build -o ./artifacts \
-            -p:ContinuousIntegrationBuild=true
+
+          if [ "${{ steps.versions.outputs.pack_mapping }}" = "true" ]; then
+            dotnet pack src/Meridian.Mapping/Meridian.Mapping.csproj \
+              -c Release --no-build -o ./artifacts \
+              -p:ContinuousIntegrationBuild=true
+          fi
+
+          if [ "${{ steps.versions.outputs.pack_mediator }}" = "true" ]; then
+            dotnet pack src/Meridian.Mediator/Meridian.Mediator.csproj \
+              -c Release --no-build -o ./artifacts \
+              -p:ContinuousIntegrationBuild=true
+          fi
 
       - name: Attest build provenance (Sigstore)
         uses: actions/attest-build-provenance@v2
@@ -74,8 +107,16 @@ jobs:
       - name: Generate SBOMs
         run: |
           mkdir -p ./sbom
-          dotnet CycloneDX src/Meridian.Mediator/Meridian.Mediator.csproj \
-            -o ./sbom -fn meridian-mediator.sbom.json -F Json
+
+          if [ "${{ steps.versions.outputs.pack_mapping }}" = "true" ]; then
+            dotnet CycloneDX src/Meridian.Mapping/Meridian.Mapping.csproj \
+              -o ./sbom -f meridian-mapping.sbom.json -j
+          fi
+
+          if [ "${{ steps.versions.outputs.pack_mediator }}" = "true" ]; then
+            dotnet CycloneDX src/Meridian.Mediator/Meridian.Mediator.csproj \
+              -o ./sbom -f meridian-mediator.sbom.json -j
+          fi
 
       - name: Upload packages artifact
         uses: actions/upload-artifact@v4

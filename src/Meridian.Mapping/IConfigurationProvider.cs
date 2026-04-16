@@ -54,6 +54,18 @@ public interface IConfigurationProvider
     bool AllowNullDestinationValues { get; }
 
     /// <summary>
+    /// Gets the default maximum recursion depth applied when a type map has no
+    /// explicit depth. See <see cref="IMapperConfigurationExpression.DefaultMaxDepth"/>.
+    /// </summary>
+    int DefaultMaxDepth { get; }
+
+    /// <summary>
+    /// Gets the default maximum collection size applied when a type map has no
+    /// explicit cap. See <see cref="IMapperConfigurationExpression.DefaultMaxCollectionItems"/>.
+    /// </summary>
+    int DefaultMaxCollectionItems { get; }
+
+    /// <summary>
     /// Returns a human-readable mapping plan for the given source/destination type pair.
     /// Useful for debugging, logging, and understanding how properties are mapped.
     /// </summary>

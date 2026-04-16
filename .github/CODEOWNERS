@@ -1,0 +1,21 @@
+# Default ownership — every PR needs @UmutKorkmaz approval unless narrower
+# patterns below apply.
+* @UmutKorkmaz
+
+# Security-sensitive hot paths: per PLAN.md quality gate, changes to the
+# mapping execution engine and mediator pipeline require explicit attention.
+# When a second maintainer is recruited (PLAN.md §8.4), add them here so
+# both reviewers are required on these paths.
+/src/Meridian.Mapping/Execution/   @UmutKorkmaz
+/src/Meridian.Mediator/Pipeline/   @UmutKorkmaz
+/src/Meridian.Mediator/Wrappers/   @UmutKorkmaz
+
+# Supply-chain configuration — changes here affect every release.
+/.github/workflows/release.yml     @UmutKorkmaz
+/Directory.Build.props             @UmutKorkmaz
+/Directory.Build.targets           @UmutKorkmaz
+
+# Governance — changes should be announced in the issue tracker.
+/LICENSE                           @UmutKorkmaz
+/SECURITY.md                       @UmutKorkmaz
+/CHANGELOG.md                      @UmutKorkmaz

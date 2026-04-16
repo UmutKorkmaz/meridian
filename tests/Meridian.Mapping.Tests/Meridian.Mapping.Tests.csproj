@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>net8.0;net9.0;net10.0;net11.0</TargetFrameworks>
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
 
@@ -12,9 +12,11 @@
   <ItemGroup>
     <PackageReference Include="coverlet.collector" Version="8.0.0" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.3" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.0.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" />
+    <PackageReference Include="FsCheck.Xunit" Version="3.3.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -23,6 +25,17 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Meridian.Mapping\Meridian.Mapping.csproj" />
+    <!--
+      The generator is transitively shipped via Meridian.Mapping for NuGet
+      consumers (analyzers/dotnet/cs in the package). For project-to-project
+      references inside this repo, MSBuild does not automatically forward
+      analyzer outputs, so we wire the generator directly here. This mirrors
+      how a real consumer's project would resolve it from the published
+      NuGet package.
+    -->
+    <ProjectReference Include="..\..\src\Meridian.Mapping.Generators\Meridian.Mapping.Generators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="true" />
   </ItemGroup>
 
 </Project>

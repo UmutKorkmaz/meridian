@@ -46,7 +46,7 @@ services.AddMeridianMediator(cfg =>
 
 ## Getting Started
 
-Install from NuGet:
+Install from NuGet once published:
 
 ```bash
 dotnet add package Meridian.Mapping
@@ -59,9 +59,9 @@ This repo includes architecture-focused samples to show different ways to struct
 
 | Sample | Architecture Style | Focus |
 | --- | --- | --- |
+| `samples/Meridian.QuickStart` | Minimal Consumer | Smallest end-to-end setup for mediator + mapping |
 | `samples/Meridian.Showcase` | Baseline | End-to-end mapping + mediator feature showcase |
 | `samples/Meridian.CleanArchitecture` | Clean Architecture | Domain/use-case boundaries, repository abstraction, transactional command flow |
-| `samples/Meridian.Hexagonal` | Hexagonal | Ports-and-adapters separation around mediator-driven application use cases |
 | `samples/Meridian.ModularMonolith` | Modular Monolith | Module-level service registration and cross-module notifications |
 | `samples/Meridian.VerticalSlice` | Vertical Slice | Feature-first request grouping with per-slice handlers and validation |
 | `samples/Meridian.EventDrivenCqrs` | Event-Driven CQRS | Write/read split using commands, notifications, and timeline stream |
@@ -85,9 +85,9 @@ dotnet test Meridian.sln -c Release
 Validate every sample:
 
 ```bash
+dotnet run --project samples/Meridian.QuickStart/Meridian.QuickStart.csproj -c Release
 dotnet run --project samples/Meridian.Showcase/Meridian.Showcase.csproj -c Release
 dotnet run --project samples/Meridian.CleanArchitecture/Meridian.CleanArchitecture.csproj -c Release
-dotnet run --project samples/Meridian.Hexagonal/Meridian.Hexagonal.csproj -c Release
 dotnet run --project samples/Meridian.ModularMonolith/Meridian.ModularMonolith.csproj -c Release
 dotnet run --project samples/Meridian.VerticalSlice/Meridian.VerticalSlice.csproj -c Release
 dotnet run --project samples/Meridian.EventDrivenCqrs/Meridian.EventDrivenCqrs.csproj -c Release
@@ -101,9 +101,3 @@ dotnet pack src/Meridian.Mediator/Meridian.Mediator.csproj -c Release --output .
 dotnet nuget push ./artifacts/Meridian.Mapping.*.nupkg --source https://api.nuget.org/v3/index.json --api-key <API_KEY>
 dotnet nuget push ./artifacts/Meridian.Mediator.*.nupkg --source https://api.nuget.org/v3/index.json --api-key <API_KEY>
 ```
-
-Package versions are derived from git release tags via MinVer.
-
-## Notes
-
-- `Meridian` keeps the API surface small, the package footprint lean, and the setup explicit.

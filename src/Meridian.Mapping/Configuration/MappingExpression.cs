@@ -1,5 +1,6 @@
 using System.Linq.Expressions;
 using System.Reflection;
+using Meridian.Mapping;
 using Meridian.Mapping.Converters;
 
 namespace Meridian.Mapping.Configuration;
@@ -32,9 +33,12 @@ public class MappingExpression<TSource, TDestination> : IMappingExpression<TSour
     internal Action<IMemberConfigurationExpression<TSource, TDestination>>? ForAllOtherMembersAction { get; private set; }
     internal List<Action<TSource, TDestination>> BeforeMapActions { get; } = new();
     internal List<Action<TSource, TDestination>> AfterMapActions { get; } = new();
+    internal List<Type> BeforeMapActionTypes { get; } = new();
+    internal List<Type> AfterMapActionTypes { get; } = new();
     internal bool PreserveReferencesEnabled { get; private set; }
     internal List<ForPathConfig<TSource, TDestination>> ForPathConfigs { get; } = new();
     internal List<LambdaExpression> IncludedMemberExpressions { get; } = new();
+    internal Dictionary<string, SourceMemberConfigurationExpression> SourceMemberConfigs { get; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// Initializes a new instance of <see cref="MappingExpression{TSource, TDestination}"/>.
@@ -81,6 +85,21 @@ public class MappingExpression<TSource, TDestination> : IMappingExpression<TSour
         var config = new MemberConfigurationExpression<TSource, TDestination>();
         memberOptions(config);
         MemberConfigs[destProp.Name] = config;
+        return this;
+    }
+
+    /// <inheritdoc />
+    public IMappingExpression<TSource, TDestination> ForSourceMember(
+        Expression<Func<TSource, object?>> sourceMember,
+        Action<ISourceMemberConfigurationExpression> memberOptions)
+    {
+        ArgumentNullException.ThrowIfNull(sourceMember);
+        ArgumentNullException.ThrowIfNull(memberOptions);
+
+        var memberName = GetSourceMemberName(sourceMember);
+        var config = new SourceMemberConfigurationExpression();
+        memberOptions(config);
+        SourceMemberConfigs[memberName] = config;
         return this;
     }
 
@@ -277,10 +296,26 @@ public class MappingExpression<TSource, TDestination> : IMappingExpression<TSour
     }
 
     /// <inheritdoc />
+    public IMappingExpression<TSource, TDestination> BeforeMap<TMappingAction>()
+        where TMappingAction : IMappingAction<TSource, TDestination>
+    {
+        BeforeMapActionTypes.Add(typeof(TMappingAction));
+        return this;
+    }
+
+    /// <inheritdoc />
     public IMappingExpression<TSource, TDestination> AfterMap(Action<TSource, TDestination> afterFunction)
     {
         ArgumentNullException.ThrowIfNull(afterFunction);
         AfterMapActions.Add(afterFunction);
+        return this;
+    }
+
+    /// <inheritdoc />
+    public IMappingExpression<TSource, TDestination> AfterMap<TMappingAction>()
+        where TMappingAction : IMappingAction<TSource, TDestination>
+    {
+        AfterMapActionTypes.Add(typeof(TMappingAction));
         return this;
     }
 
@@ -297,6 +332,24 @@ public class MappingExpression<TSource, TDestination> : IMappingExpression<TSour
 
         // Unwrap Convert/ConvertChecked (boxing for value types)
         if (body is UnaryExpression unary && (unary.NodeType == ExpressionType.Convert || unary.NodeType == ExpressionType.ConvertChecked))
+        {
+            body = unary.Operand;
+        }
+
+        if (body is MemberExpression member)
+        {
+            return member.Member.Name;
+        }
+
+        throw new ArgumentException($"Expression '{expression}' does not refer to a property or field.", nameof(expression));
+    }
+
+    private static string GetSourceMemberName(Expression<Func<TSource, object?>> expression)
+    {
+        var body = expression.Body;
+
+        if (body is UnaryExpression unary &&
+            (unary.NodeType == ExpressionType.Convert || unary.NodeType == ExpressionType.ConvertChecked))
         {
             body = unary.Operand;
         }
@@ -373,10 +426,13 @@ public class MappingExpression<TSource, TDestination> : IMappingExpression<TSour
     Delegate? ICompiledMappingExpression.GetForAllOtherMembersAction() => ForAllOtherMembersAction;
     System.Collections.IList ICompiledMappingExpression.GetBeforeMapActions() => BeforeMapActions;
     System.Collections.IList ICompiledMappingExpression.GetAfterMapActions() => AfterMapActions;
+    System.Collections.IList ICompiledMappingExpression.GetBeforeMapActionTypes() => BeforeMapActionTypes;
+    System.Collections.IList ICompiledMappingExpression.GetAfterMapActionTypes() => AfterMapActionTypes;
     bool ICompiledMappingExpression.GetPreserveReferencesEnabled() => PreserveReferencesEnabled;
     System.Collections.IList ICompiledMappingExpression.GetForPathConfigs() => ForPathConfigs;
     System.Collections.IList ICompiledMappingExpression.GetIncludedMemberExpressions() => IncludedMemberExpressions;
     System.Collections.IDictionary ICompiledMappingExpression.GetMemberConfigs() => MemberConfigs;
+    System.Collections.IDictionary ICompiledMappingExpression.GetSourceMemberConfigs() => SourceMemberConfigs;
     System.Collections.IDictionary ICompiledMappingExpression.GetCtorParamConfigs() => CtorParamConfigs;
 }
 

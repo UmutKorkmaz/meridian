@@ -72,6 +72,17 @@ public class Mapper : IMapper
     }
 
     /// <inheritdoc />
+    public TDestination Map<TDestination>(object source, Action<IMappingOperationOptions> opts)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(opts);
+
+        var context = CreateContext(CreateOptions(opts));
+        var result = _engine.Map(source, source.GetType(), typeof(TDestination), context);
+        return (TDestination)result!;
+    }
+
+    /// <inheritdoc />
     public TDestination Map<TSource, TDestination>(TSource source)
     {
         if (source == null)
@@ -80,6 +91,23 @@ public class Mapper : IMapper
         }
 
         var context = CreateContext();
+        var result = _engine.Map(source, typeof(TSource), typeof(TDestination), context);
+        return (TDestination)result!;
+    }
+
+    /// <inheritdoc />
+    public TDestination Map<TSource, TDestination>(
+        TSource source,
+        Action<IMappingOperationOptions<TSource, TDestination>> opts)
+    {
+        ArgumentNullException.ThrowIfNull(opts);
+
+        if (source == null)
+        {
+            return default!;
+        }
+
+        var context = CreateContext(CreateOptions(opts));
         var result = _engine.Map(source, typeof(TSource), typeof(TDestination), context);
         return (TDestination)result!;
     }
@@ -96,6 +124,21 @@ public class Mapper : IMapper
     }
 
     /// <inheritdoc />
+    public TDestination Map<TSource, TDestination>(
+        TSource source,
+        TDestination destination,
+        Action<IMappingOperationOptions<TSource, TDestination>> opts)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(destination);
+        ArgumentNullException.ThrowIfNull(opts);
+
+        var context = CreateContext(CreateOptions(opts));
+        var result = _engine.MapToExisting(source!, destination!, typeof(TSource), typeof(TDestination), context);
+        return (TDestination)result;
+    }
+
+    /// <inheritdoc />
     public object Map(object source, Type sourceType, Type destinationType)
     {
         ArgumentNullException.ThrowIfNull(source);
@@ -107,6 +150,48 @@ public class Mapper : IMapper
     }
 
     /// <inheritdoc />
+    public object Map(object source, Type sourceType, Type destinationType, Action<IMappingOperationOptions> opts)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(sourceType);
+        ArgumentNullException.ThrowIfNull(destinationType);
+        ArgumentNullException.ThrowIfNull(opts);
+
+        var context = CreateContext(CreateOptions(opts));
+        return _engine.Map(source, sourceType, destinationType, context)!;
+    }
+
+    /// <inheritdoc />
+    public object Map(object source, object destination, Type sourceType, Type destinationType)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(destination);
+        ArgumentNullException.ThrowIfNull(sourceType);
+        ArgumentNullException.ThrowIfNull(destinationType);
+
+        var context = CreateContext();
+        return _engine.MapToExisting(source, destination, sourceType, destinationType, context);
+    }
+
+    /// <inheritdoc />
+    public object Map(
+        object source,
+        object destination,
+        Type sourceType,
+        Type destinationType,
+        Action<IMappingOperationOptions> opts)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(destination);
+        ArgumentNullException.ThrowIfNull(sourceType);
+        ArgumentNullException.ThrowIfNull(destinationType);
+        ArgumentNullException.ThrowIfNull(opts);
+
+        var context = CreateContext(CreateOptions(opts));
+        return _engine.MapToExisting(source, destination, sourceType, destinationType, context);
+    }
+
+    /// <inheritdoc />
     public IQueryable<TDestination> ProjectTo<TDestination>(
         IQueryable source,
         params Expression<Func<TDestination, object>>[]? membersToExpand)
@@ -114,8 +199,23 @@ public class Mapper : IMapper
         return QueryableExtensions.ProjectTo(source, ConfigurationProvider, membersToExpand);
     }
 
-    private ResolutionContext CreateContext()
+    private ResolutionContext CreateContext(IMappingOperationOptions? options = null)
     {
-        return new ResolutionContext(this, depth: 0, _serviceProvider);
+        return new ResolutionContext(this, depth: 0, _serviceProvider, options);
+    }
+
+    private static MappingOperationOptions CreateOptions(Action<IMappingOperationOptions> opts)
+    {
+        var options = new MappingOperationOptions();
+        opts(options);
+        return options;
+    }
+
+    private static MappingOperationOptions<TSource, TDestination> CreateOptions<TSource, TDestination>(
+        Action<IMappingOperationOptions<TSource, TDestination>> opts)
+    {
+        var options = new MappingOperationOptions<TSource, TDestination>();
+        opts(options);
+        return options;
     }
 }

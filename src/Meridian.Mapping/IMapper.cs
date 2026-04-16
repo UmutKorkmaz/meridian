@@ -19,6 +19,12 @@ public interface IMapper
     TDestination Map<TDestination>(object source);
 
     /// <summary>
+    /// Maps the source object to a new instance of <typeparamref name="TDestination"/>
+    /// using per-call operation options.
+    /// </summary>
+    TDestination Map<TDestination>(object source, Action<IMappingOperationOptions> opts);
+
+    /// <summary>
     /// Maps from <typeparamref name="TSource"/> to a new <typeparamref name="TDestination"/>.
     /// </summary>
     /// <typeparam name="TSource">The source type.</typeparam>
@@ -26,6 +32,14 @@ public interface IMapper
     /// <param name="source">The source object.</param>
     /// <returns>A new mapped instance of <typeparamref name="TDestination"/>.</returns>
     TDestination Map<TSource, TDestination>(TSource source);
+
+    /// <summary>
+    /// Maps from <typeparamref name="TSource"/> to a new <typeparamref name="TDestination"/>
+    /// using per-call operation options.
+    /// </summary>
+    TDestination Map<TSource, TDestination>(
+        TSource source,
+        Action<IMappingOperationOptions<TSource, TDestination>> opts);
 
     /// <summary>
     /// Maps from <typeparamref name="TSource"/> to an existing <typeparamref name="TDestination"/> instance.
@@ -39,6 +53,15 @@ public interface IMapper
     TDestination Map<TSource, TDestination>(TSource source, TDestination destination);
 
     /// <summary>
+    /// Maps from <typeparamref name="TSource"/> to an existing
+    /// <typeparamref name="TDestination"/> instance using per-call operation options.
+    /// </summary>
+    TDestination Map<TSource, TDestination>(
+        TSource source,
+        TDestination destination,
+        Action<IMappingOperationOptions<TSource, TDestination>> opts);
+
+    /// <summary>
     /// Maps using runtime types. Useful when types are not known at compile time.
     /// </summary>
     /// <param name="source">The source object.</param>
@@ -46,6 +69,26 @@ public interface IMapper
     /// <param name="destinationType">The destination type.</param>
     /// <returns>A new mapped destination object.</returns>
     object Map(object source, Type sourceType, Type destinationType);
+
+    /// <summary>
+    /// Maps using runtime types and per-call operation options.
+    /// </summary>
+    object Map(object source, Type sourceType, Type destinationType, Action<IMappingOperationOptions> opts);
+
+    /// <summary>
+    /// Maps using runtime types onto an existing destination object.
+    /// </summary>
+    object Map(object source, object destination, Type sourceType, Type destinationType);
+
+    /// <summary>
+    /// Maps using runtime types onto an existing destination object with per-call operation options.
+    /// </summary>
+    object Map(
+        object source,
+        object destination,
+        Type sourceType,
+        Type destinationType,
+        Action<IMappingOperationOptions> opts);
 
     /// <summary>
     /// Gets the configuration provider that created this mapper.

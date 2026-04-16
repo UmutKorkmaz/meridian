@@ -52,6 +52,15 @@ public abstract class Profile
     }
 
     /// <summary>
+    /// Creates a projection mapping between <typeparamref name="TSource"/> and
+    /// <typeparamref name="TDestination"/>.
+    /// </summary>
+    protected IMappingExpression<TSource, TDestination> CreateProjection<TSource, TDestination>()
+    {
+        return CreateMap<TSource, TDestination>();
+    }
+
+    /// <summary>
     /// Creates a mapping between two types specified at runtime, supporting open generic types.
     /// </summary>
     /// <param name="sourceType">The source type (may be an open generic type definition).</param>

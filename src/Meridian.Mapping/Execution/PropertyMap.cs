@@ -95,6 +95,23 @@ public class PropertyMap
     public bool HasNullSubstitute { get; set; }
 
     /// <summary>
+    /// Gets or sets whether this member participates in projection only when explicitly expanded.
+    /// </summary>
+    public bool ExplicitExpansion { get; set; }
+
+    /// <summary>
+    /// Gets or sets whether the existing destination member value should be reused.
+    /// Null means no member-level override.
+    /// </summary>
+    public bool? UseDestinationValue { get; set; }
+
+    /// <summary>
+    /// Gets or sets whether null assignment is allowed for this member.
+    /// Null means no member-level override.
+    /// </summary>
+    public bool? AllowNull { get; set; }
+
+    /// <summary>
     /// Gets or sets the constant value.
     /// </summary>
     public object? ConstantValue { get; set; }

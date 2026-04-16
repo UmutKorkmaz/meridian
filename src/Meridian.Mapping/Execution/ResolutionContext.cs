@@ -32,28 +32,53 @@ public class ResolutionContext
     public IServiceProvider? ServiceProvider { get; }
 
     /// <summary>
+    /// Gets the per-call mapping items.
+    /// </summary>
+    public IDictionary<string, object?> Items { get; }
+
+    /// <summary>
+    /// Gets the per-call mapping state object.
+    /// </summary>
+    public object? State { get; }
+
+    /// <summary>
     /// Initializes a new <see cref="ResolutionContext"/>.
     /// </summary>
     /// <param name="mapper">The mapper instance.</param>
     /// <param name="depth">The current recursion depth.</param>
     /// <param name="serviceProvider">Optional service provider for DI resolution.</param>
-    public ResolutionContext(IMapper mapper, int depth = 0, IServiceProvider? serviceProvider = null)
+    /// <param name="options">Optional per-call mapping options.</param>
+    public ResolutionContext(
+        IMapper mapper,
+        int depth = 0,
+        IServiceProvider? serviceProvider = null,
+        IMappingOperationOptions? options = null)
     {
         Mapper = mapper ?? throw new ArgumentNullException(nameof(mapper));
         Depth = depth;
         ServiceProvider = serviceProvider;
+        options ??= new MappingOperationOptions();
+        Items = options.Items;
+        State = options.State;
     }
 
     /// <summary>
     /// Initializes a new <see cref="ResolutionContext"/> sharing the same object cache.
     /// </summary>
-    private ResolutionContext(IMapper mapper, int depth, IServiceProvider? serviceProvider,
-        Dictionary<(object, Type), object>? mappedObjects)
+    private ResolutionContext(
+        IMapper mapper,
+        int depth,
+        IServiceProvider? serviceProvider,
+        Dictionary<(object, Type), object>? mappedObjects,
+        IDictionary<string, object?> items,
+        object? state)
     {
         Mapper = mapper;
         Depth = depth;
         ServiceProvider = serviceProvider;
         _mappedObjects = mappedObjects;
+        Items = items;
+        State = state;
     }
 
     /// <summary>
@@ -62,7 +87,7 @@ public class ResolutionContext
     /// <returns>A new resolution context one level deeper.</returns>
     public ResolutionContext IncrementDepth()
     {
-        return new ResolutionContext(Mapper, Depth + 1, ServiceProvider, _mappedObjects);
+        return new ResolutionContext(Mapper, Depth + 1, ServiceProvider, _mappedObjects, Items, State);
     }
 
     /// <summary>

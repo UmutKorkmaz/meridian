@@ -75,13 +75,13 @@ public class TypeMap
     /// Gets or sets the list of actions to execute before property mapping.
     /// Compiled into object-based wrappers — no DynamicInvoke needed.
     /// </summary>
-    public List<Action<object, object>> BeforeMapActions { get; set; } = new();
+    public List<Action<object, object, ResolutionContext>> BeforeMapActions { get; set; } = new();
 
     /// <summary>
     /// Gets or sets the list of actions to execute after property mapping.
     /// Compiled into object-based wrappers — no DynamicInvoke needed.
     /// </summary>
-    public List<Action<object, object>> AfterMapActions { get; set; } = new();
+    public List<Action<object, object, ResolutionContext>> AfterMapActions { get; set; } = new();
 
     /// <summary>
     /// Gets or sets whether circular reference tracking is enabled for this type map.
@@ -107,6 +107,27 @@ public class TypeMap
     /// Each getter retrieves a nested source object whose properties are used for auto-mapping.
     /// </summary>
     public List<Func<object, object?>>? IncludedMemberGetters { get; set; }
+
+    /// <summary>
+    /// Gets or sets the source members excluded from source-member validation.
+    /// </summary>
+    public HashSet<string> IgnoredSourceMembers { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Optional compiled fast-path delegate that produces a mapped destination
+    /// in a single call, bypassing the per-property interpreter in
+    /// <see cref="MappingEngine"/>. Populated by <see cref="FastPathCompiler"/>
+    /// only when the type map uses the simple <c>ForMember + MapFrom</c>
+    /// subset (97% of real usage). <see cref="MappingEngine.MapWithTypeMap"/>
+    /// prefers this when non-null.
+    /// </summary>
+    /// <remarks>
+    /// Signature: <c>(object source, MappingEngine engine, ResolutionContext context) =&gt; (object)destination</c>.
+    /// The engine + context are threaded through so nested property mappings
+    /// recurse with a depth-incremented context — preserving <c>DefaultMaxDepth</c>
+    /// enforcement and <c>PreserveReferences</c> cache identity across nested calls.
+    /// </remarks>
+    public Func<object, MappingEngine, ResolutionContext, object>? CompiledFastPath { get; set; }
 
     /// <summary>
     /// Initializes a new <see cref="TypeMap"/>.
@@ -152,7 +173,7 @@ public class TypeMap
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         return sourceProperties
-            .Where(p => !usedSourceMembers.Contains(p.Name))
+            .Where(p => !usedSourceMembers.Contains(p.Name) && !IgnoredSourceMembers.Contains(p.Name))
             .Select(p => p.Name);
     }
 }
