@@ -10,15 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.1.1] - 2026-04-16
 
 ### Security
-- **[HIGH]** `IMapper.Map(source, destination)` and members configured with `.UseDestinationValue()` now enforce `DefaultMaxCollectionItems` on both the fast-count and streaming-enumeration paths. `MapCollection` and `TryMapCollectionOntoExisting` now share the same guard logic. (`GHSA-XXXX-XXXX-XXXX`)
-- **[HIGH]** Collection-item recursion now increments depth before nested mapping on both the new-destination and existing-destination paths, so self-referential collection graphs stop at the configured depth cap instead of reaching stack overflow first. (`GHSA-XXXX-XXXX-XXXX`)
-- **[MEDIUM]** `ObjectCreator.CreateWithConstructorMapping` no longer selects the widest constructor when required parameters cannot be resolved. Silent `default(T)` fills now fall back to a narrower constructor or default construction. (`GHSA-XXXX-XXXX-XXXX`)
-- **[MEDIUM]** `Mediator` no longer records `exception.stacktrace` by default. Full stack traces are now opt-in through `MediatorTelemetryOptions.RecordExceptionStackTrace`. (`GHSA-XXXX-XXXX-XXXX`)
-- **[MEDIUM]** `RetryBehavior` now clamps retry counts, saturates exponential backoff at five minutes, refuses to retry cancellation, and applies a conservative transient-exception filter by default. (`GHSA-XXXX-XXXX-XXXX`)
-- **[MEDIUM]** `TaskWhenAllPublisher` and `ResilientTaskWhenAllPublisher` now default to `maxDegreeOfParallelism = 16`; pass `-1` to restore the legacy unbounded fan-out. (`GHSA-XXXX-XXXX-XXXX`)
-- **[LOW]** Public mapping exceptions now avoid leaking namespace-qualified type names and no longer concatenate inner exception messages into top-level property-mapping errors. (`GHSA-XXXX-XXXX-XXXX`)
-- **[LOW]** Dictionary materialization now uses last-write-wins indexer semantics for duplicate keys instead of throwing an exception that echoes the offending key text. (`GHSA-XXXX-XXXX-XXXX`)
-- **[LOW]** Documented the process-lifetime mediator cache growth risk for applications that allow attacker-controlled runtime type materialization to reach `Send`, `Publish`, or `CreateStream`. This remains a consumer-side hardening requirement. (`GHSA-XXXX-XXXX-XXXX`)
+- **[HIGH]** `IMapper.Map(source, destination)` and members configured with `.UseDestinationValue()` now enforce `DefaultMaxCollectionItems` on both the fast-count and streaming-enumeration paths. `MapCollection` and `TryMapCollectionOntoExisting` now share the same guard logic. (`GHSA-f5v8-v6q3-q4h6`)
+- **[HIGH]** Collection-item recursion now increments depth before nested mapping on both the new-destination and existing-destination paths, so self-referential collection graphs stop at the configured depth cap instead of reaching stack overflow first. (`GHSA-f5v8-v6q3-q4h6`)
+- **[MEDIUM]** `ObjectCreator.CreateWithConstructorMapping` no longer selects the widest constructor when required parameters cannot be resolved. Silent `default(T)` fills now fall back to a narrower constructor or default construction. (`GHSA-f5v8-v6q3-q4h6`)
+- **[MEDIUM]** `Mediator` no longer records `exception.stacktrace` by default. Full stack traces are now opt-in through `MediatorTelemetryOptions.RecordExceptionStackTrace`. (`GHSA-f5v8-v6q3-q4h6`)
+- **[MEDIUM]** `RetryBehavior` now clamps retry counts, saturates exponential backoff at five minutes, refuses to retry cancellation, and applies a conservative transient-exception filter by default. (`GHSA-f5v8-v6q3-q4h6`)
+- **[MEDIUM]** `TaskWhenAllPublisher` and `ResilientTaskWhenAllPublisher` now default to `maxDegreeOfParallelism = 16`; pass `-1` to restore the legacy unbounded fan-out. (`GHSA-f5v8-v6q3-q4h6`)
+- **[LOW]** Public mapping exceptions now avoid leaking namespace-qualified type names and no longer concatenate inner exception messages into top-level property-mapping errors. (`GHSA-f5v8-v6q3-q4h6`)
+- **[LOW]** Dictionary materialization now uses last-write-wins indexer semantics for duplicate keys instead of throwing an exception that echoes the offending key text. (`GHSA-f5v8-v6q3-q4h6`)
+- **[LOW]** Documented the process-lifetime mediator cache growth risk for applications that allow attacker-controlled runtime type materialization to reach `Send`, `Publish`, or `CreateStream`. This remains a consumer-side hardening requirement. (`GHSA-f5v8-v6q3-q4h6`)
 
 ### Changed
 - Widest-constructor selection now requires every parameter to be resolved by explicit ctor mapping, source-name matching, or a C# optional default value. Consumers relying on silent `default(T)` fills must add `.ForCtorParam(...)` mappings or expose a narrower constructor.
