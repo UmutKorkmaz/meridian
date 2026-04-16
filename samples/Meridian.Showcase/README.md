@@ -26,3 +26,7 @@ The sample is split into five demos:
 - `Mediator Command`: validation, logging, transaction, authorization, idempotency, and cache invalidation
 - `Notifications`: `NotificationPublisherType` with `ResilientTaskWhenAllPublisher`
 - `Streaming`: open stream behavior registration with `AddOpenStreamBehavior`
+- `Safety defaults + culture (v1.1)`: `DefaultMaxDepth=64` truncating a
+  10 000-deep input, `DefaultMaxCollectionItems=10_000` rejecting a
+  50 000-item input, `TurkishCulture` round-tripping `İ`/`ı`, and a
+  `[GenerateMapper]` source-generated mapper called inline.

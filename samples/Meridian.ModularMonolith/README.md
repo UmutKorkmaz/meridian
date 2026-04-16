@@ -12,3 +12,11 @@ Run:
 ```bash
 dotnet run --project samples/Meridian.ModularMonolith/Meridian.ModularMonolith.csproj -c Release
 ```
+
+This sample focuses on the architectural pattern. For features added in
+Meridian v1.1 — `MaxDepth` / `MaxCollectionItems` safety defaults,
+`[GenerateMapper]` source generator, `TurkishCulture` helpers,
+`AddMeridianStandard`, `AuditBehavior`, and `LocalizedValidationBehavior`
+— see [`Meridian.QuickStart`](../Meridian.QuickStart/) and the
+`Safety defaults + culture (v1.1)` demo in
+[`Meridian.Showcase`](../Meridian.Showcase/).

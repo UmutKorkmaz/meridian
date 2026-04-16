@@ -5,15 +5,24 @@ namespace Meridian.VerticalSlice;
 public sealed class ConsoleMediatorLogger : IMediatorLogger
 {
     public void LogInformation(string message, params object[] args)
-        => Console.WriteLine($"[info] {message} | {string.Join(", ", args.Select(FormatArg))}");
+        => Console.WriteLine($"[info] {Substitute(message, args)}");
 
     public void LogWarning(string message, params object[] args)
-        => Console.WriteLine($"[warn] {message} | {string.Join(", ", args.Select(FormatArg))}");
+        => Console.WriteLine($"[warn] {Substitute(message, args)}");
 
     public void LogError(Exception exception, string message, params object[] args)
-        => Console.WriteLine($"[error] {message} | {string.Join(", ", args.Select(FormatArg))} | {exception.Message}");
+        => Console.WriteLine($"[error] {Substitute(message, args)} | {exception.Message}");
 
     private static string FormatArg(object? value) => value?.ToString() ?? "<null>";
+
+    private static string Substitute(string message, object[] args)
+    {
+        if (args.Length == 0) return message;
+        var i = 0;
+        return System.Text.RegularExpressions.Regex.Replace(
+            message, @"\{[^{}]+\}",
+            _ => i < args.Length ? FormatArg(args[i++]) : "{?}");
+    }
 }
 
 public sealed class InMemoryCacheProvider : ICacheProvider

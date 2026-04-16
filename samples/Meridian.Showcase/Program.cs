@@ -12,5 +12,6 @@ public static class Program
         await CommandMediatorDemo.RunAsync();
         await NotificationMediatorDemo.RunAsync();
         await StreamingMediatorDemo.RunAsync();
+        await SafetyAndModernFeaturesDemo.Run();
     }
 }
