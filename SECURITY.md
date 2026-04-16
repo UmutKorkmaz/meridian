@@ -2,13 +2,17 @@
 
 ## Supported Versions
 
-Security patches are provided for the two most recent minor releases of each
-major version.
+Security patches are provided for the most recent minor release of each
+major version. `2.0.x` was published one day before `2.1.0` and lacks the
+Phase 1 safety-defaults infrastructure (`DefaultMaxDepth`,
+`DefaultMaxCollectionItems`, `MeridianMappingLimitException`) required to
+carry the HIGH-severity fixes from `GHSA-f5v8-v6q3-q4h6`. Effective
+2026-04-16, `2.0.x` is deprecated in favor of `2.1.x`.
 
 | Version   | Supported |
 | --------- | --------- |
 | 2.1.x     | ✅        |
-| 2.0.x     | ✅        |
+| 2.0.x     | ❌ (deprecated 2026-04-16 — upgrade to 2.1.1+) |
 | < 2.0     | ❌        |
 
 ## Reporting a Vulnerability
@@ -74,7 +78,9 @@ published GHSA unless they request anonymity.
 
 ## Historical Advisories
 
-- `GHSA-XXXX-XXXX-XXXX` / `CVE-TBD`: coordinated security release for
-  `Meridian.Mapping` and `Meridian.Mediator`, shipped in `v2.1.1` and
-  backported in `v2.0.2` on 2026-04-16. The placeholder IDs are replaced
-  once the draft advisory is published.
+- [`GHSA-f5v8-v6q3-q4h6`](https://github.com/UmutKorkmaz/meridian/security/advisories/GHSA-f5v8-v6q3-q4h6)
+  (CVE pending): coordinated security release for `Meridian.Mapping` and
+  `Meridian.Mediator` covering two HIGH-severity DoS findings plus four
+  MEDIUM and three LOW defense-in-depth gaps. Patched in `v2.1.1`
+  (published 2026-04-16). No `2.0.x` backport — see the supported-versions
+  table above for rationale; `2.0.x` consumers must upgrade to `2.1.1+`.
