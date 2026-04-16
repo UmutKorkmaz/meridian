@@ -31,7 +31,7 @@ public static class ObjectCreator
         var ctors = type.GetConstructors(BindingFlags.Public | BindingFlags.Instance);
         if (ctors.Length == 0)
             throw new InvalidOperationException(
-                $"No public constructor found for type '{type.FullName}'. " +
+                $"No public constructor found for type '{type.Name}'. " +
                 "Use ConstructUsing to specify how to create instances.");
 
         // Use the constructor with the fewest parameters as fallback
@@ -59,7 +59,7 @@ public static class ObjectCreator
     {
         var ctors = destinationType.GetConstructors(BindingFlags.Public | BindingFlags.Instance);
         if (ctors.Length == 0)
-            throw new InvalidOperationException($"No public constructor found for type '{destinationType.FullName}'.");
+            throw new InvalidOperationException($"No public constructor found for type '{destinationType.Name}'.");
 
         // Try to find a matching constructor
         var sourceProps = sourceType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
@@ -104,6 +104,7 @@ public static class ObjectCreator
                 }
 
                 // Use type default
+                allResolved = false;
                 args[i] = param.ParameterType.IsValueType ? Activator.CreateInstance(param.ParameterType) : null;
             }
 

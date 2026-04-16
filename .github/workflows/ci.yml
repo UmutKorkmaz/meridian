@@ -31,7 +31,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # MinVer derives version from git history
+          fetch-depth: 0  # keep full history for release/debug parity checks
 
       - name: Setup .NET SDK
         uses: actions/setup-dotnet@v4
@@ -45,6 +45,7 @@ jobs:
         run: dotnet build Meridian.sln -c Release --no-restore
 
       - name: Test
+        shell: bash
         env:
           MATRIX_OS: ${{ matrix.os }}
         run: >

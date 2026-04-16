@@ -6,7 +6,7 @@
     <RootNamespace>Meridian.Mapping</RootNamespace>
     <AssemblyName>Meridian.Mapping</AssemblyName>
     <PackageId>Meridian.Mapping</PackageId>
-    <Version>2.1.0</Version>
+    <Version>2.1.1</Version>
     <Description>A lightweight, high-performance object-to-object mapping library for .NET. Reflection today with safe-by-default recursion and collection caps; opt-in source-gen for hot paths.</Description>
     <PackageTags>mapping;automapper;object-mapper;dto;transform;aot</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

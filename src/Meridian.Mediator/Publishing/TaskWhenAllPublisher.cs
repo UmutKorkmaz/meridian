@@ -7,12 +7,28 @@ namespace Meridian.Mediator.Publishing;
 /// </summary>
 public class TaskWhenAllPublisher : INotificationPublisher
 {
+    private readonly int _maxDegreeOfParallelism;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="TaskWhenAllPublisher"/> class.
+    /// Pass <c>-1</c> to preserve the legacy unbounded fan-out.
+    /// </summary>
+    public TaskWhenAllPublisher(int maxDegreeOfParallelism = 16)
+    {
+        if (maxDegreeOfParallelism == 0 || maxDegreeOfParallelism < -1)
+            throw new ArgumentOutOfRangeException(nameof(maxDegreeOfParallelism));
+
+        _maxDegreeOfParallelism = maxDegreeOfParallelism;
+    }
+
     /// <inheritdoc/>
     public async Task Publish(IEnumerable<NotificationHandlerExecutor> handlerExecutors, INotification notification, CancellationToken cancellationToken)
     {
-        var tasks = handlerExecutors
-            .Select(handler => handler.HandlerCallback(notification, cancellationToken))
-            .ToList();
+        List<Task> tasks;
+        using var limiter = _maxDegreeOfParallelism == -1 ? null : new SemaphoreSlim(_maxDegreeOfParallelism);
+        tasks = limiter == null
+            ? handlerExecutors.Select(handler => handler.HandlerCallback(notification, cancellationToken)).ToList()
+            : handlerExecutors.Select(handler => RunBounded(handler, notification, cancellationToken, limiter)).ToList();
 
         if (tasks.Count == 0) return;
 
@@ -36,6 +52,23 @@ public class TaskWhenAllPublisher : INotificationPublisher
                 exceptions);
         }
     }
+
+    private static async Task RunBounded(
+        NotificationHandlerExecutor handler,
+        INotification notification,
+        CancellationToken cancellationToken,
+        SemaphoreSlim limiter)
+    {
+        await limiter.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await handler.HandlerCallback(notification, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            limiter.Release();
+        }
+    }
 }
 
 /// <summary>
@@ -45,25 +78,30 @@ public class TaskWhenAllPublisher : INotificationPublisher
 /// </summary>
 public class ResilientTaskWhenAllPublisher : INotificationPublisher
 {
+    private readonly int _maxDegreeOfParallelism;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ResilientTaskWhenAllPublisher"/> class.
+    /// Pass <c>-1</c> to preserve the legacy unbounded fan-out.
+    /// </summary>
+    public ResilientTaskWhenAllPublisher(int maxDegreeOfParallelism = 16)
+    {
+        if (maxDegreeOfParallelism == 0 || maxDegreeOfParallelism < -1)
+            throw new ArgumentOutOfRangeException(nameof(maxDegreeOfParallelism));
+
+        _maxDegreeOfParallelism = maxDegreeOfParallelism;
+    }
+
     /// <inheritdoc/>
     public async Task Publish(IEnumerable<NotificationHandlerExecutor> handlerExecutors, INotification notification, CancellationToken cancellationToken)
     {
         var exceptions = new List<Exception>();
 
-        var tasks = handlerExecutors.Select(async handler =>
-        {
-            try
-            {
-                await handler.HandlerCallback(notification, cancellationToken).ConfigureAwait(false);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                lock (exceptions)
-                {
-                    exceptions.Add(ex);
-                }
-            }
-        });
+        List<Task> tasks;
+        using var limiter = _maxDegreeOfParallelism == -1 ? null : new SemaphoreSlim(_maxDegreeOfParallelism);
+        tasks = limiter == null
+            ? handlerExecutors.Select(handler => RunResilient(handler, notification, cancellationToken, exceptions)).ToList()
+            : handlerExecutors.Select(handler => RunBoundedResilient(handler, notification, cancellationToken, limiter, exceptions)).ToList();
 
         await Task.WhenAll(tasks).ConfigureAwait(false);
 
@@ -72,6 +110,43 @@ public class ResilientTaskWhenAllPublisher : INotificationPublisher
             throw new AggregateException(
                 $"{exceptions.Count} notification handler(s) failed for {notification.GetType().Name}.",
                 exceptions);
+        }
+    }
+
+    private static async Task RunResilient(
+        NotificationHandlerExecutor handler,
+        INotification notification,
+        CancellationToken cancellationToken,
+        List<Exception> exceptions)
+    {
+        try
+        {
+            await handler.HandlerCallback(notification, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            lock (exceptions)
+            {
+                exceptions.Add(ex);
+            }
+        }
+    }
+
+    private static async Task RunBoundedResilient(
+        NotificationHandlerExecutor handler,
+        INotification notification,
+        CancellationToken cancellationToken,
+        SemaphoreSlim limiter,
+        List<Exception> exceptions)
+    {
+        await limiter.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await RunResilient(handler, notification, cancellationToken, exceptions).ConfigureAwait(false);
+        }
+        finally
+        {
+            limiter.Release();
         }
     }
 }

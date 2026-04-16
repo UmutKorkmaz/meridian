@@ -55,7 +55,7 @@ public sealed class MeridianMappingLimitException : InvalidOperationException
         Type? destinationType)
     {
         var context = sourceType is not null && destinationType is not null
-            ? $" while mapping {sourceType.FullName} -> {destinationType.FullName}"
+            ? $" while mapping {sourceType.Name} -> {destinationType.Name}"
             : string.Empty;
 
         return limit switch

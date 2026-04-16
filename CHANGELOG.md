@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-04-16
+
+### Security
+- **[HIGH]** `IMapper.Map(source, destination)` and members configured with `.UseDestinationValue()` now enforce `DefaultMaxCollectionItems` on both the fast-count and streaming-enumeration paths. `MapCollection` and `TryMapCollectionOntoExisting` now share the same guard logic. (`GHSA-XXXX-XXXX-XXXX`)
+- **[HIGH]** Collection-item recursion now increments depth before nested mapping on both the new-destination and existing-destination paths, so self-referential collection graphs stop at the configured depth cap instead of reaching stack overflow first. (`GHSA-XXXX-XXXX-XXXX`)
+- **[MEDIUM]** `ObjectCreator.CreateWithConstructorMapping` no longer selects the widest constructor when required parameters cannot be resolved. Silent `default(T)` fills now fall back to a narrower constructor or default construction. (`GHSA-XXXX-XXXX-XXXX`)
+- **[MEDIUM]** `Mediator` no longer records `exception.stacktrace` by default. Full stack traces are now opt-in through `MediatorTelemetryOptions.RecordExceptionStackTrace`. (`GHSA-XXXX-XXXX-XXXX`)
+- **[MEDIUM]** `RetryBehavior` now clamps retry counts, saturates exponential backoff at five minutes, refuses to retry cancellation, and applies a conservative transient-exception filter by default. (`GHSA-XXXX-XXXX-XXXX`)
+- **[MEDIUM]** `TaskWhenAllPublisher` and `ResilientTaskWhenAllPublisher` now default to `maxDegreeOfParallelism = 16`; pass `-1` to restore the legacy unbounded fan-out. (`GHSA-XXXX-XXXX-XXXX`)
+- **[LOW]** Public mapping exceptions now avoid leaking namespace-qualified type names and no longer concatenate inner exception messages into top-level property-mapping errors. (`GHSA-XXXX-XXXX-XXXX`)
+- **[LOW]** Dictionary materialization now uses last-write-wins indexer semantics for duplicate keys instead of throwing an exception that echoes the offending key text. (`GHSA-XXXX-XXXX-XXXX`)
+- **[LOW]** Documented the process-lifetime mediator cache growth risk for applications that allow attacker-controlled runtime type materialization to reach `Send`, `Publish`, or `CreateStream`. This remains a consumer-side hardening requirement. (`GHSA-XXXX-XXXX-XXXX`)
+
+### Changed
+- Widest-constructor selection now requires every parameter to be resolved by explicit ctor mapping, source-name matching, or a C# optional default value. Consumers relying on silent `default(T)` fills must add `.ForCtorParam(...)` mappings or expose a narrower constructor.
+- `Mediator` no longer emits `exception.stacktrace` by default. Opt back in with `new MediatorTelemetryOptions { RecordExceptionStackTrace = true }`.
+- `TaskWhenAllPublisher` and `ResilientTaskWhenAllPublisher` now cap notification fan-out at `16` by default. Pass `-1` to either constructor to retain the legacy unbounded behavior.
+- Retry caps now default to `RetryPolicy.MaxRetriesCap = 10` and `RetryPolicy.MaxBackoff = TimeSpan.FromMinutes(5)`.
+- Duplicate dictionary keys now merge with last-write-wins semantics instead of throwing.
+
+### Fixed
+- `MapCollection` and `TryMapCollectionOntoExisting` now share a single collection-limit enforcement path, reducing the chance of future drift between sibling enumeration implementations.
+
 ### Added
 - `LICENSE`, `SECURITY.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `CODEOWNERS`,
   PR + issue templates at repository root / `.github/`.
@@ -167,19 +190,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   if this is expected.
 - Target framework set aligned with published NuGet metadata:
   `net8.0;net9.0;net10.0`. `net11.0` dropped until GA.
-- Version is derived from git tags via MinVer; `<Version>` removed from csproj.
+- Package versions are declared explicitly in the project files, and the
+  release workflow only packs packages whose declared version matches the
+  pushed tag.
 
 ### Security
 - `MaxDepth` default flip closes the recursion-driven stack-overflow
   class described in [CVE-2026-32933](https://nvd.nist.gov/vuln/detail/CVE-2026-32933)
   for any Meridian user who had not previously configured a per-map cap.
 
-## [1.0.1] - 2026-03-23
+## [2.0.1] - 2026-03-23
 
 ### Fixed
 - Initial NuGet listing follow-up release (package metadata corrections).
 
-## [1.0.0] - 2026-03-23
+## [2.0.0] - 2026-03-23
 
 ### Added
 - First public release of `Meridian.Mediator` (in-process CQRS mediator with
@@ -187,6 +212,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - First public release of `Meridian.Mapping` (profile-based object-to-object
   mapper with reverse maps, resolvers, converters, and queryable projection).
 
-[Unreleased]: https://github.com/UmutKorkmaz/meridian/compare/v1.0.1...HEAD
-[1.0.1]: https://github.com/UmutKorkmaz/meridian/compare/v1.0.0...v1.0.1
-[1.0.0]: https://github.com/UmutKorkmaz/meridian/releases/tag/v1.0.0
+[Unreleased]: https://github.com/UmutKorkmaz/meridian/compare/v2.1.1...HEAD
+[2.1.1]: https://github.com/UmutKorkmaz/meridian/compare/v2.0.1...v2.1.1
+[2.0.1]: https://github.com/UmutKorkmaz/meridian/compare/v2.0.0...v2.0.1
+[2.0.0]: https://github.com/UmutKorkmaz/meridian/releases/tag/v2.0.0

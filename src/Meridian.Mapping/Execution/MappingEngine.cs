@@ -70,7 +70,7 @@ public class MappingEngine
                 return Map(source, sourceType, underlyingDest, context);
 
             throw new InvalidOperationException(
-                $"Missing mapping configuration for {sourceType.FullName} -> {destinationType.FullName}. " +
+                $"Missing mapping configuration for {sourceType.Name} -> {destinationType.Name}. " +
                 $"Create a mapping using CreateMap<{sourceType.Name}, {destinationType.Name}>().");
         }
 
@@ -87,6 +87,8 @@ public class MappingEngine
             var reusedCollection = TryMapCollectionOntoExisting(
                 source,
                 destination,
+                sourceType,
+                destinationType,
                 srcElementType!,
                 destElementType!,
                 context);
@@ -97,7 +99,7 @@ public class MappingEngine
 
         var typeMap = ResolveTypeMap(source, sourceType, destinationType)
             ?? throw new InvalidOperationException(
-                $"Missing mapping configuration for {sourceType.FullName} -> {destinationType.FullName}.");
+                $"Missing mapping configuration for {sourceType.Name} -> {destinationType.Name}.");
 
         return MapProperties(source, destination, typeMap, context);
     }
@@ -183,7 +185,7 @@ public class MappingEngine
             var converter = ResolveService(typeMap.TypeConverterType, context);
             var convertMethod = MethodLookupCache.GetInvocableMethod(typeMap.TypeConverterType, "Convert")
                 ?? throw new InvalidOperationException(
-                    $"Type converter '{typeMap.TypeConverterType.FullName}' does not expose a Convert method.");
+                    $"Type converter '{typeMap.TypeConverterType.Name}' does not expose a Convert method.");
             var defaultDest = typeMap.DestinationType.IsValueType
                 ? Activator.CreateInstance(typeMap.DestinationType)
                 : null;
@@ -276,7 +278,7 @@ public class MappingEngine
                     var converterType = propertyMap.MemberConverterInstance.GetType();
                     var convertMethod = MethodLookupCache.GetInvocableMethod(converterType, "Convert")
                         ?? throw new InvalidOperationException(
-                            $"Member converter '{converterType.FullName}' does not expose a Convert method.");
+                            $"Member converter '{converterType.Name}' does not expose a Convert method.");
 
                     value = convertMethod.Invoke(propertyMap.MemberConverterInstance, [sourceMember, context]);
                 }
@@ -371,7 +373,7 @@ public class MappingEngine
             {
                 throw new InvalidOperationException(
                     $"Error mapping property '{propertyMap.DestinationProperty.Name}' " +
-                    $"on {typeMap.DestinationType.Name}: {ex.Message}", ex);
+                    $"on {typeMap.DestinationType.Name}.", ex);
             }
         }
 
@@ -402,6 +404,8 @@ public class MappingEngine
             var reusedCollection = TryMapCollectionOntoExisting(
                 value,
                 existingValue,
+                valueType,
+                destPropType,
                 srcElementType!,
                 destElementType!,
                 context);
@@ -437,6 +441,8 @@ public class MappingEngine
     private object? TryMapCollectionOntoExisting(
         object source,
         object destination,
+        Type sourceCollectionType,
+        Type destinationCollectionType,
         Type srcElementType,
         Type destElementType,
         ResolutionContext context)
@@ -444,16 +450,30 @@ public class MappingEngine
         if (source is not IEnumerable enumerable || destination is not IList destinationList || destination is Array)
             return null;
 
+        EnforceCollectionLimit(source, sourceCollectionType, destinationCollectionType);
+
         destinationList.Clear();
+        var maxItems = _configurationProvider.DefaultMaxCollectionItems;
+        var count = 0;
         foreach (var item in enumerable)
         {
+            if (++count > maxItems)
+            {
+                throw new MeridianMappingLimitException(
+                    MeridianMappingLimit.MaxCollectionItems,
+                    maxItems,
+                    count,
+                    sourceCollectionType,
+                    destinationCollectionType);
+            }
+
             if (item == null)
             {
                 destinationList.Add(destElementType.IsValueType ? Activator.CreateInstance(destElementType) : null);
                 continue;
             }
 
-            destinationList.Add(Map(item, srcElementType, destElementType, context));
+            destinationList.Add(Map(item, srcElementType, destElementType, context.IncrementDepth()));
         }
 
         return destination;
@@ -516,25 +536,10 @@ public class MappingEngine
             return CreateEmptyCollection(destType, destElementType);
         }
 
-        var maxItems = _configurationProvider.DefaultMaxCollectionItems;
-
-        // Fast path: ICollection/ICollection<T>/array expose Count cheaply,
-        // so we can reject oversized input before touching a single element.
-        // We check both the non-generic and the generic interfaces because a
-        // type can implement one without the other (e.g. custom collection
-        // classes that only expose ICollection<T>).
-        var knownCount = GetKnownCount(source);
-        if (knownCount is int fastCount && fastCount > maxItems)
-        {
-            throw new MeridianMappingLimitException(
-                MeridianMappingLimit.MaxCollectionItems,
-                maxItems,
-                fastCount,
-                sourceType,
-                destType);
-        }
+        EnforceCollectionLimit(source, sourceType, destType);
 
         var items = new List<object?>();
+        var maxItems = _configurationProvider.DefaultMaxCollectionItems;
         var count = 0;
         foreach (var item in enumerable)
         {
@@ -554,7 +559,7 @@ public class MappingEngine
             }
             else
             {
-                items.Add(Map(item, srcElementType, destElementType, context));
+                items.Add(Map(item, srcElementType, destElementType, context.IncrementDepth()));
             }
         }
 
@@ -590,16 +595,16 @@ public class MappingEngine
                 var args = destType.GetGenericArguments();
                 var dictType = typeof(Dictionary<,>).MakeGenericType(args);
                 var dict = Activator.CreateInstance(dictType)!;
-                var addMethod = dictType.GetMethod("Add")!;
                 var keyProp = destElementType.GetProperty("Key")!;
                 var valueProp = destElementType.GetProperty("Value")!;
+                var indexer = dictType.GetProperty("Item")!;
                 foreach (var item in items)
                 {
                     if (item != null)
                     {
                         var key = keyProp.GetValue(item);
                         var val = valueProp.GetValue(item);
-                        addMethod.Invoke(dict, [key, val]);
+                        indexer.SetValue(dict, val, [key!]);
                     }
                 }
                 return dict;
@@ -629,7 +634,7 @@ public class MappingEngine
         var resolver = ResolveService(propertyMap.ValueResolverType!, context);
         var resolveMethod = MethodLookupCache.GetInvocableMethod(propertyMap.ValueResolverType!, "Resolve")
             ?? throw new InvalidOperationException(
-                $"Value resolver type '{propertyMap.ValueResolverType!.FullName}' does not implement a Resolve method.");
+                $"Value resolver type '{propertyMap.ValueResolverType!.Name}' does not implement a Resolve method.");
 
         var destDefault = propertyMap.DestinationProperty.PropertyType.IsValueType
             ? Activator.CreateInstance(propertyMap.DestinationProperty.PropertyType)
@@ -643,7 +648,7 @@ public class MappingEngine
         var resolver = ResolveService(propertyMap.MemberValueResolverType!, context);
         var resolveMethod = MethodLookupCache.GetInvocableMethod(propertyMap.MemberValueResolverType!, "Resolve")
             ?? throw new InvalidOperationException(
-                $"Member value resolver type '{propertyMap.MemberValueResolverType!.FullName}' does not implement a Resolve method.");
+                $"Member value resolver type '{propertyMap.MemberValueResolverType!.Name}' does not implement a Resolve method.");
 
         // Get source member value via the compiled getter
         var sourceMember = propertyMap.MemberValueResolverSourceGetter?.Invoke(source);
@@ -668,8 +673,29 @@ public class MappingEngine
         // Fallback: create instance directly
         return Activator.CreateInstance(serviceType)
             ?? throw new InvalidOperationException(
-                $"Could not create instance of '{serviceType.FullName}'. " +
+                $"Could not create instance of '{serviceType.Name}'. " +
                 "Register it with the DI container or ensure it has a parameterless constructor.");
+    }
+
+    private void EnforceCollectionLimit(object source, Type sourceType, Type destType)
+    {
+        var maxItems = _configurationProvider.DefaultMaxCollectionItems;
+
+        // Fast path: ICollection/ICollection<T>/array expose Count cheaply,
+        // so we can reject oversized input before touching a single element.
+        // We check both the non-generic and the generic interfaces because a
+        // type can implement one without the other (e.g. custom collection
+        // classes that only expose ICollection<T>).
+        var knownCount = GetKnownCount(source);
+        if (knownCount is int fastCount && fastCount > maxItems)
+        {
+            throw new MeridianMappingLimitException(
+                MeridianMappingLimit.MaxCollectionItems,
+                maxItems,
+                fastCount,
+                sourceType,
+                destType);
+        }
     }
 
     private static bool IsCollectionMapping(Type sourceType, Type destType,

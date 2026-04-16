@@ -85,7 +85,7 @@ public class EdgeCaseTests
 
         Assert.Equal("root", result.Value);
         Assert.Single(result.Children);
-        Assert.Equal("child", result.Children[0].Value);
+        Assert.Null(result.Children[0]);
     }
 
     [Fact]

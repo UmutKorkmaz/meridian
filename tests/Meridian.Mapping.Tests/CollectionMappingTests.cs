@@ -119,4 +119,23 @@ public class CollectionMappingTests
 
         Assert.Null(result);
     }
+
+    [Fact]
+    public void Duplicate_Dictionary_Keys_Use_Last_Write_Wins()
+    {
+        var mapper = CreateMapper(_ => { });
+
+        var source = new List<KeyValuePair<string, int>>
+        {
+            new("dup", 1),
+            new("dup", 2),
+            new("other", 3)
+        };
+
+        var result = mapper.Map<List<KeyValuePair<string, int>>, Dictionary<string, int>>(source);
+
+        Assert.Equal(2, result.Count);
+        Assert.Equal(2, result["dup"]);
+        Assert.Equal(3, result["other"]);
+    }
 }

@@ -30,13 +30,14 @@ public class Mediator : IMediator
 
     private readonly IServiceProvider _serviceProvider;
     private readonly INotificationPublisher _publisher;
+    private readonly MediatorTelemetryOptions _telemetryOptions;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="Mediator"/> class with the default <see cref="ForeachAwaitPublisher"/>.
     /// </summary>
     /// <param name="serviceProvider">The service provider for resolving handlers and behaviors.</param>
     public Mediator(IServiceProvider serviceProvider)
-        : this(serviceProvider, new ForeachAwaitPublisher())
+        : this(serviceProvider, new ForeachAwaitPublisher(), MediatorTelemetryOptions.Default)
     {
     }
 
@@ -46,9 +47,25 @@ public class Mediator : IMediator
     /// <param name="serviceProvider">The service provider for resolving handlers and behaviors.</param>
     /// <param name="publisher">The notification publisher strategy to use.</param>
     public Mediator(IServiceProvider serviceProvider, INotificationPublisher publisher)
+        : this(serviceProvider, publisher, MediatorTelemetryOptions.Default)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="Mediator"/> class with
+    /// a custom notification publisher and telemetry options.
+    /// </summary>
+    /// <param name="serviceProvider">The service provider for resolving handlers and behaviors.</param>
+    /// <param name="publisher">The notification publisher strategy to use.</param>
+    /// <param name="telemetryOptions">Telemetry emission options for failure tags.</param>
+    public Mediator(
+        IServiceProvider serviceProvider,
+        INotificationPublisher publisher,
+        MediatorTelemetryOptions telemetryOptions)
     {
         _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
         _publisher = publisher ?? throw new ArgumentNullException(nameof(publisher));
+        _telemetryOptions = telemetryOptions ?? throw new ArgumentNullException(nameof(telemetryOptions));
     }
 
     /// <inheritdoc/>
@@ -243,7 +260,7 @@ public class Mediator : IMediator
         return activity;
     }
 
-    private static async Task ExecuteWithActivityAsync(
+    private async Task ExecuteWithActivityAsync(
         Activity? activity,
         Func<Task> operation,
         CancellationToken cancellationToken)
@@ -267,7 +284,7 @@ public class Mediator : IMediator
         }
     }
 
-    private static async Task<T> ExecuteWithActivityAsync<T>(
+    private async Task<T> ExecuteWithActivityAsync<T>(
         Activity? activity,
         Func<Task<T>> operation,
         CancellationToken cancellationToken)
@@ -408,12 +425,27 @@ public class Mediator : IMediator
         }
     }
 
-    private static void MarkActivityFailure(Activity? activity, Exception ex)
+    private void MarkActivityFailure(Activity? activity, Exception ex)
     {
-        activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+        if (_telemetryOptions.RecordExceptionMessage)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+        }
+        else
+        {
+            activity?.SetStatus(ActivityStatusCode.Error);
+        }
+
         activity?.SetTag("exception.type", ex.GetType().FullName);
-        activity?.SetTag("exception.message", ex.Message);
-        activity?.SetTag("exception.stacktrace", ex.ToString());
+        if (_telemetryOptions.RecordExceptionMessage)
+        {
+            activity?.SetTag("exception.message", ex.Message);
+        }
+
+        if (_telemetryOptions.RecordExceptionStackTrace)
+        {
+            activity?.SetTag("exception.stacktrace", ex.ToString());
+        }
     }
 
     private static T ExecuteWithCurrentActivity<T>(Activity? activity, Func<T> action)

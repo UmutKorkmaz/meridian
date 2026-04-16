@@ -68,7 +68,7 @@ public static class ExpressionBuilder
         if (typeMap == null)
         {
             throw new InvalidOperationException(
-                $"Missing mapping configuration for {sourceType.FullName} -> {destType.FullName}. " +
+                $"Missing mapping configuration for {sourceType.Name} -> {destType.Name}. " +
                 $"Create a mapping using CreateMap<{sourceType.Name}, {destType.Name}>().");
         }
 
