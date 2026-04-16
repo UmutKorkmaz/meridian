@@ -38,22 +38,26 @@ public class RetryBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TR
     /// <inheritdoc/>
     public async Task<TResponse> Handle(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken cancellationToken)
     {
-        var maxRetries = request.MaxRetries;
-        var baseDelay = request.RetryDelay;
+        var maxRetries = Math.Min(Math.Max(0, request.MaxRetries), Math.Max(0, RetryPolicy.MaxRetriesCap));
         var attempt = 0;
 
         while (true)
         {
             try
             {
-                return await next();
+                return await next().ConfigureAwait(false);
             }
-            catch (Exception ex) when (attempt < maxRetries && request.ShouldRetry(ex))
+            catch (Exception ex) when (attempt < maxRetries && ShouldRetry(request, ex))
             {
                 attempt++;
-                var delay = TimeSpan.FromMilliseconds(baseDelay.TotalMilliseconds * Math.Pow(2, attempt - 1));
-                await Task.Delay(delay, cancellationToken);
+                var delay = RetryPolicy.CalculateDelay(request.RetryDelay, attempt);
+                await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
             }
         }
+    }
+
+    private static bool ShouldRetry(TRequest request, Exception exception)
+    {
+        return RetryPolicy.TransientOnly(exception) && request.ShouldRetry(exception);
     }
 }

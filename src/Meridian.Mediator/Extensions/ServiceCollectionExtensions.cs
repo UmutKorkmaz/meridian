@@ -30,7 +30,8 @@ public static class ServiceCollectionExtensions
         services.TryAddTransient<IMediator>(sp =>
         {
             var publisher = ResolvePublisher(sp, config);
-            return new Mediator(sp, publisher);
+            var telemetryOptions = sp.GetService<MediatorTelemetryOptions>() ?? MediatorTelemetryOptions.Default;
+            return new Mediator(sp, publisher, telemetryOptions);
         });
         services.TryAddTransient<ISender>(sp => sp.GetRequiredService<IMediator>());
         services.TryAddTransient<IPublisher>(sp => sp.GetRequiredService<IMediator>());

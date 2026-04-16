@@ -110,12 +110,12 @@ jobs:
 
           if [ "${{ steps.versions.outputs.pack_mapping }}" = "true" ]; then
             dotnet CycloneDX src/Meridian.Mapping/Meridian.Mapping.csproj \
-              -o ./sbom -f meridian-mapping.sbom.json -j
+              -o ./sbom -fn meridian-mapping.sbom.json -F Json
           fi
 
           if [ "${{ steps.versions.outputs.pack_mediator }}" = "true" ]; then
             dotnet CycloneDX src/Meridian.Mediator/Meridian.Mediator.csproj \
-              -o ./sbom -f meridian-mediator.sbom.json -j
+              -o ./sbom -fn meridian-mediator.sbom.json -F Json
           fi
 
       - name: Upload packages artifact

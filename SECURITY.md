@@ -7,9 +7,9 @@ major version.
 
 | Version   | Supported |
 | --------- | --------- |
-| 1.1.x     | ✅        |
-| 1.0.x     | ✅        |
-| < 1.0     | ❌        |
+| 2.1.x     | ✅        |
+| 2.0.x     | ✅        |
+| < 2.0     | ❌        |
 
 ## Reporting a Vulnerability
 
@@ -71,3 +71,10 @@ will not pursue legal action against researchers who:
 
 Reporters of accepted vulnerabilities are credited in `CHANGELOG.md` and the
 published GHSA unless they request anonymity.
+
+## Historical Advisories
+
+- `GHSA-XXXX-XXXX-XXXX` / `CVE-TBD`: coordinated security release for
+  `Meridian.Mapping` and `Meridian.Mediator`, shipped in `v2.1.1` and
+  backported in `v2.0.2` on 2026-04-16. The placeholder IDs are replaced
+  once the draft advisory is published.

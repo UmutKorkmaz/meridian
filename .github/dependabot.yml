@@ -16,6 +16,13 @@ updates:
     commit-message:
       prefix: chore
       include: scope
+    ignore:
+      - dependency-name: "AutoMapper"
+        update-types:
+          - "version-update:semver-major"
+      - dependency-name: "MediatR"
+        update-types:
+          - "version-update:semver-major"
     groups:
       microsoft-extensions:
         patterns:

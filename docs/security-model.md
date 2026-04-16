@@ -2,7 +2,7 @@
 
 **Audience:** library maintainers, security researchers, and adopters
 evaluating Meridian for use in regulated environments.
-**Last reviewed:** 2026-04-14
+**Last reviewed:** 2026-04-16
 
 This document describes what Meridian defends against, what it does not,
 and how its defences are enforced. For vulnerability reporting, see
@@ -79,8 +79,14 @@ caught — the process terminates.
   through every nested mapping call and calls `IncrementDepth()` on
   entry, so the cap fires even when the nested type also has a fast
   path.
+- Collection-item recursion now increments depth on both
+  `IMapper.Map(source)` and `IMapper.Map(source, destination)`,
+  including `.UseDestinationValue()` collection reuse. The
+  existing-destination path therefore obeys the same recursion bound as
+  the new-destination path.
 - Regression coverage: `DosRegressionTests.Attacker_Crafted_100k_Deep_Graph_*`
-  plus `PropertyBasedTests.Arbitrary_Depth_Never_Stack_Overflows`.
+  plus `PropertyBasedTests.Arbitrary_Depth_Never_Stack_Overflows` and
+  `MapToExistingDosTests.UseDestinationValue_SelfReferential_Collections_Honor_MaxDepth`.
 
 **Non-goal**: we do not promise that an attacker-supplied graph of
 1 000 000 levels will return quickly. We promise the process will not
@@ -104,8 +110,13 @@ corresponding destination collection, potentially exhausting memory.
   before enumeration. For pure `IEnumerable<T>` streams, the count is
   checked mid-enumeration at `maxItems + 1` to avoid pulling the
   entire attacker stream.
+- The same width cap now applies to `IMapper.Map(source, destination)`
+  and `.UseDestinationValue()` collection reuse. `MapCollection` and
+  `TryMapCollectionOntoExisting` share one enforcement helper so the
+  two enumeration paths cannot drift silently.
 - Regression coverage: `DosRegressionTests.Attacker_Crafted_1M_Item_Collection_*`
-  and `PropertyBasedTests.Oversized_Collection_Always_Throws`.
+  and `PropertyBasedTests.Oversized_Collection_Always_Throws`, plus
+  `MapToExistingDosTests.MapToExisting_Oversized_*`.
 
 ### Reflection-based type confusion
 
@@ -125,10 +136,87 @@ on it.
   `MappingEngine.ResolveService` only activates for types the
   configuration code chose; it is not a generic dispatch from runtime
   input.
+- Constructor mapping no longer treats unresolved parameters as
+  silently valid bindings. `ObjectCreator.CreateWithConstructorMapping`
+  only selects the widest constructor when every parameter is satisfied
+  by explicit configuration, source-name matching, or a C# optional
+  default value. Otherwise it falls back to a narrower constructor or
+  default construction, preserving destination invariants more
+  predictably.
 
 **Non-goal**: we do not defend against an application that lets
 attackers register resolver types at runtime. That is a configuration
 integrity problem, not a mapper concern.
+
+### Info disclosure via telemetry
+
+**Risk**: request or notification failures propagate sensitive context
+into shared tracing backends via `exception.message` or
+`exception.stacktrace`.
+
+**Mitigation**:
+
+- `Meridian.Mediator` always records exception type information, but
+  full stack traces are now opt-in through
+  `MediatorTelemetryOptions.RecordExceptionStackTrace`.
+- Exception-message recording is independently controllable via
+  `MediatorTelemetryOptions.RecordExceptionMessage`. When disabled,
+  mediator spans still report `ActivityStatusCode.Error` without a
+  status description.
+- Regression coverage: `TelemetryPrivacyTests`.
+
+### DoS via retry amplification
+
+**Risk**: attacker-triggered failures can amplify CPU and latency if a
+request retries indefinitely or computes a backoff that overflows.
+
+**Mitigation**:
+
+- `RetryBehavior` clamps per-request retry counts to
+  `RetryPolicy.MaxRetriesCap` (default `10`).
+- Exponential backoff saturates at `RetryPolicy.MaxBackoff` (default
+  `TimeSpan.FromMinutes(5)`), preventing `TimeSpan` overflow.
+- Cancellation is not retried, and the default retry gate rejects
+  `ArgumentException`, `ValidationException`, and
+  `UnauthorizedAccessException` as non-transient.
+- Regression coverage: `RetryBehaviorHardeningTests`.
+
+### DoS via notification fan-out
+
+**Risk**: a large handler set can cause bursty CPU and memory pressure if
+every notification handler starts concurrently.
+
+**Mitigation**:
+
+- `TaskWhenAllPublisher` and `ResilientTaskWhenAllPublisher` now default
+  to `maxDegreeOfParallelism = 16`.
+- Applications that intentionally rely on the legacy behavior must opt
+  in explicitly with `-1`, making the tradeoff visible at registration
+  time.
+- Regression coverage: `PublishingConcurrencyTests`.
+
+### DoS via static mediator cache pinning
+
+**Risk**: `Mediator` maintains process-lifetime static caches keyed by
+runtime request and notification types. Applications that allow
+attacker-controlled type materialization can pin unbounded numbers of
+closed generic types into those caches.
+
+**Current posture**:
+
+- The caches are intentionally process-scoped for steady-state
+  performance.
+- Meridian does not instantiate request types from untrusted payloads.
+  Consumers must prevent unsafe polymorphic or type-name-based
+  deserialization from reaching `Send`, `Publish`, or `CreateStream`.
+
+**Consumer guidance**:
+
+- Treat attacker-controlled runtime type materialization as
+  deserialization of untrusted data (CWE-502 / OWASP Deserialization of
+  Untrusted Data).
+- Restrict polymorphic deserialization to an allowlist of known request
+  contracts before invoking Meridian.
 
 ### Silent data corruption
 
@@ -152,8 +240,8 @@ source in a non-obvious way (truncation, sign flip, lossy conversion).
 
 | Class of threat | Tests | Invocation |
 | --- | --- | --- |
-| Deep-recursion DoS | `DosRegressionTests`, `PropertyBasedTests.Arbitrary_Depth_*` | Every CI run |
-| Wide-collection DoS | `DosRegressionTests`, `PropertyBasedTests.Oversized_Collection_*` | Every CI run |
+| Deep-recursion DoS | `DosRegressionTests`, `PropertyBasedTests.Arbitrary_Depth_*`, `MapToExistingDosTests.UseDestinationValue_*` | Every CI run |
+| Wide-collection DoS | `DosRegressionTests`, `PropertyBasedTests.Oversized_Collection_*`, `MapToExistingDosTests.MapToExisting_Oversized_*` | Every CI run |
 | Undocumented exception leak | `PropertyBasedTests.Arbitrary_Payloads_Never_Throw_Undocumented` | Every CI run |
 | Round-trip equality | `PropertyBasedTests.RoundTrip_Preserves_All_Fields` | Every CI run |
 | Byte-level fuzz (SharpFuzz) | `tests/Meridian.Mapping.Fuzz` | Nightly — manual AFL runner |

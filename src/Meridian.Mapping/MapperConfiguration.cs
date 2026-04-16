@@ -1565,7 +1565,7 @@ public class MapperConfiguration : IConfigurationProvider
     {
         var processMethod = MethodLookupCache.GetInvocableMethod(actionType, "Process")
             ?? throw new InvalidOperationException(
-                $"Mapping action '{actionType.FullName}' does not expose a Process method.");
+                $"Mapping action '{actionType.Name}' does not expose a Process method.");
 
         return (src, dest, context) =>
         {
@@ -1606,7 +1606,7 @@ public class MapperConfiguration : IConfigurationProvider
         }
 
         return Activator.CreateInstance(serviceType)
-            ?? throw new InvalidOperationException($"Could not create instance of '{serviceType.FullName}'.");
+            ?? throw new InvalidOperationException($"Could not create instance of '{serviceType.Name}'.");
     }
 
     /// <summary>
