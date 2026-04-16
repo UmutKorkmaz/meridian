@@ -46,6 +46,10 @@ public record UnregisteredRequest : IRequest<int>;
 
 #endregion
 
+// VoidCommandHandler uses process-static state (WasHandled, ReceivedData).
+// EdgeCaseTests touches the same statics, so the two classes must serialize
+// to avoid a cross-class write/assert race that surfaces as Windows CI flakes.
+[Collection("VoidCommandHandler-static-state")]
 public class RequestResponseTests
 {
     private IMediator BuildMediator(Action<IServiceCollection>? configureServices = null)
