@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.2] - 2026-04-17
+
+Follow-up release to v2.1.1. No runtime behaviour changes; the published
+NuGet packages carry the same security fixes as v2.1.1. Ship this version
+if you want NuGet's "upgrade available" signal to move past v2.1.1 after
+the `GHSA-f5v8-v6q3-q4h6` advisory was published.
+
+### Fixed
+- `tests/Meridian.Mediator.Tests`: `VoidCommandHandler` static-state race
+  across `RequestResponseTests` and `EdgeCaseTests`. Both classes now
+  share the `[Collection("VoidCommandHandler-static-state")]` attribute,
+  so xUnit serialises them. Surfaced intermittently on Linux/macOS and
+  consistently on the slower Windows CI runner.
+
+### Changed (test/doc only)
+- `FsCheck.Xunit` bumped `3.3.0` → `3.3.2` (dependabot PR #11).
+- `SECURITY.md` supported-versions table retired `2.0.x` — upgrade to
+  `2.1.2` for continued security support.
+- `CHANGELOG.md` stamped the assigned advisory id `GHSA-f5v8-v6q3-q4h6`
+  in the v2.1.1 block (previously placeholder `GHSA-XXXX-XXXX-XXXX`).
+
+### Security
+- `GHSA-f5v8-v6q3-q4h6` remains the active advisory for all vulnerable
+  versions (`< 2.1.1`). `2.1.1` and `2.1.2` are both patched; prefer
+  `2.1.2` to benefit from the test hygiene fix in CI matrices.
+
 ## [2.1.1] - 2026-04-16
 
 ### Security
@@ -212,7 +238,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - First public release of `Meridian.Mapping` (profile-based object-to-object
   mapper with reverse maps, resolvers, converters, and queryable projection).
 
-[Unreleased]: https://github.com/UmutKorkmaz/meridian/compare/v2.1.1...HEAD
+[Unreleased]: https://github.com/UmutKorkmaz/meridian/compare/v2.1.2...HEAD
+[2.1.2]: https://github.com/UmutKorkmaz/meridian/compare/v2.1.1...v2.1.2
 [2.1.1]: https://github.com/UmutKorkmaz/meridian/compare/v2.0.1...v2.1.1
 [2.0.1]: https://github.com/UmutKorkmaz/meridian/compare/v2.0.0...v2.0.1
 [2.0.0]: https://github.com/UmutKorkmaz/meridian/releases/tag/v2.0.0

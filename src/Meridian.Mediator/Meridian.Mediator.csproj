@@ -6,7 +6,7 @@
     <RootNamespace>Meridian.Mediator</RootNamespace>
     <AssemblyName>Meridian.Mediator</AssemblyName>
     <PackageId>Meridian.Mediator</PackageId>
-    <Version>2.1.1</Version>
+    <Version>2.1.2</Version>
     <Description>A lightweight, high-performance in-process mediator for .NET. CQRS pattern with pipeline behaviors, notifications, and streams.</Description>
     <PackageTags>mediator;cqrs;pipeline;command;query;handler</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>

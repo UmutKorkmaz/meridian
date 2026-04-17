@@ -1,0 +1,87 @@
+name: Unlist vulnerable NuGet versions
+
+# Manual one-shot to unlist the pre-v2.1.1 package versions that are in-scope
+# for GHSA-f5v8-v6q3-q4h6. Unlisting hides the version from package-manager
+# search while keeping it restorable by consumers who have it pinned.
+#
+# Security: the only workflow-dispatch input is `dry_run`, a schema-constrained
+# choice of "true"/"false" — not a free-form string. Routed through `env:` for
+# defense-in-depth even though injection is not possible given the type.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'If true, print the commands instead of running them'
+        required: false
+        default: 'true'
+        type: choice
+        options:
+          - 'true'
+          - 'false'
+
+permissions:
+  contents: read
+
+jobs:
+  unlist:
+    runs-on: ubuntu-latest
+    env:
+      DRY_RUN: ${{ inputs.dry_run }}
+      NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+    steps:
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.x'
+
+      - name: Guard NUGET_API_KEY
+        run: |
+          if [ -z "${NUGET_API_KEY:-}" ]; then
+            echo "::error::NUGET_API_KEY secret is not set."
+            exit 1
+          fi
+
+      - name: Unlist Meridian.Mapping 2.1.0
+        run: |
+          set -euo pipefail
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "[DRY RUN] dotnet nuget delete Meridian.Mapping 2.1.0 --api-key *** --source https://api.nuget.org/v3/index.json --non-interactive"
+          else
+            dotnet nuget delete Meridian.Mapping 2.1.0 \
+              --api-key "$NUGET_API_KEY" \
+              --source https://api.nuget.org/v3/index.json \
+              --non-interactive
+          fi
+
+      - name: Unlist Meridian.Mediator 2.0.0 and 2.0.1
+        run: |
+          set -euo pipefail
+          for v in 2.0.0 2.0.1; do
+            if [ "$DRY_RUN" = "true" ]; then
+              echo "[DRY RUN] dotnet nuget delete Meridian.Mediator $v --api-key *** --source https://api.nuget.org/v3/index.json --non-interactive"
+            else
+              dotnet nuget delete Meridian.Mediator "$v" \
+                --api-key "$NUGET_API_KEY" \
+                --source https://api.nuget.org/v3/index.json \
+                --non-interactive
+            fi
+          done
+
+      - name: Summary
+        run: |
+          {
+            echo "## Unlist summary"
+            echo ""
+            echo "Unlisting hides these versions from package-manager search but"
+            echo "keeps them restorable for pinned installs."
+            echo ""
+            echo "- \`Meridian.Mapping\` 2.1.0 (superseded by 2.1.2)"
+            echo "- \`Meridian.Mediator\` 2.0.0 (superseded by 2.1.2)"
+            echo "- \`Meridian.Mediator\` 2.0.1 (superseded by 2.1.2)"
+            echo ""
+            echo "Pre-2.0.0 versions are outside the advisory's affected range."
+            echo ""
+            echo "For deprecation with a custom upgrade message, use the"
+            echo "nuget.org web UI — that field is not exposed to the API."
+          } >> "$GITHUB_STEP_SUMMARY"
