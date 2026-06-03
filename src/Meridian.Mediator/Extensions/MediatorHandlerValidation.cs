@@ -64,8 +64,8 @@ public static class MediatorHandlerValidation
                 if (iface == typeof(INotification))
                 {
                     var handlerType = typeof(INotificationHandler<>).MakeGenericType(type);
-                    var handlers = provider.GetServices(handlerType).ToList();
-                    if (handlers.Count == 0)
+                    var handlers = provider.GetServices(handlerType);
+                    if (!handlers.Any())
                     {
                         warnings.Add($"Notification '{type.FullName}' has no registered handlers.");
                     }
@@ -120,15 +120,26 @@ public static class MediatorHandlerValidation
     {
         try
         {
-            var handlers = provider.GetServices(handlerServiceType).ToList();
-            if (handlers.Count == 0)
+            var handlers = provider.GetServices(handlerServiceType);
+            using var enumerator = handlers.GetEnumerator();
+
+            if (!enumerator.MoveNext())
             {
                 errors.Add($"Request '{requestType.FullName}' has no registered handler for '{handlerServiceType.Name}'.");
             }
-            else if (handlers.Count > 1)
+            else
             {
-                var handlerNames = string.Join(", ", handlers.Select(h => h?.GetType().FullName ?? "null"));
-                errors.Add($"Request '{requestType.FullName}' has {handlers.Count} handlers registered ({handlerNames}). Only one handler per request type is allowed.");
+                var firstHandler = enumerator.Current;
+                if (enumerator.MoveNext())
+                {
+                    var allHandlers = new List<object?> { firstHandler, enumerator.Current };
+                    while (enumerator.MoveNext())
+                    {
+                        allHandlers.Add(enumerator.Current);
+                    }
+                    var handlerNames = string.Join(", ", allHandlers.Select(h => h?.GetType().FullName ?? "null"));
+                    errors.Add($"Request '{requestType.FullName}' has {allHandlers.Count} handlers registered ({handlerNames}). Only one handler per request type is allowed.");
+                }
             }
         }
         catch (Exception ex)

@@ -82,6 +82,8 @@ public class Mediator : IMediator
             return handler.Handle(request, _serviceProvider, cancellationToken);
         }
 
+        var activity = StartRequestActivity(requestType, typeof(TResponse));
+
         return ExecuteWithActivityAsync(
             activity,
             () => handler.Handle(request, _serviceProvider, cancellationToken),
@@ -103,6 +105,8 @@ public class Mediator : IMediator
             return handler.Handle(request, _serviceProvider, cancellationToken);
         }
 
+        var activity = StartRequestActivity(requestType, null);
+
         return ExecuteWithActivityAsync(
             activity,
             () => handler.Handle(request, _serviceProvider, cancellationToken),
@@ -123,6 +127,8 @@ public class Mediator : IMediator
             return handler.Handle(request, _serviceProvider, cancellationToken);
         }
 
+        var activity = StartRequestActivity(requestType, null);
+
         return ExecuteWithActivityAsync(
             activity,
             () => handler.Handle(request, _serviceProvider, cancellationToken),
@@ -139,6 +145,8 @@ public class Mediator : IMediator
         {
             return PublishNotification(notification, cancellationToken);
         }
+
+        var activity = StartNotificationActivity(notification.GetType());
 
         return ExecuteWithActivityAsync(
             activity,
@@ -160,6 +168,8 @@ public class Mediator : IMediator
         {
             return PublishNotification(notif, cancellationToken);
         }
+
+        var activity = StartNotificationActivity(notif.GetType());
 
         return ExecuteWithActivityAsync(
             activity,
