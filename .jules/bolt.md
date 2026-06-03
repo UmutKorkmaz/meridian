@@ -1,3 +1,3 @@
-## 2025-02-28 - Async State Machine Allocations with OpenTelemetry
-**Learning:** Even if `ActivitySource.StartActivity()` returns `null` (when no listeners are attached), passing that `null` into an `async Task` or `async Task<T>` method still forces the .NET compiler to allocate an async state machine. This causes unnecessary overhead and allocations (from ~408B to ~0B in this case) on the hot path for every execution.
-**Action:** Always check `ActivitySource.HasListeners()` *before* invoking `async` wrapper methods if the sole purpose of the wrapper is telemetry/tracing. Bypass the `async` wrapper entirely when telemetry is inactive to avoid the state machine allocation penalty.
+## 2025-03-03 - Avoid OpenTelemetry Async Wrapper Overhead
+**Learning:** Returning `null` from `ActivitySource.StartActivity` (when no listeners exist) is not zero-cost if the subsequent dispatch is wrapped in an `async` state machine. The state machine overhead becomes a measurable bottleneck in hot-path abstractions like MediatR/Meridian dispatches.
+**Action:** Always eagerly check `.HasListeners()` and completely bypass any `async` instrumentation wrappers, delegating directly to the underlying `Task`/`IAsyncEnumerable` returned by the handler.
