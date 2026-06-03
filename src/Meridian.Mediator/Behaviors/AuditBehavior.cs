@@ -142,7 +142,7 @@ public sealed class AuditBehavior<TRequest, TResponse> : IPipelineBehavior<TRequ
                 await _sink.RecordAsync(
                     new AuditEntry(startedAt, correlationId, requestTypeName,
                         sw.ElapsedMilliseconds, Success: false,
-                        FailureMessage: ex.Message, FailureType: ex.GetType().FullName),
+                        FailureMessage: "An error occurred during request processing.", FailureType: ex.GetType().FullName),
                     CancellationToken.None).ConfigureAwait(false);
             }
             catch (Exception sinkEx)
