@@ -77,8 +77,7 @@ public class Mediator : IMediator
         var handler = (RequestHandlerWrapper<TResponse>)_requestHandlers.GetOrAdd(requestType,
             static t => CreateRequestHandler(t, typeof(RequestHandlerWrapperImpl<,>)));
 
-        var activity = StartRequestActivity(requestType, typeof(TResponse));
-        if (activity is null)
+        if (!ActivitySourceInstance.HasListeners())
         {
             return handler.Handle(request, _serviceProvider, cancellationToken);
         }
@@ -99,8 +98,7 @@ public class Mediator : IMediator
         var handler = (RequestHandlerWrapper<Unit>)_requestHandlers.GetOrAdd(requestType,
             static t => CreateRequestHandler(t, typeof(RequestHandlerWrapperImpl<,>)));
 
-        var activity = StartRequestActivity(requestType, typeof(Unit));
-        if (activity is null)
+        if (!ActivitySourceInstance.HasListeners())
         {
             return handler.Handle(request, _serviceProvider, cancellationToken);
         }
@@ -120,8 +118,7 @@ public class Mediator : IMediator
         var handler = _requestHandlers.GetOrAdd(requestType,
             static t => CreateRequestHandler(t, typeof(RequestHandlerWrapperImpl<,>)));
 
-        var activity = StartRequestActivity(requestType, null);
-        if (activity is null)
+        if (!ActivitySourceInstance.HasListeners())
         {
             return handler.Handle(request, _serviceProvider, cancellationToken);
         }
@@ -138,8 +135,7 @@ public class Mediator : IMediator
     {
         ArgumentNullException.ThrowIfNull(notification);
 
-        var activity = StartNotificationActivity(notification.GetType());
-        if (activity is null)
+        if (!ActivitySourceInstance.HasListeners())
         {
             return PublishNotification(notification, cancellationToken);
         }
@@ -160,8 +156,7 @@ public class Mediator : IMediator
             throw new ArgumentException($"Object of type {notification.GetType()} does not implement {nameof(INotification)}.", nameof(notification));
         }
 
-        var activity = StartNotificationActivity(notification.GetType());
-        if (activity is null)
+        if (!ActivitySourceInstance.HasListeners())
         {
             return PublishNotification(notif, cancellationToken);
         }
@@ -181,6 +176,11 @@ public class Mediator : IMediator
         var handler = (StreamRequestHandlerWrapper<TResponse>)_streamRequestHandlers.GetOrAdd(requestType,
             static t => CreateStreamHandler(t));
 
+        if (!ActivitySourceInstance.HasListeners())
+        {
+            return handler.Handle(request, _serviceProvider, cancellationToken);
+        }
+
         return ExecuteStreamWithActivity(
             request,
             requestType,
@@ -196,6 +196,11 @@ public class Mediator : IMediator
 
         var requestType = request.GetType();
         var handler = _streamRequestHandlers.GetOrAdd(requestType, static t => CreateStreamHandler(t));
+
+        if (!ActivitySourceInstance.HasListeners())
+        {
+            return handler.Handle(request, _serviceProvider, cancellationToken);
+        }
 
         return ExecuteStreamWithActivity(
             request,
