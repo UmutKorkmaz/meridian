@@ -102,10 +102,12 @@ public sealed class AuditBehavior<TRequest, TResponse> : IPipelineBehavior<TRequ
     where TRequest : notnull
 {
     private readonly IAuditSink _sink;
+    private readonly MediatorTelemetryOptions _telemetryOptions;
 
-    public AuditBehavior(IAuditSink sink)
+    public AuditBehavior(IAuditSink sink, MediatorTelemetryOptions? telemetryOptions = null)
     {
         _sink = sink ?? throw new ArgumentNullException(nameof(sink));
+        _telemetryOptions = telemetryOptions ?? MediatorTelemetryOptions.Default;
     }
 
     public async Task<TResponse> Handle(
@@ -142,7 +144,7 @@ public sealed class AuditBehavior<TRequest, TResponse> : IPipelineBehavior<TRequ
                 await _sink.RecordAsync(
                     new AuditEntry(startedAt, correlationId, requestTypeName,
                         sw.ElapsedMilliseconds, Success: false,
-                        FailureMessage: ex.Message, FailureType: ex.GetType().FullName),
+                        FailureMessage: _telemetryOptions.RecordExceptionMessage ? ex.Message : "Exception message suppressed by telemetry options.", FailureType: ex.GetType().FullName),
                     CancellationToken.None).ConfigureAwait(false);
             }
             catch (Exception sinkEx)
