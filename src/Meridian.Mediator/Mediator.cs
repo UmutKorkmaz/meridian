@@ -77,8 +77,14 @@ public class Mediator : IMediator
         var handler = (RequestHandlerWrapper<TResponse>)_requestHandlers.GetOrAdd(requestType,
             static t => CreateRequestHandler(t, typeof(RequestHandlerWrapperImpl<,>)));
 
+        var activity = StartRequestActivity(requestType, typeof(TResponse));
+        if (activity is null)
+        {
+            return handler.Handle(request, _serviceProvider, cancellationToken);
+        }
+
         return ExecuteWithActivityAsync(
-            StartRequestActivity(requestType, typeof(TResponse)),
+            activity,
             () => handler.Handle(request, _serviceProvider, cancellationToken),
             cancellationToken);
     }
@@ -93,8 +99,14 @@ public class Mediator : IMediator
         var handler = (RequestHandlerWrapper<Unit>)_requestHandlers.GetOrAdd(requestType,
             static t => CreateRequestHandler(t, typeof(RequestHandlerWrapperImpl<,>)));
 
+        var activity = StartRequestActivity(requestType, typeof(Unit));
+        if (activity is null)
+        {
+            return handler.Handle(request, _serviceProvider, cancellationToken);
+        }
+
         return ExecuteWithActivityAsync(
-            StartRequestActivity(requestType, typeof(Unit)),
+            activity,
             () => handler.Handle(request, _serviceProvider, cancellationToken),
             cancellationToken);
     }
@@ -108,8 +120,14 @@ public class Mediator : IMediator
         var handler = _requestHandlers.GetOrAdd(requestType,
             static t => CreateRequestHandler(t, typeof(RequestHandlerWrapperImpl<,>)));
 
+        var activity = StartRequestActivity(requestType, null);
+        if (activity is null)
+        {
+            return handler.Handle(request, _serviceProvider, cancellationToken);
+        }
+
         return ExecuteWithActivityAsync(
-            StartRequestActivity(requestType, null),
+            activity,
             () => handler.Handle(request, _serviceProvider, cancellationToken),
             cancellationToken);
     }
@@ -119,8 +137,15 @@ public class Mediator : IMediator
         where TNotification : INotification
     {
         ArgumentNullException.ThrowIfNull(notification);
+
+        var activity = StartNotificationActivity(notification.GetType());
+        if (activity is null)
+        {
+            return PublishNotification(notification, cancellationToken);
+        }
+
         return ExecuteWithActivityAsync(
-            StartNotificationActivity(notification.GetType()),
+            activity,
             () => PublishNotification(notification, cancellationToken),
             cancellationToken);
     }
@@ -134,8 +159,15 @@ public class Mediator : IMediator
         {
             throw new ArgumentException($"Object of type {notification.GetType()} does not implement {nameof(INotification)}.", nameof(notification));
         }
+
+        var activity = StartNotificationActivity(notification.GetType());
+        if (activity is null)
+        {
+            return PublishNotification(notif, cancellationToken);
+        }
+
         return ExecuteWithActivityAsync(
-            StartNotificationActivity(notification.GetType()),
+            activity,
             () => PublishNotification(notif, cancellationToken),
             cancellationToken);
     }
@@ -231,6 +263,11 @@ public class Mediator : IMediator
 
     private static Activity? StartRequestActivity(Type requestType, Type? responseType)
     {
+        if (!ActivitySourceInstance.HasListeners())
+        {
+            return null;
+        }
+
         var activity = ActivitySourceInstance.StartActivity($"Mediator.Send {requestType.Name}");
         activity?.SetTag("meridian.request_type", requestType.FullName);
         if (responseType is not null)
@@ -243,6 +280,11 @@ public class Mediator : IMediator
 
     private static Activity? StartNotificationActivity(Type notificationType)
     {
+        if (!ActivitySourceInstance.HasListeners())
+        {
+            return null;
+        }
+
         var activity = ActivitySourceInstance.StartActivity($"Mediator.Publish {notificationType.Name}");
         activity?.SetTag("meridian.notification_type", notificationType.FullName);
         return activity;
@@ -250,6 +292,11 @@ public class Mediator : IMediator
 
     private static Activity? StartStreamActivity(Type requestType, Type? responseType)
     {
+        if (!ActivitySourceInstance.HasListeners())
+        {
+            return null;
+        }
+
         var activity = ActivitySourceInstance.StartActivity($"Mediator.CreateStream {requestType.Name}");
         activity?.SetTag("meridian.stream_request_type", requestType.FullName);
         if (responseType is not null)

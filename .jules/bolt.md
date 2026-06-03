@@ -1,0 +1,3 @@
+## 2025-05-30 - Mediator Benchmark Allocation Discovery
+**Learning:** Checking `ActivitySource.HasListeners()` before creating an OpenTelemetry `Activity` saves significant execution overhead (~10ns out of ~165ns baseline per call, or ~6% improvement) and entirely eliminates allocations because strings for span names like `$"Mediator.Send {requestType.Name}"` are not computed and the Activity instances aren't instantiated unecessarily when tracing is disabled.
+**Action:** Always check `ActivitySource.HasListeners()` before generating trace activity descriptors/spans in high-throughput paths unless they are extremely lightweight constants. This specific optimization saved allocations and nanoseconds in the `Meridian.Mediator.Send` method.
