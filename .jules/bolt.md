@@ -1,3 +1,3 @@
-## 2024-06-01 - OpenTelemetry Fast Path
-**Learning:** `ExecuteWithActivityAsync` wrapper adds significant overhead via closures and async state machines, even when no OpenTelemetry listeners are active.
-**Action:** Always check `ActivitySource.HasListeners()` before allocating closures or entering complex tracing wrappers to provide a zero-allocation fast path for standard executions.
+## 2025-03-03 - Avoid OpenTelemetry Async Wrapper Overhead
+**Learning:** Returning `null` from `ActivitySource.StartActivity` (when no listeners exist) is not zero-cost if the subsequent dispatch is wrapped in an `async` state machine. The state machine overhead becomes a measurable bottleneck in hot-path abstractions like MediatR/Meridian dispatches.
+**Action:** Always eagerly check `.HasListeners()` and completely bypass any `async` instrumentation wrappers, delegating directly to the underlying `Task`/`IAsyncEnumerable` returned by the handler.
