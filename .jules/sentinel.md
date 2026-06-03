@@ -1,0 +1,4 @@
+## 2024-05-24 - Information disclosure through telemetry defaults
+**Vulnerability:** The default configuration for `MediatorTelemetryOptions` enabled `RecordExceptionMessage`, exposing potentially sensitive exception messages (such as database errors, SQL syntax, or internal workings) via OpenTelemetry traces.
+**Learning:** Default observability or telemetry configurations must not log sensitive or raw exception data unless explicitly enabled by the user. Although full stack traces were correctly disabled by default, exception messages can still leak sensitive details.
+**Prevention:** Change the default value of `RecordExceptionMessage` to `false` in telemetry/observability libraries. Ensure consumers must explicitly opt-in to logging potentially sensitive exception details to telemetry sinks.

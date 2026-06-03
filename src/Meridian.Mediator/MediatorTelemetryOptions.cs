@@ -13,9 +13,9 @@ public sealed record MediatorTelemetryOptions
     /// <summary>
     /// Gets or sets a value indicating whether exception messages are written to
     /// activity status descriptions and <c>exception.message</c>.
-    /// Defaults to <c>true</c>.
+    /// Defaults to <c>false</c>.
     /// </summary>
-    public bool RecordExceptionMessage { get; init; } = true;
+    public bool RecordExceptionMessage { get; init; } = false;
 
     /// <summary>
     /// Gets or sets a value indicating whether full exception stack traces are
