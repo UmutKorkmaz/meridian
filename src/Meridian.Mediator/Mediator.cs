@@ -77,6 +77,11 @@ public class Mediator : IMediator
         var handler = (RequestHandlerWrapper<TResponse>)_requestHandlers.GetOrAdd(requestType,
             static t => CreateRequestHandler(t, typeof(RequestHandlerWrapperImpl<,>)));
 
+        if (!ActivitySourceInstance.HasListeners())
+        {
+            return handler.Handle(request, _serviceProvider, cancellationToken);
+        }
+
         return ExecuteWithActivityAsync(
             StartRequestActivity(requestType, typeof(TResponse)),
             () => handler.Handle(request, _serviceProvider, cancellationToken),
@@ -93,6 +98,11 @@ public class Mediator : IMediator
         var handler = (RequestHandlerWrapper<Unit>)_requestHandlers.GetOrAdd(requestType,
             static t => CreateRequestHandler(t, typeof(RequestHandlerWrapperImpl<,>)));
 
+        if (!ActivitySourceInstance.HasListeners())
+        {
+            return handler.Handle(request, _serviceProvider, cancellationToken);
+        }
+
         return ExecuteWithActivityAsync(
             StartRequestActivity(requestType, typeof(Unit)),
             () => handler.Handle(request, _serviceProvider, cancellationToken),
@@ -108,6 +118,11 @@ public class Mediator : IMediator
         var handler = _requestHandlers.GetOrAdd(requestType,
             static t => CreateRequestHandler(t, typeof(RequestHandlerWrapperImpl<,>)));
 
+        if (!ActivitySourceInstance.HasListeners())
+        {
+            return handler.Handle(request, _serviceProvider, cancellationToken);
+        }
+
         return ExecuteWithActivityAsync(
             StartRequestActivity(requestType, null),
             () => handler.Handle(request, _serviceProvider, cancellationToken),
@@ -119,6 +134,12 @@ public class Mediator : IMediator
         where TNotification : INotification
     {
         ArgumentNullException.ThrowIfNull(notification);
+
+        if (!ActivitySourceInstance.HasListeners())
+        {
+            return PublishNotification(notification, cancellationToken);
+        }
+
         return ExecuteWithActivityAsync(
             StartNotificationActivity(notification.GetType()),
             () => PublishNotification(notification, cancellationToken),
@@ -134,6 +155,12 @@ public class Mediator : IMediator
         {
             throw new ArgumentException($"Object of type {notification.GetType()} does not implement {nameof(INotification)}.", nameof(notification));
         }
+
+        if (!ActivitySourceInstance.HasListeners())
+        {
+            return PublishNotification(notif, cancellationToken);
+        }
+
         return ExecuteWithActivityAsync(
             StartNotificationActivity(notification.GetType()),
             () => PublishNotification(notif, cancellationToken),
