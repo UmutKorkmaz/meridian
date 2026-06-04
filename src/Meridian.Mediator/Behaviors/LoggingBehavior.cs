@@ -73,7 +73,9 @@ public class LoggingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, 
         {
             stopwatch.Stop();
 
-            _logger.LogError(ex, "Error handling {RequestName} after {ElapsedMilliseconds}ms", requestName, stopwatch.ElapsedMilliseconds);
+            // Sanitize exception to prevent leaking sensitive system details (e.g. stack traces) into logs
+            var sanitizedException = new InvalidOperationException(ex.Message);
+            _logger.LogError(sanitizedException, "Error ({ExceptionType}) handling {RequestName} after {ElapsedMilliseconds}ms", ex.GetType().Name, requestName, stopwatch.ElapsedMilliseconds);
 
             throw;
         }
