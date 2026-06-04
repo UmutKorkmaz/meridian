@@ -187,39 +187,6 @@ public class MeridianMediatorConfiguration
     }
 
     /// <summary>
-    /// Adds a closed stream pipeline behavior by request type or service type.
-    /// </summary>
-    /// <remarks>
-    /// This overload is ambiguous and kept only for compatibility. Prefer
-    /// <see cref="AddClosedStreamBehavior"/> or
-    /// <see cref="AddStreamBehavior{TBehavior}"/>.
-    /// </remarks>
-    /// <param name="requestOrServiceType">
-    /// Either the closed stream request type or the closed
-    /// <see cref="Streaming.IStreamPipelineBehavior{TRequest, TResponse}"/>
-    /// service type.
-    /// </param>
-    /// <param name="behaviorType">The stream behavior type.</param>
-    /// <returns>This configuration instance for fluent chaining.</returns>
-    [Obsolete("AddStreamBehavior(Type, Type) is ambiguous. Use AddClosedStreamBehavior(...) or AddStreamBehavior<TBehavior>() instead.")]
-    public MeridianMediatorConfiguration AddStreamBehavior(Type requestOrServiceType, Type behaviorType)
-    {
-        ArgumentNullException.ThrowIfNull(requestOrServiceType);
-        ArgumentNullException.ThrowIfNull(behaviorType);
-
-        var closedServiceType = ResolveClosedServiceType(
-            requestOrServiceType,
-            behaviorType,
-            typeof(Streaming.IStreamPipelineBehavior<,>),
-            nameof(requestOrServiceType),
-            nameof(behaviorType),
-            "AddOpenStreamBehavior");
-
-        RegisterClosedStreamBehavior(closedServiceType, behaviorType);
-        return this;
-    }
-
-    /// <summary>
     /// Adds a closed stream pipeline behavior by implementation type.
     /// </summary>
     /// <typeparam name="TBehavior">The stream behavior type.</typeparam>
