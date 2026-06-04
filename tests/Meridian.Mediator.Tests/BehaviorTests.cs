@@ -737,8 +737,15 @@ public class BehaviorTests
         Assert.Single(logger.InformationMessages);
         Assert.Contains("LoggedRequest", logger.InformationMessages[0]);
         Assert.Single(logger.ErrorMessages);
-        Assert.IsType<InvalidOperationException>(logger.ErrorMessages[0].Exception);
+
+        // Assert that the exception was sanitized (base Exception, not InvalidOperationException)
+        var loggedException = logger.ErrorMessages[0].Exception;
+        Assert.IsType<InvalidOperationException>(loggedException);
+        Assert.Equal("Logging test failure", loggedException.Message);
+
+        // Assert the logged message contains the request name and original exception type
         Assert.Contains("LoggedRequest", logger.ErrorMessages[0].Message);
+        Assert.Contains("InvalidOperationException", logger.ErrorMessages[0].Message);
     }
 
     #endregion
