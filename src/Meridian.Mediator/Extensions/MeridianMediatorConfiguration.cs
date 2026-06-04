@@ -80,41 +80,6 @@ public class MeridianMediatorConfiguration
     }
 
     /// <summary>
-    /// Adds a closed pipeline behavior by request type or service type.
-    /// </summary>
-    /// <remarks>
-    /// This overload is ambiguous and kept only for compatibility. Prefer
-    /// <see cref="AddClosedBehavior"/> for closed registrations or
-    /// <see cref="AddBehavior{TBehavior}"/> / <see cref="AddOpenBehavior"/>
-    /// for the common cases.
-    /// </remarks>
-    /// <param name="requestOrServiceType">
-    /// Either the closed request type or the closed
-    /// <see cref="Pipeline.IPipelineBehavior{TRequest, TResponse}"/> service
-    /// type.
-    /// </param>
-    /// <param name="behaviorType">The behavior type.</param>
-    /// <param name="order">Execution order (lower values run first). Default is 0.</param>
-    /// <returns>This configuration instance for fluent chaining.</returns>
-    [Obsolete("AddBehavior(Type, Type, ...) is ambiguous. Use AddClosedBehavior(...) for closed registrations or AddBehavior<TBehavior>() / AddOpenBehavior(...) for the common cases.")]
-    public MeridianMediatorConfiguration AddBehavior(Type requestOrServiceType, Type behaviorType, int order = 0)
-    {
-        ArgumentNullException.ThrowIfNull(requestOrServiceType);
-        ArgumentNullException.ThrowIfNull(behaviorType);
-
-        var closedServiceType = ResolveClosedServiceType(
-            requestOrServiceType,
-            behaviorType,
-            typeof(Pipeline.IPipelineBehavior<,>),
-            nameof(requestOrServiceType),
-            nameof(behaviorType),
-            "AddOpenBehavior");
-
-        RegisterClosedBehavior(closedServiceType, behaviorType, order);
-        return this;
-    }
-
-    /// <summary>
     /// Adds a closed generic pipeline behavior by type.
     /// </summary>
     /// <typeparam name="TBehavior">The behavior type.</typeparam>
@@ -420,50 +385,6 @@ public class MeridianMediatorConfiguration
         EnsureClosedServiceType(serviceType, typeof(Streaming.IStreamPipelineBehavior<,>), nameof(serviceType));
         EnsureConcreteClosedBehaviorType(serviceType, behaviorType, nameof(behaviorType), "AddOpenStreamBehavior");
         ClosedStreamBehaviors.Add((serviceType, behaviorType));
-    }
-
-    private static Type ResolveClosedServiceType(
-        Type requestOrServiceType,
-        Type behaviorType,
-        Type openBehaviorServiceType,
-        string requestOrServiceParamName,
-        string behaviorParamName,
-        string openRegistrationMethod)
-    {
-        if (IsClosedConstructedGeneric(requestOrServiceType, openBehaviorServiceType))
-        {
-            EnsureConcreteClosedBehaviorType(
-                requestOrServiceType,
-                behaviorType,
-                behaviorParamName,
-                openRegistrationMethod);
-            return requestOrServiceType;
-        }
-
-        if (behaviorType.IsGenericTypeDefinition)
-        {
-            throw new ArgumentException(
-                $"Type {behaviorType} is open generic. Use {openRegistrationMethod} for open generic registrations.",
-                behaviorParamName);
-        }
-
-        var matchingInterfaces = behaviorType.GetInterfaces()
-            .Where(i => IsClosedConstructedGeneric(i, openBehaviorServiceType))
-            .Where(i => i.GetGenericArguments()[0] == requestOrServiceType)
-            .ToList();
-
-        return matchingInterfaces.Count switch
-        {
-            1 => matchingInterfaces[0],
-            > 1 => throw new ArgumentException(
-                $"Type {behaviorType} implements multiple closed {openBehaviorServiceType.Name} interfaces for request type {requestOrServiceType}. " +
-                "Use the explicit closed service-type overload instead.",
-                requestOrServiceParamName),
-            _ => throw new ArgumentException(
-                $"Type {behaviorType} does not implement a closed {openBehaviorServiceType.Name} for request type {requestOrServiceType}. " +
-                "Pass the closed service type explicitly when the request type is ambiguous.",
-                behaviorParamName),
-        };
     }
 
     private static List<Type> GetClosedImplementedInterfaces(Type behaviorType, Type openBehaviorServiceType)

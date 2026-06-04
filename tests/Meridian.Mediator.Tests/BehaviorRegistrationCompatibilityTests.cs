@@ -91,44 +91,21 @@ public class BehaviorRegistrationCompatibilityTests
     }
 
     [Fact]
-    public async Task AddBehavior_Request_Type_Overload_Remains_Compatible()
+    public async Task AddBehavior_Typed_Overload_Registers_Closed_Behavior()
     {
         ClosedApiBehavior.InvocationCount = 0;
 
         var services = new ServiceCollection();
         services.AddMeridianMediator(cfg =>
         {
-#pragma warning disable CS0618
-            cfg.AddBehavior(typeof(ClosedApiRequest), typeof(ClosedApiBehavior));
-#pragma warning restore CS0618
+            cfg.AddBehavior<ClosedApiBehavior>();
         });
         services.AddTransient<IRequestHandler<ClosedApiRequest, string>, ClosedApiRequestHandler>();
 
         var mediator = services.BuildServiceProvider().GetRequiredService<IMediator>();
-        var result = await mediator.Send(new ClosedApiRequest("request"));
+        var result = await mediator.Send(new ClosedApiRequest("typed"));
 
-        Assert.Equal("handled:request", result);
-        Assert.Equal(1, ClosedApiBehavior.InvocationCount);
-    }
-
-    [Fact]
-    public async Task AddBehavior_Service_Type_Overload_Remains_Compatible()
-    {
-        ClosedApiBehavior.InvocationCount = 0;
-
-        var services = new ServiceCollection();
-        services.AddMeridianMediator(cfg =>
-        {
-#pragma warning disable CS0618
-            cfg.AddBehavior(typeof(IPipelineBehavior<ClosedApiRequest, string>), typeof(ClosedApiBehavior));
-#pragma warning restore CS0618
-        });
-        services.AddTransient<IRequestHandler<ClosedApiRequest, string>, ClosedApiRequestHandler>();
-
-        var mediator = services.BuildServiceProvider().GetRequiredService<IMediator>();
-        var result = await mediator.Send(new ClosedApiRequest("service"));
-
-        Assert.Equal("handled:service", result);
+        Assert.Equal("handled:typed", result);
         Assert.Equal(1, ClosedApiBehavior.InvocationCount);
     }
 
