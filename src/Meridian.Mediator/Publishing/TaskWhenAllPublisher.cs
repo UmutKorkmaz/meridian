@@ -26,9 +26,34 @@ public class TaskWhenAllPublisher : INotificationPublisher
     {
         List<Task> tasks;
         using var limiter = _maxDegreeOfParallelism == -1 ? null : new SemaphoreSlim(_maxDegreeOfParallelism);
-        tasks = limiter == null
-            ? handlerExecutors.Select(handler => handler.HandlerCallback(notification, cancellationToken)).ToList()
-            : handlerExecutors.Select(handler => RunBounded(handler, notification, cancellationToken, limiter)).ToList();
+
+        if (handlerExecutors is ICollection<NotificationHandlerExecutor> collection)
+        {
+            tasks = new List<Task>(collection.Count);
+        }
+        else if (handlerExecutors is IReadOnlyCollection<NotificationHandlerExecutor> roCollection)
+        {
+            tasks = new List<Task>(roCollection.Count);
+        }
+        else
+        {
+            tasks = new List<Task>();
+        }
+
+        if (limiter == null)
+        {
+            foreach (var handler in handlerExecutors)
+            {
+                tasks.Add(handler.HandlerCallback(notification, cancellationToken));
+            }
+        }
+        else
+        {
+            foreach (var handler in handlerExecutors)
+            {
+                tasks.Add(RunBounded(handler, notification, cancellationToken, limiter));
+            }
+        }
 
         if (tasks.Count == 0) return;
 
@@ -99,9 +124,34 @@ public class ResilientTaskWhenAllPublisher : INotificationPublisher
 
         List<Task> tasks;
         using var limiter = _maxDegreeOfParallelism == -1 ? null : new SemaphoreSlim(_maxDegreeOfParallelism);
-        tasks = limiter == null
-            ? handlerExecutors.Select(handler => RunResilient(handler, notification, cancellationToken, exceptions)).ToList()
-            : handlerExecutors.Select(handler => RunBoundedResilient(handler, notification, cancellationToken, limiter, exceptions)).ToList();
+
+        if (handlerExecutors is ICollection<NotificationHandlerExecutor> collection)
+        {
+            tasks = new List<Task>(collection.Count);
+        }
+        else if (handlerExecutors is IReadOnlyCollection<NotificationHandlerExecutor> roCollection)
+        {
+            tasks = new List<Task>(roCollection.Count);
+        }
+        else
+        {
+            tasks = new List<Task>();
+        }
+
+        if (limiter == null)
+        {
+            foreach (var handler in handlerExecutors)
+            {
+                tasks.Add(RunResilient(handler, notification, cancellationToken, exceptions));
+            }
+        }
+        else
+        {
+            foreach (var handler in handlerExecutors)
+            {
+                tasks.Add(RunBoundedResilient(handler, notification, cancellationToken, limiter, exceptions));
+            }
+        }
 
         await Task.WhenAll(tasks).ConfigureAwait(false);
 
