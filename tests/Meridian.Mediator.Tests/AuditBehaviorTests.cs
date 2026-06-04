@@ -143,4 +143,23 @@ public class AuditBehaviorTests
             new AuditEntry(DateTimeOffset.UtcNow, "corr", "Type", 1, false, "boom", "BoomException"),
             CancellationToken.None);
     }
+
+    [Fact]
+    public async Task Handle_SuccessfulRequest_RecordsSuccessAuditEntry()
+    {
+        var sink = new CapturingSink();
+        var behavior = new AuditBehavior<AuditPing, AuditPong>(sink);
+        var expectedResponse = new AuditPong(42);
+        using var cts = new CancellationTokenSource();
+
+        var response = await behavior.Handle(
+            new AuditPing(41),
+            () => Task.FromResult(expectedResponse),
+            cts.Token);
+
+        Assert.Same(expectedResponse, response);
+        Assert.Single(sink.Entries);
+        Assert.True(sink.Entries[0].Success);
+        Assert.Contains(nameof(AuditPing), sink.Entries[0].RequestTypeName);
+    }
 }
