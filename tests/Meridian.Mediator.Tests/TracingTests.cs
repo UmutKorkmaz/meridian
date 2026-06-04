@@ -185,6 +185,7 @@ public class TracingTests
     {
         using var collector = new ActivityCollector();
         var services = new ServiceCollection();
+        services.AddSingleton(new MediatorTelemetryOptions { RecordExceptionMessage = true });
         services.AddMeridianMediator(_ => { });
         services.AddTransient<IRequestHandler<FailingActivityProbeRequest, int>, FailingActivityProbeRequestHandler>();
 
@@ -206,6 +207,7 @@ public class TracingTests
     {
         using var collector = new ActivityCollector();
         var services = new ServiceCollection();
+        services.AddSingleton(new MediatorTelemetryOptions { RecordExceptionMessage = true });
         services.AddMeridianMediator(_ => { });
         services.AddTransient<IStreamRequestHandler<FailingActivityProbeStream, int>, FailingActivityProbeStreamHandler>();
 

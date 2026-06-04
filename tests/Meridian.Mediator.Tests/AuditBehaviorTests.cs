@@ -79,7 +79,7 @@ public class AuditBehaviorTests
         Assert.Equal("intentional", ex.Message);
         Assert.Single(sink.Entries);
         Assert.False(sink.Entries[0].Success);
-        Assert.Equal("intentional", sink.Entries[0].FailureMessage);
+        Assert.Equal("An error occurred during request processing.", sink.Entries[0].FailureMessage);
         Assert.Contains("InvalidOperationException", sink.Entries[0].FailureType);
     }
 
