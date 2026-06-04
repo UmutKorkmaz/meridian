@@ -80,8 +80,10 @@ public sealed class LoggerAuditSink : IAuditSink
 /// Pipeline behaviour that records an <see cref="AuditEntry"/> for every
 /// request dispatched through the mediator. Captures correlation ID
 /// (auto-creates one via <see cref="CorrelationContext"/> if absent),
-/// request type name, wall-clock duration, and success / failure with
-/// the exception's type + message preserved for triage.
+/// request type name, wall-clock duration, success / failure status,
+/// and failure type for triage. Failure messages are redacted by
+/// default and are only recorded when telemetry options explicitly
+/// opt in to exception messages.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -101,11 +103,20 @@ public sealed class LoggerAuditSink : IAuditSink
 public sealed class AuditBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
     where TRequest : notnull
 {
+    private const string RedactedFailureMessage = "An error occurred during request processing.";
+
     private readonly IAuditSink _sink;
+    private readonly MediatorTelemetryOptions _telemetryOptions;
 
     public AuditBehavior(IAuditSink sink)
+        : this(sink, MediatorTelemetryOptions.Default)
+    {
+    }
+
+    public AuditBehavior(IAuditSink sink, MediatorTelemetryOptions telemetryOptions)
     {
         _sink = sink ?? throw new ArgumentNullException(nameof(sink));
+        _telemetryOptions = telemetryOptions ?? throw new ArgumentNullException(nameof(telemetryOptions));
     }
 
     public async Task<TResponse> Handle(
@@ -142,7 +153,7 @@ public sealed class AuditBehavior<TRequest, TResponse> : IPipelineBehavior<TRequ
                 await _sink.RecordAsync(
                     new AuditEntry(startedAt, correlationId, requestTypeName,
                         sw.ElapsedMilliseconds, Success: false,
-                        FailureMessage: ex.Message, FailureType: ex.GetType().FullName),
+                        FailureMessage: GetFailureMessage(ex), FailureType: ex.GetType().FullName),
                     CancellationToken.None).ConfigureAwait(false);
             }
             catch (Exception sinkEx)
@@ -157,4 +168,7 @@ public sealed class AuditBehavior<TRequest, TResponse> : IPipelineBehavior<TRequ
             throw;
         }
     }
+
+    private string GetFailureMessage(Exception ex) =>
+        _telemetryOptions.RecordExceptionMessage ? ex.Message : RedactedFailureMessage;
 }
