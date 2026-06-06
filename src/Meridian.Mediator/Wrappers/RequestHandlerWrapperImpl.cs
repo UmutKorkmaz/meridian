@@ -35,10 +35,27 @@ public class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWrap
 
         Task<TResponse> Handler() => handler.Handle((TRequest)request, cancellationToken);
 
-        return behaviors
-            .Reverse()
-            .Aggregate(
-                (RequestHandlerDelegate<TResponse>)Handler,
-                (next, behavior) => () => behavior.Handle((TRequest)request, next, cancellationToken))();
+        RequestHandlerDelegate<TResponse> next = Handler;
+
+        // Fast path: avoid LINQ Reverse() and Aggregate() allocations when possible
+        if (behaviors is IList<IPipelineBehavior<TRequest, TResponse>> list)
+        {
+            for (int i = list.Count - 1; i >= 0; i--)
+            {
+                var behavior = list[i];
+                var innerNext = next;
+                next = () => behavior.Handle((TRequest)request, innerNext, cancellationToken);
+            }
+        }
+        else
+        {
+            next = behaviors
+                .Reverse()
+                .Aggregate(
+                    (RequestHandlerDelegate<TResponse>)Handler,
+                    (nextDelegate, behavior) => () => behavior.Handle((TRequest)request, nextDelegate, cancellationToken));
+        }
+
+        return next();
     }
 }
