@@ -33,6 +33,13 @@ public class NotificationHandlerWrapperImpl<TNotification> : NotificationHandler
     {
         var handlers = serviceProvider.GetServices<INotificationHandler<TNotification>>();
 
+        // ⚡ Bolt: Fast path for zero handlers - prevents List allocations and iterator overhead
+        if (handlers is ICollection<INotificationHandler<TNotification>> { Count: 0 } ||
+            handlers is IReadOnlyCollection<INotificationHandler<TNotification>> { Count: 0 })
+        {
+            return publisher.Publish(Array.Empty<NotificationHandlerExecutor>(), notification, cancellationToken);
+        }
+
         var executors = handlers
             .Select(handler => new NotificationHandlerExecutor(
                 handler,

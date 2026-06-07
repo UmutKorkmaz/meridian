@@ -5,3 +5,6 @@
 ## 2026-06-03 - Avoid LINQ .Select().ToList() on collections for performance
 **Learning:** In hot paths (like notification publishing), using LINQ `.Select(...).ToList()` allocates enumerators and delegates, and often sizes the list iteratively.
 **Action:** When a pre-sized list is needed from an existing collection, type-check for `ICollection<T>` or `IReadOnlyCollection<T>`, allocate a `List<T>` with that exact capacity, and manually populate it using a `foreach` loop to avoid LINQ allocation overhead.
+## 2024-06-07 - [Fast Path for Mediator Publishing]
+**Learning:** Checking for an empty `ICollection` or `IReadOnlyCollection` and early-returning in mediator pipelines saves list allocations and iterator overhead, which has measurable impact at scale.
+**Action:** Always add early exits for zero-handler scenarios when writing mediator components.
