@@ -35,6 +35,21 @@ public class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWrap
 
         Task<TResponse> Handler() => handler.Handle((TRequest)request, cancellationToken);
 
+        // Optimization: Microsoft.Extensions.DependencyInjection returns an array for GetServices<T>().
+        // Arrays implement IList<T>, allowing us to avoid LINQ allocations (.Reverse() and .Aggregate())
+        // and build the pipeline chain faster with a simple reverse for-loop.
+        if (behaviors is IList<IPipelineBehavior<TRequest, TResponse>> list)
+        {
+            RequestHandlerDelegate<TResponse> next = Handler;
+            for (int i = list.Count - 1; i >= 0; i--)
+            {
+                var behavior = list[i];
+                var prevNext = next;
+                next = () => behavior.Handle((TRequest)request, prevNext, cancellationToken);
+            }
+            return next();
+        }
+
         return behaviors
             .Reverse()
             .Aggregate(
