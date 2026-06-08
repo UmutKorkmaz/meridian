@@ -718,12 +718,15 @@ public class BehaviorTests
         Assert.Empty(logger.ErrorMessages);
     }
 
-    [Fact]
-    public async Task LoggingBehavior_Should_Log_Errors()
+    [Theory]
+    [InlineData(true, "Logging test failure")]
+    [InlineData(false, "An error occurred during request processing.")]
+    public async Task LoggingBehavior_Should_Log_Errors_With_Respect_To_TelemetryOptions(bool recordExceptionMessage, string expectedMessage)
     {
         // Arrange
         var logger = new FakeMediatorLogger();
-        var behavior = new Behaviors.LoggingBehavior<LoggedRequest, string>(logger);
+        var telemetryOptions = new MediatorTelemetryOptions { RecordExceptionMessage = recordExceptionMessage };
+        var behavior = new Behaviors.LoggingBehavior<LoggedRequest, string>(logger, telemetryOptions);
         var request = new LoggedRequest("fail");
 
         RequestHandlerDelegate<string> next = () =>
@@ -738,10 +741,10 @@ public class BehaviorTests
         Assert.Contains("LoggedRequest", logger.InformationMessages[0]);
         Assert.Single(logger.ErrorMessages);
 
-        // Assert that the exception was sanitized (base Exception, not InvalidOperationException)
+        // Assert that the exception was sanitized based on telemetry options
         var loggedException = logger.ErrorMessages[0].Exception;
         Assert.IsType<InvalidOperationException>(loggedException);
-        Assert.Equal("Logging test failure", loggedException.Message);
+        Assert.Equal(expectedMessage, loggedException.Message);
 
         // Assert the logged message contains the request name and original exception type
         Assert.Contains("LoggedRequest", logger.ErrorMessages[0].Message);
