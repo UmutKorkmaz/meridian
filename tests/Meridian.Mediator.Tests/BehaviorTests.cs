@@ -723,7 +723,10 @@ public class BehaviorTests
     {
         // Arrange
         var logger = new FakeMediatorLogger();
-        var behavior = new Behaviors.LoggingBehavior<LoggedRequest, string>(logger);
+        // Since the test asserts the original error message is in the logged exception,
+        // we opt in to recording exception messages.
+        var telemetryOptions = new MediatorTelemetryOptions { RecordExceptionMessage = true };
+        var behavior = new Behaviors.LoggingBehavior<LoggedRequest, string>(logger, telemetryOptions);
         var request = new LoggedRequest("fail");
 
         RequestHandlerDelegate<string> next = () =>
@@ -738,7 +741,7 @@ public class BehaviorTests
         Assert.Contains("LoggedRequest", logger.InformationMessages[0]);
         Assert.Single(logger.ErrorMessages);
 
-        // Assert that the exception was sanitized (base Exception, not InvalidOperationException)
+        // Assert that the exception was sanitized
         var loggedException = logger.ErrorMessages[0].Exception;
         Assert.IsType<InvalidOperationException>(loggedException);
         Assert.Equal("Logging test failure", loggedException.Message);
@@ -746,6 +749,29 @@ public class BehaviorTests
         // Assert the logged message contains the request name and original exception type
         Assert.Contains("LoggedRequest", logger.ErrorMessages[0].Message);
         Assert.Contains("InvalidOperationException", logger.ErrorMessages[0].Message);
+    }
+
+    [Fact]
+    public async Task LoggingBehavior_Should_Redact_Error_Messages_By_Default()
+    {
+        // Arrange
+        var logger = new FakeMediatorLogger();
+        // Default options do not record exception messages
+        var behavior = new Behaviors.LoggingBehavior<LoggedRequest, string>(logger);
+        var request = new LoggedRequest("fail");
+
+        RequestHandlerDelegate<string> next = () =>
+            throw new InvalidOperationException("Sensitive data leakage");
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => behavior.Handle(request, next, CancellationToken.None));
+
+        Assert.Single(logger.ErrorMessages);
+        var loggedException = logger.ErrorMessages[0].Exception;
+        Assert.IsType<InvalidOperationException>(loggedException);
+        Assert.Equal("An error occurred during request processing.", loggedException.Message);
+        Assert.DoesNotContain("Sensitive data leakage", loggedException.Message);
     }
 
     #endregion
