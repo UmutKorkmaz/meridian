@@ -144,7 +144,9 @@ public static class MediatorHandlerValidation
         }
         catch (Exception ex)
         {
-            errors.Add($"Request '{requestType.FullName}': failed to resolve handler '{handlerServiceType.Name}': {ex.Message}");
+            var telemetryOptions = provider.GetService<MediatorTelemetryOptions>() ?? MediatorTelemetryOptions.Default;
+            var message = telemetryOptions.RecordExceptionMessage ? $": {ex.Message}" : " (Exception details hidden. Enable RecordExceptionMessage for details).";
+            errors.Add($"Request '{requestType.FullName}': failed to resolve handler '{handlerServiceType.Name}'{message}");
         }
     }
 }
