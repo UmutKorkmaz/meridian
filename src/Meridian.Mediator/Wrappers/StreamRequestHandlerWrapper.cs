@@ -47,12 +47,32 @@ public class StreamRequestHandlerWrapperImpl<TRequest, TResponse> : StreamReques
         var handler = serviceProvider.GetRequiredService<IStreamRequestHandler<TRequest, TResponse>>();
 
         IAsyncEnumerable<TResponse> Handler() => handler.Handle((TRequest)request, cancellationToken);
+        StreamHandlerDelegate<TResponse> current = Handler;
 
-        return serviceProvider
-            .GetServices<IStreamPipelineBehavior<TRequest, TResponse>>()
-            .Reverse()
-            .Aggregate(
-                (StreamHandlerDelegate<TResponse>)Handler,
-                (next, behavior) => () => behavior.Handle((TRequest)request, next, cancellationToken))();
+        var behaviors = serviceProvider.GetServices<IStreamPipelineBehavior<TRequest, TResponse>>();
+
+        if (behaviors is IStreamPipelineBehavior<TRequest, TResponse>[] behaviorArray)
+        {
+            for (int i = behaviorArray.Length - 1; i >= 0; i--)
+            {
+                var behavior = behaviorArray[i];
+                var next = current;
+                current = () => behavior.Handle((TRequest)request, next, cancellationToken);
+            }
+        }
+        else
+        {
+            var behaviorList = behaviors as IReadOnlyList<IStreamPipelineBehavior<TRequest, TResponse>>
+                ?? behaviors.ToList();
+
+            for (int i = behaviorList.Count - 1; i >= 0; i--)
+            {
+                var behavior = behaviorList[i];
+                var next = current;
+                current = () => behavior.Handle((TRequest)request, next, cancellationToken);
+            }
+        }
+
+        return current();
     }
 }

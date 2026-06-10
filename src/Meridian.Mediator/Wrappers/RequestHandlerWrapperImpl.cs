@@ -34,11 +34,33 @@ public class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWrap
         }
 
         Task<TResponse> Handler() => handler.Handle((TRequest)request, cancellationToken);
+        RequestHandlerDelegate<TResponse> current = Handler;
 
-        return behaviors
-            .Reverse()
-            .Aggregate(
-                (RequestHandlerDelegate<TResponse>)Handler,
-                (next, behavior) => () => behavior.Handle((TRequest)request, next, cancellationToken))();
+        // Optimization: Microsoft.Extensions.DependencyInjection returns an array for GetServices.
+        // Array reverse iteration avoids LINQ allocations for pipeline assembly.
+        if (behaviors is IPipelineBehavior<TRequest, TResponse>[] behaviorArray)
+        {
+            for (int i = behaviorArray.Length - 1; i >= 0; i--)
+            {
+                var behavior = behaviorArray[i];
+                var next = current;
+                current = () => behavior.Handle((TRequest)request, next, cancellationToken);
+            }
+        }
+        else
+        {
+            // Fallback for custom DI containers returning list/enumerable
+            var behaviorList = behaviors as IReadOnlyList<IPipelineBehavior<TRequest, TResponse>>
+                ?? behaviors.ToList();
+
+            for (int i = behaviorList.Count - 1; i >= 0; i--)
+            {
+                var behavior = behaviorList[i];
+                var next = current;
+                current = () => behavior.Handle((TRequest)request, next, cancellationToken);
+            }
+        }
+
+        return current();
     }
 }
