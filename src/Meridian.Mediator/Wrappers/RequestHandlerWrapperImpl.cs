@@ -33,12 +33,28 @@ public class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWrap
             return handler.Handle((TRequest)request, cancellationToken);
         }
 
-        Task<TResponse> Handler() => handler.Handle((TRequest)request, cancellationToken);
+        RequestHandlerDelegate<TResponse> next = () => handler.Handle((TRequest)request, cancellationToken);
 
-        return behaviors
-            .Reverse()
-            .Aggregate(
-                (RequestHandlerDelegate<TResponse>)Handler,
-                (next, behavior) => () => behavior.Handle((TRequest)request, next, cancellationToken))();
+        // Optimization: avoid LINQ allocations by checking if we have an IList.
+        // Microsoft.Extensions.DependencyInjection returns arrays for multiple services.
+        if (behaviors is IList<IPipelineBehavior<TRequest, TResponse>> list)
+        {
+            for (int i = list.Count - 1; i >= 0; i--)
+            {
+                var behavior = list[i];
+                var currentNext = next;
+                next = () => behavior.Handle((TRequest)request, currentNext, cancellationToken);
+            }
+        }
+        else
+        {
+            foreach (var behavior in behaviors.Reverse())
+            {
+                var currentNext = next;
+                next = () => behavior.Handle((TRequest)request, currentNext, cancellationToken);
+            }
+        }
+
+        return next();
     }
 }
