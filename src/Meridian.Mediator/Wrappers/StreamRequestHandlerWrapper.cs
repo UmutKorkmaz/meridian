@@ -46,13 +46,30 @@ public class StreamRequestHandlerWrapperImpl<TRequest, TResponse> : StreamReques
     {
         var handler = serviceProvider.GetRequiredService<IStreamRequestHandler<TRequest, TResponse>>();
 
-        IAsyncEnumerable<TResponse> Handler() => handler.Handle((TRequest)request, cancellationToken);
+        StreamHandlerDelegate<TResponse> next = () => handler.Handle((TRequest)request, cancellationToken);
 
-        return serviceProvider
-            .GetServices<IStreamPipelineBehavior<TRequest, TResponse>>()
-            .Reverse()
-            .Aggregate(
-                (StreamHandlerDelegate<TResponse>)Handler,
-                (next, behavior) => () => behavior.Handle((TRequest)request, next, cancellationToken))();
+        var behaviors = serviceProvider.GetServices<IStreamPipelineBehavior<TRequest, TResponse>>();
+
+        // Optimization: avoid LINQ allocations by checking if we have an IList.
+        // Microsoft.Extensions.DependencyInjection returns arrays for multiple services.
+        if (behaviors is IList<IStreamPipelineBehavior<TRequest, TResponse>> list)
+        {
+            for (int i = list.Count - 1; i >= 0; i--)
+            {
+                var behavior = list[i];
+                var currentNext = next;
+                next = () => behavior.Handle((TRequest)request, currentNext, cancellationToken);
+            }
+        }
+        else
+        {
+            foreach (var behavior in behaviors.Reverse())
+            {
+                var currentNext = next;
+                next = () => behavior.Handle((TRequest)request, currentNext, cancellationToken);
+            }
+        }
+
+        return next();
     }
 }
