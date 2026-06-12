@@ -47,12 +47,37 @@ public class StreamRequestHandlerWrapperImpl<TRequest, TResponse> : StreamReques
         var handler = serviceProvider.GetRequiredService<IStreamRequestHandler<TRequest, TResponse>>();
 
         IAsyncEnumerable<TResponse> Handler() => handler.Handle((TRequest)request, cancellationToken);
+        var behaviors = serviceProvider.GetServices<IStreamPipelineBehavior<TRequest, TResponse>>();
 
-        return serviceProvider
-            .GetServices<IStreamPipelineBehavior<TRequest, TResponse>>()
-            .Reverse()
-            .Aggregate(
-                (StreamHandlerDelegate<TResponse>)Handler,
-                (next, behavior) => () => behavior.Handle((TRequest)request, next, cancellationToken))();
+        // Fast path: skip pipeline construction when no behaviors are registered.
+        if (behaviors is ICollection<IStreamPipelineBehavior<TRequest, TResponse>> { Count: 0 })
+        {
+            return Handler();
+        }
+
+        StreamHandlerDelegate<TResponse> next = Handler;
+
+        // Optimization: Zero-allocation pipeline construction.
+        // MS.DI returns arrays for GetServices<T>(). Type-check to avoid LINQ .Reverse()/.Aggregate() allocations.
+        if (behaviors is IList<IStreamPipelineBehavior<TRequest, TResponse>> behaviorList)
+        {
+            for (var i = behaviorList.Count - 1; i >= 0; i--)
+            {
+                var behavior = behaviorList[i];
+                var currentNext = next;
+                next = () => behavior.Handle((TRequest)request, currentNext, cancellationToken);
+            }
+        }
+        else
+        {
+            // Fallback for non-list iterables
+            return behaviors
+                .Reverse()
+                .Aggregate(
+                    next,
+                    (current, behavior) => () => behavior.Handle((TRequest)request, current, cancellationToken))();
+        }
+
+        return next();
     }
 }

@@ -34,11 +34,29 @@ public class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWrap
         }
 
         Task<TResponse> Handler() => handler.Handle((TRequest)request, cancellationToken);
+        RequestHandlerDelegate<TResponse> next = Handler;
 
-        return behaviors
-            .Reverse()
-            .Aggregate(
-                (RequestHandlerDelegate<TResponse>)Handler,
-                (next, behavior) => () => behavior.Handle((TRequest)request, next, cancellationToken))();
+        // Optimization: Zero-allocation pipeline construction.
+        // MS.DI returns arrays for GetServices<T>(). Type-check to avoid LINQ .Reverse()/.Aggregate() allocations.
+        if (behaviors is IList<IPipelineBehavior<TRequest, TResponse>> behaviorList)
+        {
+            for (var i = behaviorList.Count - 1; i >= 0; i--)
+            {
+                var behavior = behaviorList[i];
+                var currentNext = next;
+                next = () => behavior.Handle((TRequest)request, currentNext, cancellationToken);
+            }
+        }
+        else
+        {
+            // Fallback for non-list iterables
+            return behaviors
+                .Reverse()
+                .Aggregate(
+                    next,
+                    (current, behavior) => () => behavior.Handle((TRequest)request, current, cancellationToken))();
+        }
+
+        return next();
     }
 }
