@@ -35,10 +35,40 @@ public class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWrap
 
         Task<TResponse> Handler() => handler.Handle((TRequest)request, cancellationToken);
 
-        return behaviors
-            .Reverse()
-            .Aggregate(
-                (RequestHandlerDelegate<TResponse>)Handler,
-                (next, behavior) => () => behavior.Handle((TRequest)request, next, cancellationToken))();
+        RequestHandlerDelegate<TResponse> next = Handler;
+
+        // ⚡ Bolt Optimization: Avoid LINQ .Reverse().Aggregate() to prevent per-request
+        // delegate and enumerator allocations. MS.DI returns arrays/lists for IEnumerable<T>.
+        // Iterating backwards directly builds the pipeline with zero allocation overhead.
+        if (behaviors is IList<IPipelineBehavior<TRequest, TResponse>> list)
+        {
+            for (var i = list.Count - 1; i >= 0; i--)
+            {
+                var behavior = list[i];
+                var nextDelegate = next;
+                next = () => behavior.Handle((TRequest)request, nextDelegate, cancellationToken);
+            }
+        }
+        else if (behaviors is IReadOnlyList<IPipelineBehavior<TRequest, TResponse>> roList)
+        {
+            for (var i = roList.Count - 1; i >= 0; i--)
+            {
+                var behavior = roList[i];
+                var nextDelegate = next;
+                next = () => behavior.Handle((TRequest)request, nextDelegate, cancellationToken);
+            }
+        }
+        else
+        {
+            var array = behaviors.ToArray(); // Fallback for rare custom DI containers
+            for (var i = array.Length - 1; i >= 0; i--)
+            {
+                var behavior = array[i];
+                var nextDelegate = next;
+                next = () => behavior.Handle((TRequest)request, nextDelegate, cancellationToken);
+            }
+        }
+
+        return next();
     }
 }

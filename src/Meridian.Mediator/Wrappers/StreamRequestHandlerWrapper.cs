@@ -48,11 +48,41 @@ public class StreamRequestHandlerWrapperImpl<TRequest, TResponse> : StreamReques
 
         IAsyncEnumerable<TResponse> Handler() => handler.Handle((TRequest)request, cancellationToken);
 
-        return serviceProvider
-            .GetServices<IStreamPipelineBehavior<TRequest, TResponse>>()
-            .Reverse()
-            .Aggregate(
-                (StreamHandlerDelegate<TResponse>)Handler,
-                (next, behavior) => () => behavior.Handle((TRequest)request, next, cancellationToken))();
+        StreamHandlerDelegate<TResponse> next = Handler;
+        var behaviors = serviceProvider.GetServices<IStreamPipelineBehavior<TRequest, TResponse>>();
+
+        // ⚡ Bolt Optimization: Avoid LINQ .Reverse().Aggregate() to prevent per-request
+        // delegate and enumerator allocations. MS.DI returns arrays/lists for IEnumerable<T>.
+        // Iterating backwards directly builds the pipeline with zero allocation overhead.
+        if (behaviors is IList<IStreamPipelineBehavior<TRequest, TResponse>> list)
+        {
+            for (var i = list.Count - 1; i >= 0; i--)
+            {
+                var behavior = list[i];
+                var nextDelegate = next;
+                next = () => behavior.Handle((TRequest)request, nextDelegate, cancellationToken);
+            }
+        }
+        else if (behaviors is IReadOnlyList<IStreamPipelineBehavior<TRequest, TResponse>> roList)
+        {
+            for (var i = roList.Count - 1; i >= 0; i--)
+            {
+                var behavior = roList[i];
+                var nextDelegate = next;
+                next = () => behavior.Handle((TRequest)request, nextDelegate, cancellationToken);
+            }
+        }
+        else
+        {
+            var array = behaviors.ToArray();
+            for (var i = array.Length - 1; i >= 0; i--)
+            {
+                var behavior = array[i];
+                var nextDelegate = next;
+                next = () => behavior.Handle((TRequest)request, nextDelegate, cancellationToken);
+            }
+        }
+
+        return next();
     }
 }
