@@ -723,7 +723,8 @@ public class BehaviorTests
     {
         // Arrange
         var logger = new FakeMediatorLogger();
-        var behavior = new Behaviors.LoggingBehavior<LoggedRequest, string>(logger);
+        var options = new MediatorTelemetryOptions { RecordExceptionMessage = true };
+        var behavior = new Behaviors.LoggingBehavior<LoggedRequest, string>(logger, options);
         var request = new LoggedRequest("fail");
 
         RequestHandlerDelegate<string> next = () =>
@@ -746,6 +747,26 @@ public class BehaviorTests
         // Assert the logged message contains the request name and original exception type
         Assert.Contains("LoggedRequest", logger.ErrorMessages[0].Message);
         Assert.Contains("InvalidOperationException", logger.ErrorMessages[0].Message);
+    }
+
+    [Fact]
+    public async Task LoggingBehavior_Should_Redact_Exception_Message_By_Default()
+    {
+        // Arrange
+        var logger = new FakeMediatorLogger();
+        var behavior = new Behaviors.LoggingBehavior<LoggedRequest, string>(logger);
+        var request = new LoggedRequest("fail");
+
+        RequestHandlerDelegate<string> next = () =>
+            throw new InvalidOperationException("Logging test failure");
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => behavior.Handle(request, next, CancellationToken.None));
+
+        Assert.Single(logger.ErrorMessages);
+        var loggedException = logger.ErrorMessages[0].Exception;
+        Assert.Equal("An error occurred during request processing.", loggedException.Message);
     }
 
     #endregion

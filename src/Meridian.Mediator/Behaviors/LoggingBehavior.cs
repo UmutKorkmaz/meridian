@@ -41,15 +41,29 @@ public interface IMediatorLogger
 public class LoggingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
     where TRequest : notnull
 {
+    private const string RedactedFailureMessage = "An error occurred during request processing.";
+
     private readonly IMediatorLogger _logger;
+    private readonly MediatorTelemetryOptions _telemetryOptions;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="LoggingBehavior{TRequest, TResponse}"/> class.
     /// </summary>
     /// <param name="logger">The mediator logger.</param>
     public LoggingBehavior(IMediatorLogger logger)
+        : this(logger, MediatorTelemetryOptions.Default)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="LoggingBehavior{TRequest, TResponse}"/> class with telemetry options.
+    /// </summary>
+    /// <param name="logger">The mediator logger.</param>
+    /// <param name="telemetryOptions">The telemetry options.</param>
+    public LoggingBehavior(IMediatorLogger logger, MediatorTelemetryOptions telemetryOptions)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _telemetryOptions = telemetryOptions ?? throw new ArgumentNullException(nameof(telemetryOptions));
     }
 
     /// <inheritdoc/>
@@ -74,7 +88,8 @@ public class LoggingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, 
             stopwatch.Stop();
 
             // Sanitize exception to prevent leaking sensitive system details (e.g. stack traces) into logs
-            var sanitizedException = new InvalidOperationException(ex.Message);
+            var message = _telemetryOptions.RecordExceptionMessage ? ex.Message : RedactedFailureMessage;
+            var sanitizedException = new InvalidOperationException(message);
             _logger.LogError(sanitizedException, "Error ({ExceptionType}) handling {RequestName} after {ElapsedMilliseconds}ms", ex.GetType().Name, requestName, stopwatch.ElapsedMilliseconds);
 
             throw;
