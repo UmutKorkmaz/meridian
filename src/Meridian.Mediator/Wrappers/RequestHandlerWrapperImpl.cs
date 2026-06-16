@@ -35,6 +35,32 @@ public class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWrap
 
         Task<TResponse> Handler() => handler.Handle((TRequest)request, cancellationToken);
 
+        // Optimization: Avoid LINQ allocations if the DI container returns an array
+        if (behaviors is IPipelineBehavior<TRequest, TResponse>[] array)
+        {
+            var next = (RequestHandlerDelegate<TResponse>)Handler;
+            for (int i = array.Length - 1; i >= 0; i--)
+            {
+                var behavior = array[i];
+                var currentNext = next;
+                next = () => behavior.Handle((TRequest)request, currentNext, cancellationToken);
+            }
+            return next();
+        }
+
+        // Optimization: Avoid LINQ allocations if the DI container returns an IList<T>
+        if (behaviors is IList<IPipelineBehavior<TRequest, TResponse>> list)
+        {
+            var next = (RequestHandlerDelegate<TResponse>)Handler;
+            for (int i = list.Count - 1; i >= 0; i--)
+            {
+                var behavior = list[i];
+                var currentNext = next;
+                next = () => behavior.Handle((TRequest)request, currentNext, cancellationToken);
+            }
+            return next();
+        }
+
         return behaviors
             .Reverse()
             .Aggregate(
