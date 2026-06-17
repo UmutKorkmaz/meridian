@@ -33,11 +33,50 @@ public class NotificationHandlerWrapperImpl<TNotification> : NotificationHandler
     {
         var handlers = serviceProvider.GetServices<INotificationHandler<TNotification>>();
 
-        var executors = handlers
-            .Select(handler => new NotificationHandlerExecutor(
-                handler,
-                (notif, ct) => handler.Handle((TNotification)notif, ct)))
-            .ToList();
+        List<NotificationHandlerExecutor> executors;
+
+        // Zero-allocation iteration and pre-sizing for known collection types
+        if (handlers is IList<INotificationHandler<TNotification>> list)
+        {
+            executors = new List<NotificationHandlerExecutor>(list.Count);
+            for (int i = 0; i < list.Count; i++)
+            {
+                var handler = list[i];
+                executors.Add(new NotificationHandlerExecutor(
+                    handler,
+                    (notif, ct) => handler.Handle((TNotification)notif, ct)));
+            }
+        }
+        else if (handlers is IReadOnlyCollection<INotificationHandler<TNotification>> readOnlyCollection)
+        {
+            executors = new List<NotificationHandlerExecutor>(readOnlyCollection.Count);
+            foreach (var handler in readOnlyCollection)
+            {
+                executors.Add(new NotificationHandlerExecutor(
+                    handler,
+                    (notif, ct) => handler.Handle((TNotification)notif, ct)));
+            }
+        }
+        else if (handlers is ICollection<INotificationHandler<TNotification>> collection)
+        {
+            executors = new List<NotificationHandlerExecutor>(collection.Count);
+            foreach (var handler in collection)
+            {
+                executors.Add(new NotificationHandlerExecutor(
+                    handler,
+                    (notif, ct) => handler.Handle((TNotification)notif, ct)));
+            }
+        }
+        else
+        {
+            executors = new List<NotificationHandlerExecutor>();
+            foreach (var handler in handlers)
+            {
+                executors.Add(new NotificationHandlerExecutor(
+                    handler,
+                    (notif, ct) => handler.Handle((TNotification)notif, ct)));
+            }
+        }
 
         return publisher.Publish(executors, notification, cancellationToken);
     }
