@@ -719,11 +719,42 @@ public class BehaviorTests
     }
 
     [Fact]
-    public async Task LoggingBehavior_Should_Log_Errors()
+    public async Task LoggingBehavior_Should_Redact_Exception_Message_By_Default()
     {
         // Arrange
         var logger = new FakeMediatorLogger();
         var behavior = new Behaviors.LoggingBehavior<LoggedRequest, string>(logger);
+        var request = new LoggedRequest("fail");
+
+        RequestHandlerDelegate<string> next = () =>
+            throw new InvalidOperationException("Logging test failure");
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => behavior.Handle(request, next, CancellationToken.None));
+
+        // Should have 1 info (start) and 1 error
+        Assert.Single(logger.InformationMessages);
+        Assert.Contains("LoggedRequest", logger.InformationMessages[0]);
+        Assert.Single(logger.ErrorMessages);
+
+        // Assert that the exception was sanitized (base Exception, not InvalidOperationException)
+        var loggedException = logger.ErrorMessages[0].Exception;
+        Assert.IsType<InvalidOperationException>(loggedException);
+        Assert.Equal("An error occurred during request processing.", loggedException.Message);
+
+        // Assert the logged message contains the request name and original exception type
+        Assert.Contains("LoggedRequest", logger.ErrorMessages[0].Message);
+        Assert.Contains("InvalidOperationException", logger.ErrorMessages[0].Message);
+    }
+
+    [Fact]
+    public async Task LoggingBehavior_Should_Log_Exception_Message_When_TelemetryOptions_RecordExceptionMessage_Is_True()
+    {
+        // Arrange
+        var logger = new FakeMediatorLogger();
+        var telemetryOptions = new MediatorTelemetryOptions { RecordExceptionMessage = true };
+        var behavior = new Behaviors.LoggingBehavior<LoggedRequest, string>(logger, telemetryOptions);
         var request = new LoggedRequest("fail");
 
         RequestHandlerDelegate<string> next = () =>
