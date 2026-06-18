@@ -5,3 +5,7 @@
 ## 2026-06-03 - Avoid LINQ .Select().ToList() on collections for performance
 **Learning:** In hot paths (like notification publishing), using LINQ `.Select(...).ToList()` allocates enumerators and delegates, and often sizes the list iteratively.
 **Action:** When a pre-sized list is needed from an existing collection, type-check for `ICollection<T>` or `IReadOnlyCollection<T>`, allocate a `List<T>` with that exact capacity, and manually populate it using a `foreach` loop to avoid LINQ allocation overhead.
+
+## 2026-06-18 - Avoid LINQ .Reverse().Aggregate() for pipeline construction
+**Learning:** In hot paths (like Mediator pipeline construction), using LINQ `.Reverse()` and `.Aggregate()` allocates enumerators and delegates which adds unnecessary per-request overhead. DI containers often return lists or arrays (`T[]`) when resolving `IEnumerable<T>`.
+**Action:** When iterating over a collection returned by `IEnumerable<T>` from DI, type-check or cast to `IList<T>`, and use a backward `for` loop to build delegates. This enables zero-allocation enumeration and pipeline construction without LINQ overhead.
