@@ -723,7 +723,8 @@ public class BehaviorTests
     {
         // Arrange
         var logger = new FakeMediatorLogger();
-        var behavior = new Behaviors.LoggingBehavior<LoggedRequest, string>(logger);
+        var telemetryOptions = new MediatorTelemetryOptions { RecordExceptionMessage = true };
+        var behavior = new Behaviors.LoggingBehavior<LoggedRequest, string>(logger, telemetryOptions);
         var request = new LoggedRequest("fail");
 
         RequestHandlerDelegate<string> next = () =>
