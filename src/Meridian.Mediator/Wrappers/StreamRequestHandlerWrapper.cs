@@ -48,11 +48,28 @@ public class StreamRequestHandlerWrapperImpl<TRequest, TResponse> : StreamReques
 
         IAsyncEnumerable<TResponse> Handler() => handler.Handle((TRequest)request, cancellationToken);
 
-        return serviceProvider
-            .GetServices<IStreamPipelineBehavior<TRequest, TResponse>>()
-            .Reverse()
-            .Aggregate(
-                (StreamHandlerDelegate<TResponse>)Handler,
-                (next, behavior) => () => behavior.Handle((TRequest)request, next, cancellationToken))();
+        StreamHandlerDelegate<TResponse> pipeline = Handler;
+        var behaviors = serviceProvider.GetServices<IStreamPipelineBehavior<TRequest, TResponse>>();
+
+        // Bolt optimization: Avoid LINQ .Reverse().Aggregate() allocation on hot path.
+        if (behaviors is IList<IStreamPipelineBehavior<TRequest, TResponse>> list)
+        {
+            for (var i = list.Count - 1; i >= 0; i--)
+            {
+                var behavior = list[i];
+                var next = pipeline;
+                pipeline = () => behavior.Handle((TRequest)request, next, cancellationToken);
+            }
+        }
+        else
+        {
+            foreach (var behavior in behaviors.Reverse())
+            {
+                var next = pipeline;
+                pipeline = () => behavior.Handle((TRequest)request, next, cancellationToken);
+            }
+        }
+
+        return pipeline();
     }
 }
