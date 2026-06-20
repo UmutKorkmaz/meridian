@@ -33,11 +33,28 @@ public class NotificationHandlerWrapperImpl<TNotification> : NotificationHandler
     {
         var handlers = serviceProvider.GetServices<INotificationHandler<TNotification>>();
 
-        var executors = handlers
-            .Select(handler => new NotificationHandlerExecutor(
-                handler,
-                (notif, ct) => handler.Handle((TNotification)notif, ct)))
-            .ToList();
+        List<NotificationHandlerExecutor> executors;
+
+        // Optimization: Pre-size the list and manually populate using foreach
+        // to avoid LINQ .Select().ToList() allocation overhead in hot paths.
+        if (handlers is ICollection<INotificationHandler<TNotification>> collection)
+        {
+            executors = new List<NotificationHandlerExecutor>(collection.Count);
+        }
+        else if (handlers is IReadOnlyCollection<INotificationHandler<TNotification>> roCollection)
+        {
+            executors = new List<NotificationHandlerExecutor>(roCollection.Count);
+        }
+        else
+        {
+            executors = new List<NotificationHandlerExecutor>();
+        }
+
+        foreach (var handler in handlers)
+        {
+            executors.Add(new NotificationHandlerExecutor(handler, (notif, ct) => handler.Handle((TNotification)notif, ct)));
+        }
+
 
         return publisher.Publish(executors, notification, cancellationToken);
     }

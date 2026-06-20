@@ -48,11 +48,27 @@ public class StreamRequestHandlerWrapperImpl<TRequest, TResponse> : StreamReques
 
         IAsyncEnumerable<TResponse> Handler() => handler.Handle((TRequest)request, cancellationToken);
 
-        return serviceProvider
-            .GetServices<IStreamPipelineBehavior<TRequest, TResponse>>()
-            .Reverse()
-            .Aggregate(
-                (StreamHandlerDelegate<TResponse>)Handler,
-                (next, behavior) => () => behavior.Handle((TRequest)request, next, cancellationToken))();
+        var behaviors = serviceProvider.GetServices<IStreamPipelineBehavior<TRequest, TResponse>>();
+        StreamHandlerDelegate<TResponse> next = Handler;
+
+        // Optimization: Microsoft.Extensions.DependencyInjection returns arrays for multiple services.
+        // We can type-check and use a backward for-loop to build the pipeline delegate chain
+        // with zero enumerator or LINQ allocations in the hot path.
+        if (behaviors is IList<IStreamPipelineBehavior<TRequest, TResponse>> list)
+        {
+            for (int i = list.Count - 1; i >= 0; i--)
+            {
+                var behavior = list[i];
+                var currentNext = next;
+                next = () => behavior.Handle((TRequest)request, currentNext, cancellationToken);
+            }
+        }
+        else
+        {
+            // Fallback for custom DI containers returning unmaterialized IEnumerables
+            next = behaviors.Reverse().Aggregate(next, (current, behavior) => () => behavior.Handle((TRequest)request, current, cancellationToken));
+        }
+
+        return next();
     }
 }
