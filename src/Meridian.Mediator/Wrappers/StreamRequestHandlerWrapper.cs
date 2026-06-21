@@ -47,12 +47,37 @@ public class StreamRequestHandlerWrapperImpl<TRequest, TResponse> : StreamReques
         var handler = serviceProvider.GetRequiredService<IStreamRequestHandler<TRequest, TResponse>>();
 
         IAsyncEnumerable<TResponse> Handler() => handler.Handle((TRequest)request, cancellationToken);
+        StreamHandlerDelegate<TResponse> next = Handler;
 
-        return serviceProvider
-            .GetServices<IStreamPipelineBehavior<TRequest, TResponse>>()
-            .Reverse()
-            .Aggregate(
-                (StreamHandlerDelegate<TResponse>)Handler,
-                (next, behavior) => () => behavior.Handle((TRequest)request, next, cancellationToken))();
+        var behaviors = serviceProvider.GetServices<IStreamPipelineBehavior<TRequest, TResponse>>();
+
+        // ⚡ Bolt: Eliminate LINQ .Reverse().Aggregate() for zero-allocation stream pipeline construction.
+        // M.E.DI typically returns IList<T> or T[] for GetServices. We index backwards directly.
+        if (behaviors is IList<IStreamPipelineBehavior<TRequest, TResponse>> list)
+        {
+            for (var i = list.Count - 1; i >= 0; i--)
+            {
+                var behavior = list[i];
+                var currentNext = next;
+                next = () => behavior.Handle((TRequest)request, currentNext, cancellationToken);
+            }
+        }
+        else
+        {
+            // Fallback for non-indexable enumerables
+            var fallbackList = new List<IStreamPipelineBehavior<TRequest, TResponse>>();
+            foreach (var behavior in behaviors)
+            {
+                fallbackList.Add(behavior);
+            }
+            for (var i = fallbackList.Count - 1; i >= 0; i--)
+            {
+                var behavior = fallbackList[i];
+                var currentNext = next;
+                next = () => behavior.Handle((TRequest)request, currentNext, cancellationToken);
+            }
+        }
+
+        return next();
     }
 }

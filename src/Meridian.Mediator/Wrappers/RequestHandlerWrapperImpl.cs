@@ -34,11 +34,35 @@ public class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWrap
         }
 
         Task<TResponse> Handler() => handler.Handle((TRequest)request, cancellationToken);
+        RequestHandlerDelegate<TResponse> next = Handler;
 
-        return behaviors
-            .Reverse()
-            .Aggregate(
-                (RequestHandlerDelegate<TResponse>)Handler,
-                (next, behavior) => () => behavior.Handle((TRequest)request, next, cancellationToken))();
+        // ⚡ Bolt: Eliminate LINQ .Reverse().Aggregate() for zero-allocation pipeline construction.
+        // M.E.DI typically returns IList<T> or T[] for GetServices. We index backwards directly.
+        if (behaviors is IList<IPipelineBehavior<TRequest, TResponse>> list)
+        {
+            for (var i = list.Count - 1; i >= 0; i--)
+            {
+                var behavior = list[i];
+                var currentNext = next;
+                next = () => behavior.Handle((TRequest)request, currentNext, cancellationToken);
+            }
+        }
+        else
+        {
+            // Fallback for non-indexable enumerables
+            var fallbackList = new List<IPipelineBehavior<TRequest, TResponse>>();
+            foreach (var behavior in behaviors)
+            {
+                fallbackList.Add(behavior);
+            }
+            for (var i = fallbackList.Count - 1; i >= 0; i--)
+            {
+                var behavior = fallbackList[i];
+                var currentNext = next;
+                next = () => behavior.Handle((TRequest)request, currentNext, cancellationToken);
+            }
+        }
+
+        return next();
     }
 }
