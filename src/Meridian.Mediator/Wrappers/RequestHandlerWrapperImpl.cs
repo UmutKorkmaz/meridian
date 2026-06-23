@@ -35,10 +35,31 @@ public class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWrap
 
         Task<TResponse> Handler() => handler.Handle((TRequest)request, cancellationToken);
 
-        return behaviors
-            .Reverse()
-            .Aggregate(
-                (RequestHandlerDelegate<TResponse>)Handler,
-                (next, behavior) => () => behavior.Handle((TRequest)request, next, cancellationToken))();
+        RequestHandlerDelegate<TResponse> next = Handler;
+
+        // ⚡ Bolt Optimization: Avoid LINQ .Reverse() and .Aggregate() heap allocations in hot path.
+        // DI containers typically return IList<T> (Array/List). We use a backward for loop
+        // for zero-allocation pipeline construction.
+        if (behaviors is IList<IPipelineBehavior<TRequest, TResponse>> behaviorList)
+        {
+            for (int i = behaviorList.Count - 1; i >= 0; i--)
+            {
+                var behavior = behaviorList[i];
+                var currentNext = next;
+                next = () => behavior.Handle((TRequest)request, currentNext, cancellationToken);
+            }
+        }
+        else
+        {
+            var behaviorArray = behaviors.ToArray();
+            for (int i = behaviorArray.Length - 1; i >= 0; i--)
+            {
+                var behavior = behaviorArray[i];
+                var currentNext = next;
+                next = () => behavior.Handle((TRequest)request, currentNext, cancellationToken);
+            }
+        }
+
+        return next();
     }
 }

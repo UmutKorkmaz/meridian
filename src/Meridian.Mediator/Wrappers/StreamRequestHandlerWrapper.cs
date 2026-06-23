@@ -48,11 +48,39 @@ public class StreamRequestHandlerWrapperImpl<TRequest, TResponse> : StreamReques
 
         IAsyncEnumerable<TResponse> Handler() => handler.Handle((TRequest)request, cancellationToken);
 
-        return serviceProvider
-            .GetServices<IStreamPipelineBehavior<TRequest, TResponse>>()
-            .Reverse()
-            .Aggregate(
-                (StreamHandlerDelegate<TResponse>)Handler,
-                (next, behavior) => () => behavior.Handle((TRequest)request, next, cancellationToken))();
+        var behaviors = serviceProvider.GetServices<IStreamPipelineBehavior<TRequest, TResponse>>();
+
+        // Fast path: skip pipeline construction when no behaviors are registered.
+        if (behaviors is ICollection<IStreamPipelineBehavior<TRequest, TResponse>> { Count: 0 })
+        {
+            return Handler();
+        }
+
+        StreamHandlerDelegate<TResponse> next = Handler;
+
+        // ⚡ Bolt Optimization: Avoid LINQ .Reverse() and .Aggregate() heap allocations in hot path.
+        // DI containers typically return IList<T> (Array/List). We use a backward for loop
+        // for zero-allocation pipeline construction.
+        if (behaviors is IList<IStreamPipelineBehavior<TRequest, TResponse>> behaviorList)
+        {
+            for (int i = behaviorList.Count - 1; i >= 0; i--)
+            {
+                var behavior = behaviorList[i];
+                var currentNext = next;
+                next = () => behavior.Handle((TRequest)request, currentNext, cancellationToken);
+            }
+        }
+        else
+        {
+            var behaviorArray = behaviors.ToArray();
+            for (int i = behaviorArray.Length - 1; i >= 0; i--)
+            {
+                var behavior = behaviorArray[i];
+                var currentNext = next;
+                next = () => behavior.Handle((TRequest)request, currentNext, cancellationToken);
+            }
+        }
+
+        return next();
     }
 }
