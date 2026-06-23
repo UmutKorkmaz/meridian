@@ -26,3 +26,8 @@
 **Vulnerability:** The `LoggingBehavior` was blindly wrapping raw exception messages (`ex.Message`) and logging them, which could leak sensitive internal system details (e.g., database connection strings, specific validation states, stack details embedded in messages) into application logs.
 **Learning:** `MediatorTelemetryOptions` was introduced to control verbosity and explicitly requires an opt-in (`RecordExceptionMessage = true`) for raw exception details, but `LoggingBehavior` was ignoring this configuration.
 **Prevention:** Always verify if a centralized telemetry or privacy configuration (like `MediatorTelemetryOptions`) exists when logging exceptions or handling errors, and ensure raw exception messages are conditionally redacted based on that configuration.
+
+## 2026-06-11 - Stop Bypassing Global Privacy Configurations
+**Vulnerability:** `LoggingBehavior` in Meridian.Mediator circumvented the global `MediatorTelemetryOptions.RecordExceptionMessage` privacy flag by unconditionally copying the potentially sensitive `ex.Message` into a new sanitized exception.
+**Learning:** Security/privacy configurations must be uniformly applied across all pipeline behaviors and observability hooks. A sanitized exception wrapping the raw message still leaks the data if the global config dictates exception messages should be redacted.
+**Prevention:** Ensure that globally configurable privacy flags (like `RecordExceptionMessage`) are injected and respected everywhere exception details are logged, exported, or materialized.
