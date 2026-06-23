@@ -57,3 +57,7 @@
 ## 2026-06-21 - Avoid LINQ .Reverse().Aggregate() for pipeline construction
 **Learning:** Using LINQ `.Reverse().Aggregate(...)` to build Russian-doll Request/Stream pipelines allocates enumerators and delegates, impacting per-request heap allocations in hot paths.
 **Action:** When iterating over a collection from MS.DI (`IEnumerable<T>`), type-check for `IList<T>` (since MS.DI often returns arrays) and use a backward `for` loop, safely capturing variables in a scoped iteration instead of allocating LINQ operators.
+
+## 2026-06-23 - Avoid LINQ .Reverse() and .Aggregate() in Delegate Pipeline Construction
+**Learning:** Using LINQ `.Reverse()` and `.Aggregate()` to build delegate pipelines in hot paths (like request dispatchers) incurs significant per-request allocations. It allocates an enumerator for `.Reverse()`, an enumerator for `.Aggregate()`, and delegates for the aggregation function. This can noticeably drop performance and increase GC pressure when multiple pipeline behaviors are registered.
+**Action:** Always prefer looping backward via indexers to construct the pipeline when building nested delegates. If using a collection returned by DI, check if it's an `IList<T>` (as they often return lists or arrays) to allow index-based access, and only fallback to `.ToArray()` if it isn't.
