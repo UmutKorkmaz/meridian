@@ -16,3 +16,8 @@
 **Vulnerability:** Information disclosure (leaking internal exception messages to logs) via `LoggingBehavior`.
 **Learning:** Behaviors and pipelines that process exceptions must conditionally sanitize raw exception messages since they often contain sensitive system details, internal paths, or database structures. The codebase has an established pattern via `MediatorTelemetryOptions.RecordExceptionMessage` but it was missed in `LoggingBehavior` where an unredacted exception message was unconditionally logged as the `InvalidOperationException` message.
 **Prevention:** Always check `MediatorTelemetryOptions.RecordExceptionMessage` before exposing `ex.Message` in error handling or logging, especially in generic or middleware components.
+
+## 2024-05-18 - Prevent Raw Exception Details Leakage
+**Vulnerability:** Found two places (`LoggingBehavior` and `MediatorHandlerValidation`) where raw exception messages (`ex.Message`) were logged without checking the explicit configuration flag `MediatorTelemetryOptions.RecordExceptionMessage`.
+**Learning:** Even built-in error handling and initialization mechanisms can leak sensitive internal paths, logic, or dependencies if an underlying exception full message is inadvertently propagated to logs or validation reports that are displayed externally.
+**Prevention:** Always verify if exception details should be logged by checking context configurations (like `MediatorTelemetryOptions`) and fall back to generic, redacted error messages when in doubt to ensure secure-by-default behavior.

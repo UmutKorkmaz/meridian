@@ -59,7 +59,7 @@ public class LoggingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, 
     /// Initializes a new instance of the <see cref="LoggingBehavior{TRequest, TResponse}"/> class.
     /// </summary>
     /// <param name="logger">The mediator logger.</param>
-    /// <param name="telemetryOptions">The telemetry options.</param>
+    /// <param name="telemetryOptions">Options to control exception logging.</param>
     public LoggingBehavior(IMediatorLogger logger, MediatorTelemetryOptions telemetryOptions)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));

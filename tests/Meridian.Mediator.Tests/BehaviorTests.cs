@@ -751,6 +751,29 @@ public class BehaviorTests
         Assert.Contains("InvalidOperationException", logger.ErrorMessages[0].Message);
     }
 
+    [Fact]
+    public async Task LoggingBehavior_Should_Redact_Error_Messages_By_Default()
+    {
+        // Arrange
+        var logger = new FakeMediatorLogger();
+        // Default options do not record exception messages
+        var behavior = new Behaviors.LoggingBehavior<LoggedRequest, string>(logger);
+        var request = new LoggedRequest("fail");
+
+        RequestHandlerDelegate<string> next = () =>
+            throw new InvalidOperationException("Sensitive data leakage");
+
+        // Act & Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => behavior.Handle(request, next, CancellationToken.None));
+
+        Assert.Single(logger.ErrorMessages);
+        var loggedException = logger.ErrorMessages[0].Exception;
+        Assert.IsType<InvalidOperationException>(loggedException);
+        Assert.Equal("An error occurred during request processing.", loggedException.Message);
+        Assert.DoesNotContain("Sensitive data leakage", loggedException.Message);
+    }
+
     #endregion
 
     #region 7. CorrelationId Tests
