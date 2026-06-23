@@ -42,14 +42,26 @@ public class LoggingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, 
     where TRequest : notnull
 {
     private readonly IMediatorLogger _logger;
+    private readonly MediatorTelemetryOptions _telemetryOptions;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="LoggingBehavior{TRequest, TResponse}"/> class.
     /// </summary>
     /// <param name="logger">The mediator logger.</param>
     public LoggingBehavior(IMediatorLogger logger)
+        : this(logger, MediatorTelemetryOptions.Default)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="LoggingBehavior{TRequest, TResponse}"/> class.
+    /// </summary>
+    /// <param name="logger">The mediator logger.</param>
+    /// <param name="telemetryOptions">Options to control exception masking.</param>
+    public LoggingBehavior(IMediatorLogger logger, MediatorTelemetryOptions telemetryOptions)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _telemetryOptions = telemetryOptions ?? throw new ArgumentNullException(nameof(telemetryOptions));
     }
 
     /// <inheritdoc/>
@@ -74,7 +86,9 @@ public class LoggingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, 
             stopwatch.Stop();
 
             // Sanitize exception to prevent leaking sensitive system details (e.g. stack traces) into logs
-            var sanitizedException = new InvalidOperationException(ex.Message);
+            // Mask the exception message if telemetry options do not explicitly allow it.
+            var message = _telemetryOptions.RecordExceptionMessage ? ex.Message : "An error occurred during request processing.";
+            var sanitizedException = new InvalidOperationException(message);
             _logger.LogError(sanitizedException, "Error ({ExceptionType}) handling {RequestName} after {ElapsedMilliseconds}ms", ex.GetType().Name, requestName, stopwatch.ElapsedMilliseconds);
 
             throw;

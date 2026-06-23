@@ -741,7 +741,7 @@ public class BehaviorTests
         // Assert that the exception was sanitized (base Exception, not InvalidOperationException)
         var loggedException = logger.ErrorMessages[0].Exception;
         Assert.IsType<InvalidOperationException>(loggedException);
-        Assert.Equal("Logging test failure", loggedException.Message);
+        Assert.Equal("An error occurred during request processing.", loggedException.Message);
 
         // Assert the logged message contains the request name and original exception type
         Assert.Contains("LoggedRequest", logger.ErrorMessages[0].Message);
