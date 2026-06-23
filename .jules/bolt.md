@@ -9,3 +9,7 @@
 ## 2024-06-07 - [Fast Path for Mediator Publishing]
 **Learning:** Checking for an empty `ICollection` or `IReadOnlyCollection` and early-returning in mediator pipelines saves list allocations and iterator overhead, which has measurable impact at scale.
 **Action:** Always add early exits for zero-handler scenarios when writing mediator components.
+
+## 2024-06-08 - Optimize Pipeline Construction with IList For-loop
+**Learning:** LINQ methods like `Reverse()` and `Aggregate()` introduce notable overhead through enumerator allocations and delegate creations when composing handler pipelines. Since `Microsoft.Extensions.DependencyInjection` returns arrays (which implement `IList<T>`) for multiple registrations via `GetServices<T>()`, iterating them in reverse with a `for` loop avoids these allocations.
+**Action:** When building nested delegate chains or pipelines from an `IEnumerable<T>`, check if it implements `IList<T>` first to use an allocation-free reverse `for` loop instead of `.Reverse().Aggregate()`.
