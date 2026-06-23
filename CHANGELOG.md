@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.3] - 2026-06-23
+
+### Added
+- `Meridian.Mediator` now supports non-generic `IRequestHandler<TRequest>`
+  handlers for `IRequest` commands, including the object-based `Send`
+  overload.
+
+### Changed
+- Reduced hot-path allocations in mediator request, stream, and notification
+  wrapper dispatch by avoiding LINQ pipeline construction and using indexed
+  loops or pre-sized executor arrays where possible.
+- Updated package and GitHub Actions dependencies across the solution.
+
+### Security
+- `LoggingBehavior` now redacts exception messages by default and only records
+  raw exception messages when `MediatorTelemetryOptions.RecordExceptionMessage`
+  is explicitly enabled.
+
 ## [2.1.2] - 2026-04-17
 
 Follow-up release to v2.1.1. No runtime behaviour changes; the published
