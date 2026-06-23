@@ -56,3 +56,8 @@
 **Vulnerability:** Exception details (e.g. `ex.Message`) were directly logged or returned in validation messages without checking telemetry options.
 **Learning:** Hardcoded `ex.Message` usage can leak sensitive system details or raw exception structures. The codebase has `MediatorTelemetryOptions.RecordExceptionMessage` to control this exact behavior.
 **Prevention:** Always check `MediatorTelemetryOptions.RecordExceptionMessage` before exposing `ex.Message` in error handling, logging, or validations. Or simply avoid logging `ex.Message` in public-facing errors entirely.
+
+## 2025-02-23 - Respect Telemetry Privacy Flags in Logs
+**Vulnerability:** Exception messages were unconditionally exposed in application logs inside `LoggingBehavior`, bypassing the established `MediatorTelemetryOptions.RecordExceptionMessage` privacy control.
+**Learning:** When a codebase introduces privacy or telemetry flags (like controlling exception detail visibility), they must be applied consistently across *all* telemetry boundaries (Activity tracking, Audit logs, and Application logs). Missing one boundary creates a data leak bypass.
+**Prevention:** When handling exceptions in pipeline behaviors, always inject and check the central `MediatorTelemetryOptions` before embedding `ex.Message` in logged outputs or sanitized exceptions.
