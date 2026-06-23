@@ -41,6 +41,9 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      - name: Ignore preview SDK pin for release
+        run: mv global.json global.json.release-ignored
+
       - name: Restore
         run: |
           dotnet restore src/Meridian.Mapping/Meridian.Mapping.csproj
