@@ -61,3 +61,9 @@
 **Vulnerability:** Exception messages were unconditionally exposed in application logs inside `LoggingBehavior`, bypassing the established `MediatorTelemetryOptions.RecordExceptionMessage` privacy control.
 **Learning:** When a codebase introduces privacy or telemetry flags (like controlling exception detail visibility), they must be applied consistently across *all* telemetry boundaries (Activity tracking, Audit logs, and Application logs). Missing one boundary creates a data leak bypass.
 **Prevention:** When handling exceptions in pipeline behaviors, always inject and check the central `MediatorTelemetryOptions` before embedding `ex.Message` in logged outputs or sanitized exceptions.
+
+
+## 2025-03-05 - Mask Exception Messages in Logging
+**Vulnerability:** The application was extracting and logging `Exception.Message` strings in `LoggingBehavior.cs`, potentially exposing sensitive internal details (e.g., query parameters, validation secrets, exact paths) that often leak into `Message` properties of framework exceptions.
+**Learning:** Even when sanitizing stack traces by instantiating new base exceptions, reading `ex.Message` and passing it to the logger still triggers Information Exposure vulnerabilities (CWE-532).
+**Prevention:** Mask raw exception messages in all logging behaviors (using a fallback string like `"An error occurred during request processing."`) unless the application explicitly overrides this privacy default (e.g. via `MediatorTelemetryOptions.RecordExceptionMessage`).
