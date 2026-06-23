@@ -34,28 +34,29 @@ public class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWrap
         }
 
         Task<TResponse> Handler() => handler.Handle((TRequest)request, cancellationToken);
+        RequestHandlerDelegate<TResponse> current = Handler;
 
-        RequestHandlerDelegate<TResponse> next = Handler;
-
-        // Fast path: avoid LINQ Reverse() and Aggregate() allocations when possible
-        if (behaviors is IList<IPipelineBehavior<TRequest, TResponse>> list)
+        if (behaviors is IReadOnlyList<IPipelineBehavior<TRequest, TResponse>> behaviorList)
         {
-            for (int i = list.Count - 1; i >= 0; i--)
+            for (int i = behaviorList.Count - 1; i >= 0; i--)
             {
-                var behavior = list[i];
-                var innerNext = next;
-                next = () => behavior.Handle((TRequest)request, innerNext, cancellationToken);
+                var behavior = behaviorList[i];
+                var next = current;
+                current = () => behavior.Handle((TRequest)request, next, cancellationToken);
             }
         }
         else
         {
-            next = behaviors
-                .Reverse()
-                .Aggregate(
-                    (RequestHandlerDelegate<TResponse>)Handler,
-                    (nextDelegate, behavior) => () => behavior.Handle((TRequest)request, nextDelegate, cancellationToken));
+            var behaviorArray = behaviors.ToArray();
+
+            for (int i = behaviorArray.Length - 1; i >= 0; i--)
+            {
+                var behavior = behaviorArray[i];
+                var next = current;
+                current = () => behavior.Handle((TRequest)request, next, cancellationToken);
+            }
         }
 
-        return next();
+        return current();
     }
 }

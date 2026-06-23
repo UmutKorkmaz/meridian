@@ -33,19 +33,43 @@ public class NotificationHandlerWrapperImpl<TNotification> : NotificationHandler
     {
         var handlers = serviceProvider.GetServices<INotificationHandler<TNotification>>();
 
-        List<NotificationHandlerExecutor> executors;
+        IEnumerable<NotificationHandlerExecutor> executors;
 
-        // Optimization: Avoid LINQ .Select().ToList() allocation overhead in the hot path.
-        // Pre-size the list when possible, and use a foreach loop to prevent delegate
-        // and enumerator state machine allocations.
-        if (handlers is ICollection<INotificationHandler<TNotification>> collection)
+        if (handlers is INotificationHandler<TNotification>[] handlerArray)
+        {
+            if (handlerArray.Length == 0)
+            {
+                return publisher.Publish(Array.Empty<NotificationHandlerExecutor>(), notification, cancellationToken);
+            }
+
+            var executorArray = new NotificationHandlerExecutor[handlerArray.Length];
+            for (int i = 0; i < handlerArray.Length; i++)
+            {
+                var handler = handlerArray[i];
+                executorArray[i] = new NotificationHandlerExecutor(
+                    handler,
+                    (notif, ct) => handler.Handle((TNotification)notif, ct));
+            }
+
+            executors = executorArray;
+        }
+        else if (handlers is ICollection<INotificationHandler<TNotification>> collection)
         {
             if (collection.Count == 0)
             {
                 return publisher.Publish(Array.Empty<NotificationHandlerExecutor>(), notification, cancellationToken);
             }
 
-            executors = new List<NotificationHandlerExecutor>(collection.Count);
+            var executorArray = new NotificationHandlerExecutor[collection.Count];
+            var i = 0;
+            foreach (var handler in collection)
+            {
+                executorArray[i++] = new NotificationHandlerExecutor(
+                    handler,
+                    (notif, ct) => handler.Handle((TNotification)notif, ct));
+            }
+
+            executors = executorArray;
         }
         else if (handlers is IReadOnlyCollection<INotificationHandler<TNotification>> roCollection)
         {
@@ -54,18 +78,28 @@ public class NotificationHandlerWrapperImpl<TNotification> : NotificationHandler
                 return publisher.Publish(Array.Empty<NotificationHandlerExecutor>(), notification, cancellationToken);
             }
 
-            executors = new List<NotificationHandlerExecutor>(roCollection.Count);
+            var executorArray = new NotificationHandlerExecutor[roCollection.Count];
+            var i = 0;
+            foreach (var handler in handlers)
+            {
+                executorArray[i++] = new NotificationHandlerExecutor(
+                    handler,
+                    (notif, ct) => handler.Handle((TNotification)notif, ct));
+            }
+
+            executors = executorArray;
         }
         else
         {
-            executors = new List<NotificationHandlerExecutor>();
-        }
+            var executorList = new List<NotificationHandlerExecutor>();
+            foreach (var handler in handlers)
+            {
+                executorList.Add(new NotificationHandlerExecutor(
+                    handler,
+                    (notif, ct) => handler.Handle((TNotification)notif, ct)));
+            }
 
-        foreach (var handler in handlers)
-        {
-            executors.Add(new NotificationHandlerExecutor(
-                handler,
-                (notif, ct) => handler.Handle((TNotification)notif, ct)));
+            executors = executorList;
         }
 
         return publisher.Publish(executors, notification, cancellationToken);

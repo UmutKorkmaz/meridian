@@ -13,3 +13,7 @@
 ## 2024-06-08 - Optimize Pipeline Construction with IList For-loop
 **Learning:** LINQ methods like `Reverse()` and `Aggregate()` introduce notable overhead through enumerator allocations and delegate creations when composing handler pipelines. Since `Microsoft.Extensions.DependencyInjection` returns arrays (which implement `IList<T>`) for multiple registrations via `GetServices<T>()`, iterating them in reverse with a `for` loop avoids these allocations.
 **Action:** When building nested delegate chains or pipelines from an `IEnumerable<T>`, check if it implements `IList<T>` first to use an allocation-free reverse `for` loop instead of `.Reverse().Aggregate()`.
+
+## 2025-06-10 - Mediator LINQ Allocations
+**Learning:** In highly-executed CQRS/Mediator pipelines, using LINQ operations like `.Reverse().Aggregate(...)` for pipeline assembly or `.Select().ToList()` for handler dispatch introduces significant per-request heap allocations due to delegate captures and enumerable state machines. Microsoft.Extensions.DependencyInjection natively returns `T[]` for `IEnumerable<T>`, which provides an opportunity for array-based optimizations.
+**Action:** Replace LINQ pipeline assembly in hot paths with backwards `for` loops against pre-sized arrays/collections. Type-check `IEnumerable<T>` for `T[]` or `ICollection<T>` from DI containers to enable zero-allocation enumeration and pipeline construction.

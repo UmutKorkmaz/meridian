@@ -47,30 +47,31 @@ public class StreamRequestHandlerWrapperImpl<TRequest, TResponse> : StreamReques
         var handler = serviceProvider.GetRequiredService<IStreamRequestHandler<TRequest, TResponse>>();
 
         IAsyncEnumerable<TResponse> Handler() => handler.Handle((TRequest)request, cancellationToken);
+        StreamHandlerDelegate<TResponse> current = Handler;
 
         var behaviors = serviceProvider.GetServices<IStreamPipelineBehavior<TRequest, TResponse>>();
 
-        StreamHandlerDelegate<TResponse> next = Handler;
-
-        // Fast path: avoid LINQ Reverse() and Aggregate() allocations when possible
-        if (behaviors is IList<IStreamPipelineBehavior<TRequest, TResponse>> list)
+        if (behaviors is IReadOnlyList<IStreamPipelineBehavior<TRequest, TResponse>> behaviorList)
         {
-            for (int i = list.Count - 1; i >= 0; i--)
+            for (int i = behaviorList.Count - 1; i >= 0; i--)
             {
-                var behavior = list[i];
-                var innerNext = next;
-                next = () => behavior.Handle((TRequest)request, innerNext, cancellationToken);
+                var behavior = behaviorList[i];
+                var next = current;
+                current = () => behavior.Handle((TRequest)request, next, cancellationToken);
             }
         }
         else
         {
-            next = behaviors
-                .Reverse()
-                .Aggregate(
-                    (StreamHandlerDelegate<TResponse>)Handler,
-                    (nextDelegate, behavior) => () => behavior.Handle((TRequest)request, nextDelegate, cancellationToken));
+            var behaviorArray = behaviors.ToArray();
+
+            for (int i = behaviorArray.Length - 1; i >= 0; i--)
+            {
+                var behavior = behaviorArray[i];
+                var next = current;
+                current = () => behavior.Handle((TRequest)request, next, cancellationToken);
+            }
         }
 
-        return next();
+        return current();
     }
 }
