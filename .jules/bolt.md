@@ -45,3 +45,11 @@
 ## 2026-06-20 - Avoid LINQ .Reverse().Aggregate(...) on collections for pipeline building
 **Learning:** In hot paths (like pipeline creation for Mediator handlers), using LINQ `.Reverse().Aggregate(...)` allocates enumerators and delegates.
 **Action:** When a collection is an `IList<T>` (which is very common for standard Microsoft DI returning arrays), bypass LINQ and use a backward `for` loop to build delegate chains to prevent allocations and save time.
+
+## 2026-06-21 - Avoid LINQ .Select().ToList() on collections for performance
+**Learning:** In hot paths (like notification publishing), using LINQ `.Select(...).ToList()` allocates enumerators and delegates, and often sizes the list iteratively.
+**Action:** When a pre-sized list is needed from an existing collection, type-check for `ICollection<T>` or `IReadOnlyCollection<T>`, allocate a `List<T>` with that exact capacity, and manually populate it using a `foreach` loop to avoid LINQ allocation overhead.
+
+## 2026-06-21 - Eliminate LINQ allocations in pipeline wrappers
+**Learning:** In hot paths (like request and stream handling), using `.Reverse().Aggregate()` to build the pipeline creates unnecessary delegate allocations and reverses array/lists iteratively.
+**Action:** When composing pipelines from Microsoft.Extensions.DependencyInjection, index backwards directly with a `for` loop (type-checking for `IList<T>`) to achieve zero-allocation pipeline construction.
