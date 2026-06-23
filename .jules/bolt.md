@@ -41,3 +41,7 @@
 ## 2026-06-18 - Avoid LINQ .Reverse().Aggregate() for pipeline construction
 **Learning:** In hot paths (like Mediator pipeline construction), using LINQ `.Reverse()` and `.Aggregate()` allocates enumerators and delegates which adds unnecessary per-request overhead. DI containers often return lists or arrays (`T[]`) when resolving `IEnumerable<T>`.
 **Action:** When iterating over a collection returned by `IEnumerable<T>` from DI, type-check or cast to `IList<T>`, and use a backward `for` loop to build delegates. This enables zero-allocation enumeration and pipeline construction without LINQ overhead.
+
+## 2026-06-20 - Avoid LINQ .Reverse().Aggregate(...) on collections for pipeline building
+**Learning:** In hot paths (like pipeline creation for Mediator handlers), using LINQ `.Reverse().Aggregate(...)` allocates enumerators and delegates.
+**Action:** When a collection is an `IList<T>` (which is very common for standard Microsoft DI returning arrays), bypass LINQ and use a backward `for` loop to build delegate chains to prevent allocations and save time.
