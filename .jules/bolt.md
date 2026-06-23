@@ -29,3 +29,7 @@
 ## 2026-06-14 - Avoid LINQ .Reverse().Aggregate() for pipeline construction
 **Learning:** In hot paths (like building request or stream pipelines from DI behaviors), using LINQ `.Reverse().Aggregate()` forces multiple enumerator and delegate allocations per request.
 **Action:** MS.DI typically returns `IEnumerable<T>` as arrays or lists. Always check the resolved enumerable for `IList<T>` or `IReadOnlyList<T>` and construct the pipeline explicitly using a backward `for` loop to achieve zero-allocation pipeline construction.
+
+## 2026-06-03 - Avoid LINQ .Reverse().Aggregate() for pipeline construction
+**Learning:** Constructing pipeline behaviors using `.Reverse().Aggregate()` forces enumerator allocation and delegate creation via LINQ.
+**Action:** Always check if the injected `IEnumerable<T>` of behaviors is an `IList<T>`. If so, build the pipeline using a backward `for` loop starting from `list.Count - 1` down to `0`. This avoids enumerator allocation entirely while constructing the pipeline backwards.
