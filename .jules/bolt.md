@@ -17,3 +17,7 @@
 ## 2025-06-10 - Mediator LINQ Allocations
 **Learning:** In highly-executed CQRS/Mediator pipelines, using LINQ operations like `.Reverse().Aggregate(...)` for pipeline assembly or `.Select().ToList()` for handler dispatch introduces significant per-request heap allocations due to delegate captures and enumerable state machines. Microsoft.Extensions.DependencyInjection natively returns `T[]` for `IEnumerable<T>`, which provides an opportunity for array-based optimizations.
 **Action:** Replace LINQ pipeline assembly in hot paths with backwards `for` loops against pre-sized arrays/collections. Type-check `IEnumerable<T>` for `T[]` or `ICollection<T>` from DI containers to enable zero-allocation enumeration and pipeline construction.
+
+## 2025-03-03 - Avoiding LINQ Allocations in .NET DI Pipelines
+**Learning:** `IServiceProvider.GetServices<T>()` typically returns an array (`T[]`). Using LINQ extensions like `.Reverse().Aggregate()` or `.Select().ToList()` on the returned `IEnumerable<T>` creates hidden enumerator and closure allocations per request.
+**Action:** Always type-check `IEnumerable<T>` against `IList<T>` or `ICollection<T>` when resolving multiple services. Iterate using `for` loops (for backwards iteration) or pre-allocated `List<T>` to avoid LINQ overhead and achieve zero-allocation pipeline construction.
