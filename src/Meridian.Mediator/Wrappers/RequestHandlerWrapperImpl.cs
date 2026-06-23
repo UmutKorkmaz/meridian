@@ -24,21 +24,56 @@ public class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWrap
     {
         var handler = serviceProvider.GetRequiredService<IRequestHandler<TRequest, TResponse>>();
 
+        return HandleWithPipeline((TRequest)request, serviceProvider, cancellationToken,
+            () => handler.Handle((TRequest)request, cancellationToken));
+    }
+
+    protected static Task<TResponse> HandleWithPipeline(
+        TRequest request,
+        IServiceProvider serviceProvider,
+        CancellationToken cancellationToken,
+        RequestHandlerDelegate<TResponse> handler)
+    {
         var behaviors = serviceProvider.GetServices<IPipelineBehavior<TRequest, TResponse>>();
 
         // Fast path: skip pipeline construction when no behaviors are registered.
         // ICollection<T>.Count is O(1) for List/Array (the common DI return types).
         if (behaviors is ICollection<IPipelineBehavior<TRequest, TResponse>> { Count: 0 })
         {
-            return handler.Handle((TRequest)request, cancellationToken);
+            return handler();
         }
-
-        Task<TResponse> Handler() => handler.Handle((TRequest)request, cancellationToken);
 
         return behaviors
             .Reverse()
             .Aggregate(
-                (RequestHandlerDelegate<TResponse>)Handler,
-                (next, behavior) => () => behavior.Handle((TRequest)request, next, cancellationToken))();
+                handler,
+                (next, behavior) => () => behavior.Handle(request, next, cancellationToken))();
+    }
+}
+
+/// <summary>
+/// Concrete implementation of <see cref="RequestHandlerWrapper{TResponse}"/> for requests that do not return a value.
+/// Supports both <see cref="IRequestHandler{TRequest}"/> and <see cref="IRequestHandler{TRequest,TResponse}"/> registrations.
+/// </summary>
+/// <typeparam name="TRequest">Request type.</typeparam>
+public sealed class UnitRequestHandlerWrapperImpl<TRequest> : RequestHandlerWrapperImpl<TRequest, Unit>
+    where TRequest : IRequest
+{
+    /// <inheritdoc/>
+    public override Task<Unit> Handle(IRequest<Unit> request, IServiceProvider serviceProvider, CancellationToken cancellationToken)
+    {
+        var typedRequest = (TRequest)request;
+        var handler = serviceProvider.GetService<IRequestHandler<TRequest>>();
+
+        if (handler is not null)
+        {
+            return HandleWithPipeline(typedRequest, serviceProvider, cancellationToken, async () =>
+            {
+                await handler.Handle(typedRequest, cancellationToken).ConfigureAwait(false);
+                return Unit.Value;
+            });
+        }
+
+        return base.Handle(request, serviceProvider, cancellationToken);
     }
 }

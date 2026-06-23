@@ -31,6 +31,22 @@ public class VoidCommandHandler : IRequestHandler<VoidCommand, Unit>
     }
 }
 
+
+public record UnitOnlyCommand(string Data) : IRequest;
+
+public class UnitOnlyCommandHandler : IRequestHandler<UnitOnlyCommand>
+{
+    public static bool WasHandled { get; set; }
+    public static string? ReceivedData { get; set; }
+
+    public Task Handle(UnitOnlyCommand request, CancellationToken cancellationToken)
+    {
+        WasHandled = true;
+        ReceivedData = request.Data;
+        return Task.CompletedTask;
+    }
+}
+
 public record CancellableQuery(string Value) : IRequest<string>;
 
 public class CancellableQueryHandler : IRequestHandler<CancellableQuery, string>
@@ -94,6 +110,38 @@ public class RequestResponseTests
         await mediator.Send(new VoidCommand("specific-value"));
 
         Assert.Equal("specific-value", VoidCommandHandler.ReceivedData);
+    }
+
+
+    [Fact]
+    public async Task Send_IRequest_WithNonGenericHandler_CompletesSuccessfully()
+    {
+        UnitOnlyCommandHandler.WasHandled = false;
+        UnitOnlyCommandHandler.ReceivedData = null;
+
+        var mediator = BuildMediator(services =>
+            services.AddTransient<IRequestHandler<UnitOnlyCommand>, UnitOnlyCommandHandler>());
+
+        await mediator.Send(new UnitOnlyCommand("unitless-data"));
+
+        Assert.True(UnitOnlyCommandHandler.WasHandled);
+        Assert.Equal("unitless-data", UnitOnlyCommandHandler.ReceivedData);
+    }
+
+    [Fact]
+    public async Task Send_ObjectIRequest_WithNonGenericHandler_ReturnsUnit()
+    {
+        UnitOnlyCommandHandler.WasHandled = false;
+        UnitOnlyCommandHandler.ReceivedData = null;
+
+        var mediator = BuildMediator(services =>
+            services.AddTransient<IRequestHandler<UnitOnlyCommand>, UnitOnlyCommandHandler>());
+
+        var result = await mediator.Send((object)new UnitOnlyCommand("object-unitless-data"));
+
+        Assert.Equal(Unit.Value, result);
+        Assert.True(UnitOnlyCommandHandler.WasHandled);
+        Assert.Equal("object-unitless-data", UnitOnlyCommandHandler.ReceivedData);
     }
 
     [Fact]
