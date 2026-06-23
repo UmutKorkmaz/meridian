@@ -56,7 +56,7 @@ public class LoggingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, 
     }
 
     /// <summary>
-    /// Initializes a new instance of the <see cref="LoggingBehavior{TRequest, TResponse}"/> class.
+    /// Initializes a new instance of the <see cref="LoggingBehavior{TRequest, TResponse}"/> class with telemetry options.
     /// </summary>
     /// <param name="logger">The mediator logger.</param>
     /// <param name="telemetryOptions">The telemetry options controlling log verbosity.</param>

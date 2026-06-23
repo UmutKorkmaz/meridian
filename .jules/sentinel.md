@@ -41,3 +41,8 @@
 **Vulnerability:** `LoggingBehavior.cs` logged the raw `ex.Message` directly, potentially leaking sensitive system details (such as database queries, user inputs, or internal paths) in exception messages into the application logs.
 **Learning:** `MediatorTelemetryOptions.RecordExceptionMessage` exists specifically to control when raw exception messages are safe to log or audit, but the generic logging behavior bypassed this policy and leaked information regardless of configuration.
 **Prevention:** Always check `MediatorTelemetryOptions.RecordExceptionMessage` (or similar project-wide telemetry/security options) before exposing `ex.Message` in error handling or logging to prevent sensitive data leaks. When extending components, use constructor overloading to inject configuration objects without breaking backward compatibility.
+
+## 2025-06-15 - Leaking exception messages in logs
+**Vulnerability:** LoggingBehavior exposes raw exception messages when logging errors.
+**Learning:** Behaviors should respect MediatorTelemetryOptions.RecordExceptionMessage before exposing exception details, but LoggingBehavior omitted this check, potentially leaking sensitive data like PII or SQL queries.
+**Prevention:** Consistently inject and evaluate MediatorTelemetryOptions in all logging and auditing components to ensure data redaction policies are universally applied.
