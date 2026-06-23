@@ -51,6 +51,11 @@ public class StreamRequestHandlerWrapperImpl<TRequest, TResponse> : StreamReques
 
         var behaviors = serviceProvider.GetServices<IStreamPipelineBehavior<TRequest, TResponse>>();
 
+        if (behaviors is ICollection<IStreamPipelineBehavior<TRequest, TResponse>> { Count: 0 })
+        {
+            return Handler();
+        }
+
         if (behaviors is IReadOnlyList<IStreamPipelineBehavior<TRequest, TResponse>> behaviorList)
         {
             for (int i = behaviorList.Count - 1; i >= 0; i--)
