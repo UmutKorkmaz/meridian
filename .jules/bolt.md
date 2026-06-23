@@ -25,3 +25,7 @@
 ## 2025-03-03 - Avoid LINQ allocations in pipeline construction
 **Learning:** Microsoft.Extensions.DependencyInjection returns arrays (`T[]`) for `GetServices<T>()`. Using LINQ methods like `.Reverse()` and `.Aggregate()` on this output creates unnecessary per-request heap allocations for enumerators, delegates, and array copies.
 **Action:** Always type-check `IEnumerable<T>` for `IList<T>` (or `ICollection<T>`). Use backward `for` loops (for reverse order) or forward loops and pre-sized lists to build pipelines and avoid LINQ allocations in the hot path.
+
+## 2026-06-14 - Avoid LINQ .Reverse().Aggregate() for pipeline construction
+**Learning:** In hot paths (like building request or stream pipelines from DI behaviors), using LINQ `.Reverse().Aggregate()` forces multiple enumerator and delegate allocations per request.
+**Action:** MS.DI typically returns `IEnumerable<T>` as arrays or lists. Always check the resolved enumerable for `IList<T>` or `IReadOnlyList<T>` and construct the pipeline explicitly using a backward `for` loop to achieve zero-allocation pipeline construction.
