@@ -21,3 +21,8 @@
 **Vulnerability:** Found two places (`LoggingBehavior` and `MediatorHandlerValidation`) where raw exception messages (`ex.Message`) were logged without checking the explicit configuration flag `MediatorTelemetryOptions.RecordExceptionMessage`.
 **Learning:** Even built-in error handling and initialization mechanisms can leak sensitive internal paths, logic, or dependencies if an underlying exception full message is inadvertently propagated to logs or validation reports that are displayed externally.
 **Prevention:** Always verify if exception details should be logged by checking context configurations (like `MediatorTelemetryOptions`) and fall back to generic, redacted error messages when in doubt to ensure secure-by-default behavior.
+
+## 2024-06-10 - Sensitive Data Leak in LoggingBehavior
+**Vulnerability:** The `LoggingBehavior` was blindly wrapping raw exception messages (`ex.Message`) and logging them, which could leak sensitive internal system details (e.g., database connection strings, specific validation states, stack details embedded in messages) into application logs.
+**Learning:** `MediatorTelemetryOptions` was introduced to control verbosity and explicitly requires an opt-in (`RecordExceptionMessage = true`) for raw exception details, but `LoggingBehavior` was ignoring this configuration.
+**Prevention:** Always verify if a centralized telemetry or privacy configuration (like `MediatorTelemetryOptions`) exists when logging exceptions or handling errors, and ensure raw exception messages are conditionally redacted based on that configuration.

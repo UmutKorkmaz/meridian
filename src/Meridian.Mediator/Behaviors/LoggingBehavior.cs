@@ -59,7 +59,7 @@ public class LoggingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, 
     /// Initializes a new instance of the <see cref="LoggingBehavior{TRequest, TResponse}"/> class.
     /// </summary>
     /// <param name="logger">The mediator logger.</param>
-    /// <param name="telemetryOptions">Options to control exception logging.</param>
+    /// <param name="telemetryOptions">The telemetry options controlling log verbosity.</param>
     public LoggingBehavior(IMediatorLogger logger, MediatorTelemetryOptions telemetryOptions)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -87,7 +87,7 @@ public class LoggingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, 
         {
             stopwatch.Stop();
 
-            // Sanitize exception to prevent leaking sensitive system details (e.g. stack traces) into logs
+            // Sanitize exception to prevent leaking sensitive system details (e.g. stack traces) into logs.
             var errorMessage = _telemetryOptions.RecordExceptionMessage ? ex.Message : RedactedFailureMessage;
             var sanitizedException = new InvalidOperationException(errorMessage);
             _logger.LogError(sanitizedException, "Error ({ExceptionType}) handling {RequestName} after {ElapsedMilliseconds}ms", ex.GetType().Name, requestName, stopwatch.ElapsedMilliseconds);
