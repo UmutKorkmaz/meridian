@@ -88,6 +88,7 @@ public class LoggingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, 
             stopwatch.Stop();
 
             // Sanitize exception to prevent leaking sensitive system details (e.g. stack traces) into logs.
+            // Only expose the raw exception message if telemetry options allow it (CWE-532 protection).
             var errorMessage = _telemetryOptions.RecordExceptionMessage ? ex.Message : RedactedFailureMessage;
             var sanitizedException = new InvalidOperationException(errorMessage);
             _logger.LogError(sanitizedException, "Error ({ExceptionType}) handling {RequestName} after {ElapsedMilliseconds}ms", ex.GetType().Name, requestName, stopwatch.ElapsedMilliseconds);
