@@ -40,10 +40,20 @@ public class NotificationHandlerWrapperImpl<TNotification> : NotificationHandler
         // and enumerator state machine allocations.
         if (handlers is ICollection<INotificationHandler<TNotification>> collection)
         {
+            if (collection.Count == 0)
+            {
+                return publisher.Publish(Array.Empty<NotificationHandlerExecutor>(), notification, cancellationToken);
+            }
+
             executors = new List<NotificationHandlerExecutor>(collection.Count);
         }
         else if (handlers is IReadOnlyCollection<INotificationHandler<TNotification>> roCollection)
         {
+            if (roCollection.Count == 0)
+            {
+                return publisher.Publish(Array.Empty<NotificationHandlerExecutor>(), notification, cancellationToken);
+            }
+
             executors = new List<NotificationHandlerExecutor>(roCollection.Count);
         }
         else
