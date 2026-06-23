@@ -129,7 +129,7 @@ jobs:
           retention-days: 90
 
       - name: Create GitHub Release with packages + SBOMs
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             ./artifacts/*.nupkg
