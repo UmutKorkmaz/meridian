@@ -39,16 +39,28 @@ jobs:
       - name: Setup .NET SDK
         uses: actions/setup-dotnet@v5
         with:
-          global-json-file: global.json
+          dotnet-version: '10.0.x'
 
       - name: Restore
-        run: dotnet restore Meridian.sln
+        run: |
+          dotnet restore src/Meridian.Mapping/Meridian.Mapping.csproj
+          dotnet restore src/Meridian.Mediator/Meridian.Mediator.csproj
+          dotnet restore tests/Meridian.Mapping.Tests/Meridian.Mapping.Tests.csproj
+          dotnet restore tests/Meridian.Mediator.Tests/Meridian.Mediator.Tests.csproj
 
       - name: Build (Release, deterministic)
-        run: dotnet build Meridian.sln -c Release --no-restore -p:ContinuousIntegrationBuild=true
+        run: |
+          dotnet build src/Meridian.Mapping/Meridian.Mapping.csproj \
+            -c Release --no-restore -p:ContinuousIntegrationBuild=true
+          dotnet build src/Meridian.Mediator/Meridian.Mediator.csproj \
+            -c Release --no-restore -p:ContinuousIntegrationBuild=true
 
       - name: Test (final gate)
-        run: dotnet test Meridian.sln -c Release --no-build --nologo
+        run: |
+          dotnet test tests/Meridian.Mapping.Tests/Meridian.Mapping.Tests.csproj \
+            -c Release -f net10.0 --no-restore --nologo
+          dotnet test tests/Meridian.Mediator.Tests/Meridian.Mediator.Tests.csproj \
+            -c Release -f net10.0 --no-restore --nologo
 
       - name: Select packages for this tag
         id: versions
