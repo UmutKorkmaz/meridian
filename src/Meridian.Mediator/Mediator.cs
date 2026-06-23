@@ -97,7 +97,7 @@ public class Mediator : IMediator
 
         var requestType = request.GetType();
         var handler = (RequestHandlerWrapper<Unit>)_requestHandlers.GetOrAdd(requestType,
-            static t => CreateRequestHandler(t, typeof(RequestHandlerWrapperImpl<,>)));
+            static t => CreateRequestHandler(t, typeof(UnitRequestHandlerWrapperImpl<>)));
 
         if (!ActivitySourceInstance.HasListeners())
         {
@@ -231,7 +231,17 @@ public class Mediator : IMediator
     private static RequestHandlerBase CreateRequestHandler(Type requestType, Type wrapperGenericType)
     {
         var responseType = GetResponseType(requestType);
-        var wrapperType = wrapperGenericType.MakeGenericType(requestType, responseType);
+        Type wrapperType;
+
+        if (responseType == typeof(Unit) && typeof(IRequest).IsAssignableFrom(requestType))
+        {
+            wrapperType = typeof(UnitRequestHandlerWrapperImpl<>).MakeGenericType(requestType);
+        }
+        else
+        {
+            wrapperType = wrapperGenericType.MakeGenericType(requestType, responseType);
+        }
+
         return (RequestHandlerBase)Activator.CreateInstance(wrapperType)!;
     }
 
