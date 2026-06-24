@@ -61,3 +61,7 @@
 ## 2026-06-23 - Avoid LINQ .Reverse() and .Aggregate() in Delegate Pipeline Construction
 **Learning:** Using LINQ `.Reverse()` and `.Aggregate()` to build delegate pipelines in hot paths (like request dispatchers) incurs significant per-request allocations. It allocates an enumerator for `.Reverse()`, an enumerator for `.Aggregate()`, and delegates for the aggregation function. This can noticeably drop performance and increase GC pressure when multiple pipeline behaviors are registered.
 **Action:** Always prefer looping backward via indexers to construct the pipeline when building nested delegates. If using a collection returned by DI, check if it's an `IList<T>` (as they often return lists or arrays) to allow index-based access, and only fallback to `.ToArray()` if it isn't.
+
+## 2026-06-24 - Avoid foreach enumerator allocation in notification publisher
+**Learning:** The default `ForeachAwaitPublisher` iterates over `IEnumerable<NotificationHandlerExecutor>`. Since `NotificationHandlerWrapper` internally creates arrays or lists of executors, using a `foreach` loop forces an enumerator allocation for every notification published, even for single handlers.
+**Action:** Check if the enumerable is an `IList<T>` or `IReadOnlyList<T>` and use a `for` loop to avoid enumerator allocations on the hot path for notification publishing.

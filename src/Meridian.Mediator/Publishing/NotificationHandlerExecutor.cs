@@ -5,6 +5,6 @@ namespace Meridian.Mediator.Publishing;
 /// </summary>
 /// <param name="HandlerInstance">The actual handler instance.</param>
 /// <param name="HandlerCallback">The callback that invokes the handler with a notification and cancellation token.</param>
-public record NotificationHandlerExecutor(
+public readonly record struct NotificationHandlerExecutor(
     object HandlerInstance,
     Func<INotification, CancellationToken, Task> HandlerCallback);
