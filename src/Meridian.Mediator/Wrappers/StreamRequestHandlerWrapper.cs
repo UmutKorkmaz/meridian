@@ -48,8 +48,17 @@ public class StreamRequestHandlerWrapperImpl<TRequest, TResponse> : StreamReques
 
         IAsyncEnumerable<TResponse> Handler() => handler.Handle((TRequest)request, cancellationToken);
 
-        return serviceProvider
-            .GetServices<IStreamPipelineBehavior<TRequest, TResponse>>()
+        var behaviors = serviceProvider.GetServices<IStreamPipelineBehavior<TRequest, TResponse>>();
+        if (behaviors is object[] { Length: 0 })
+        {
+            return Handler();
+        }
+        else if (behaviors is ICollection<IStreamPipelineBehavior<TRequest, TResponse>> { Count: 0 })
+        {
+            return Handler();
+        }
+
+        return behaviors
             .Reverse()
             .Aggregate(
                 (StreamHandlerDelegate<TResponse>)Handler,

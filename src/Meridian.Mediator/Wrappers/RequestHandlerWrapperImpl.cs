@@ -27,8 +27,11 @@ public class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWrap
         var behaviors = serviceProvider.GetServices<IPipelineBehavior<TRequest, TResponse>>();
 
         // Fast path: skip pipeline construction when no behaviors are registered.
-        // ICollection<T>.Count is O(1) for List/Array (the common DI return types).
-        if (behaviors is ICollection<IPipelineBehavior<TRequest, TResponse>> { Count: 0 })
+        if (behaviors is object[] { Length: 0 })
+        {
+            return handler.Handle((TRequest)request, cancellationToken);
+        }
+        else if (behaviors is ICollection<IPipelineBehavior<TRequest, TResponse>> { Count: 0 })
         {
             return handler.Handle((TRequest)request, cancellationToken);
         }
