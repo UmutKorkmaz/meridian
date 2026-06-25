@@ -61,3 +61,7 @@
 ## 2026-06-23 - Avoid LINQ .Reverse() and .Aggregate() in Delegate Pipeline Construction
 **Learning:** Using LINQ `.Reverse()` and `.Aggregate()` to build delegate pipelines in hot paths (like request dispatchers) incurs significant per-request allocations. It allocates an enumerator for `.Reverse()`, an enumerator for `.Aggregate()`, and delegates for the aggregation function. This can noticeably drop performance and increase GC pressure when multiple pipeline behaviors are registered.
 **Action:** Always prefer looping backward via indexers to construct the pipeline when building nested delegates. If using a collection returned by DI, check if it's an `IList<T>` (as they often return lists or arrays) to allow index-based access, and only fallback to `.ToArray()` if it isn't.
+
+## 2026-06-25 - Avoid IEnumerator allocations in publishers
+**Learning:** In notification publishers, using `foreach` over `IEnumerable<T>` causes a hidden `IEnumerator` heap allocation per publish call. Since the upstream `NotificationHandlerWrapper` often creates an array (which implements `IList<T>` and `IReadOnlyList<T>`), this allocation is unnecessary.
+**Action:** When iterating over a collection passed as `IEnumerable<T>` in highly executed publishers, type-check for `IList<T>` or `IReadOnlyList<T>` and use a `for` loop to iterate, bypassing the `IEnumerator` allocation completely.
