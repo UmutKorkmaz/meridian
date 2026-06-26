@@ -47,18 +47,34 @@ public class TaskWhenAllPublisher : INotificationPublisher
             tasks = new List<Task>();
         }
 
-        if (limiter == null)
+        // ⚡ Bolt: Use for loop to avoid IEnumerator allocation when possible
+        if (handlerExecutors is IReadOnlyList<NotificationHandlerExecutor> roList)
         {
-            foreach (var handler in handlerExecutors)
+            for (int i = 0; i < roList.Count; i++)
             {
-                tasks.Add(handler.HandlerCallback(notification, cancellationToken));
+                var handler = roList[i];
+                tasks.Add(limiter == null
+                    ? handler.HandlerCallback(notification, cancellationToken)
+                    : RunBounded(handler, notification, cancellationToken, limiter));
+            }
+        }
+        else if (handlerExecutors is IList<NotificationHandlerExecutor> list)
+        {
+            for (int i = 0; i < list.Count; i++)
+            {
+                var handler = list[i];
+                tasks.Add(limiter == null
+                    ? handler.HandlerCallback(notification, cancellationToken)
+                    : RunBounded(handler, notification, cancellationToken, limiter));
             }
         }
         else
         {
             foreach (var handler in handlerExecutors)
             {
-                tasks.Add(RunBounded(handler, notification, cancellationToken, limiter));
+                tasks.Add(limiter == null
+                    ? handler.HandlerCallback(notification, cancellationToken)
+                    : RunBounded(handler, notification, cancellationToken, limiter));
             }
         }
 
@@ -152,18 +168,34 @@ public class ResilientTaskWhenAllPublisher : INotificationPublisher
             tasks = new List<Task>();
         }
 
-        if (limiter == null)
+        // ⚡ Bolt: Use for loop to avoid IEnumerator allocation when possible
+        if (handlerExecutors is IReadOnlyList<NotificationHandlerExecutor> roList)
         {
-            foreach (var handler in handlerExecutors)
+            for (int i = 0; i < roList.Count; i++)
             {
-                tasks.Add(RunResilient(handler, notification, cancellationToken, exceptions));
+                var handler = roList[i];
+                tasks.Add(limiter == null
+                    ? RunResilient(handler, notification, cancellationToken, exceptions)
+                    : RunBoundedResilient(handler, notification, cancellationToken, limiter, exceptions));
+            }
+        }
+        else if (handlerExecutors is IList<NotificationHandlerExecutor> list)
+        {
+            for (int i = 0; i < list.Count; i++)
+            {
+                var handler = list[i];
+                tasks.Add(limiter == null
+                    ? RunResilient(handler, notification, cancellationToken, exceptions)
+                    : RunBoundedResilient(handler, notification, cancellationToken, limiter, exceptions));
             }
         }
         else
         {
             foreach (var handler in handlerExecutors)
             {
-                tasks.Add(RunBoundedResilient(handler, notification, cancellationToken, limiter, exceptions));
+                tasks.Add(limiter == null
+                    ? RunResilient(handler, notification, cancellationToken, exceptions)
+                    : RunBoundedResilient(handler, notification, cancellationToken, limiter, exceptions));
             }
         }
 
