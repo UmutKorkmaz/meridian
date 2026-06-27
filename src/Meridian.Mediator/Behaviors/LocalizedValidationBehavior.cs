@@ -44,25 +44,55 @@ public sealed class LocalizedValidationBehavior<TRequest, TResponse> : IPipeline
     public async Task<TResponse> Handle(
         TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken cancellationToken)
     {
-        var errors = new List<ValidationError>();
-
-        foreach (var validator in _validators)
+        // ⚡ Bolt: Fast path for zero validators - prevents enumerator and list allocations
+        if (_validators is object[] { Length: 0 } || _validators is ICollection<IValidator<TRequest>> { Count: 0 })
         {
-            var result = await validator.ValidateAsync(request, cancellationToken).ConfigureAwait(false);
-            if (result.IsValid) continue;
+            return await next().ConfigureAwait(false);
+        }
 
-            foreach (var raw in result.Errors)
+        List<ValidationError>? errors = null;
+
+        // ⚡ Bolt: Use index-based loop for IReadOnlyList (e.g., T[]) to avoid IEnumerator allocations
+        if (_validators is IReadOnlyList<IValidator<TRequest>> validatorList)
+        {
+            for (int i = 0; i < validatorList.Count; i++)
             {
-                var localised = _localizer[raw.ErrorMessage];
-                // ResourceNotFound == true means no key in the resx — keep
-                // the original message rather than letting the localiser's
-                // fallback (which echoes the key) leak through opaque.
-                var message = localised.ResourceNotFound ? raw.ErrorMessage : localised.Value;
-                errors.Add(new ValidationError(raw.PropertyName, message));
+                var result = await validatorList[i].ValidateAsync(request, cancellationToken).ConfigureAwait(false);
+                if (result.IsValid) continue;
+
+                errors ??= new List<ValidationError>();
+                foreach (var raw in result.Errors)
+                {
+                    var localised = _localizer[raw.ErrorMessage];
+                    // ResourceNotFound == true means no key in the resx — keep
+                    // the original message rather than letting the localiser's
+                    // fallback (which echoes the key) leak through opaque.
+                    var message = localised.ResourceNotFound ? raw.ErrorMessage : localised.Value;
+                    errors.Add(new ValidationError(raw.PropertyName, message));
+                }
+            }
+        }
+        else
+        {
+            foreach (var validator in _validators)
+            {
+                var result = await validator.ValidateAsync(request, cancellationToken).ConfigureAwait(false);
+                if (result.IsValid) continue;
+
+                errors ??= new List<ValidationError>();
+                foreach (var raw in result.Errors)
+                {
+                    var localised = _localizer[raw.ErrorMessage];
+                    // ResourceNotFound == true means no key in the resx — keep
+                    // the original message rather than letting the localiser's
+                    // fallback (which echoes the key) leak through opaque.
+                    var message = localised.ResourceNotFound ? raw.ErrorMessage : localised.Value;
+                    errors.Add(new ValidationError(raw.PropertyName, message));
+                }
             }
         }
 
-        if (errors.Count > 0)
+        if (errors is not null && errors.Count > 0)
             throw new ValidationException(errors);
 
         return await next().ConfigureAwait(false);

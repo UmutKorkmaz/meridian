@@ -83,15 +83,36 @@ public class AuthorizationBehavior<TRequest, TResponse> : IPipelineBehavior<TReq
     /// <inheritdoc/>
     public async Task<TResponse> Handle(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken cancellationToken)
     {
-        foreach (var handler in _authorizationHandlers)
+        // ⚡ Bolt: Fast path for zero authorization handlers
+        if (_authorizationHandlers is object[] { Length: 0 } || _authorizationHandlers is ICollection<IAuthorizationHandler<TRequest>> { Count: 0 })
         {
-            var result = await handler.AuthorizeAsync(request, cancellationToken);
-            if (!result.IsAuthorized)
+            return await next().ConfigureAwait(false);
+        }
+
+        // ⚡ Bolt: Use index-based loop for IReadOnlyList (e.g., T[]) to avoid IEnumerator allocations
+        if (_authorizationHandlers is IReadOnlyList<IAuthorizationHandler<TRequest>> handlerList)
+        {
+            for (int i = 0; i < handlerList.Count; i++)
             {
-                throw new UnauthorizedException(result.FailureReason ?? "Unauthorized");
+                var result = await handlerList[i].AuthorizeAsync(request, cancellationToken).ConfigureAwait(false);
+                if (!result.IsAuthorized)
+                {
+                    throw new UnauthorizedException(result.FailureReason ?? "Unauthorized");
+                }
+            }
+        }
+        else
+        {
+            foreach (var handler in _authorizationHandlers)
+            {
+                var result = await handler.AuthorizeAsync(request, cancellationToken).ConfigureAwait(false);
+                if (!result.IsAuthorized)
+                {
+                    throw new UnauthorizedException(result.FailureReason ?? "Unauthorized");
+                }
             }
         }
 
-        return await next();
+        return await next().ConfigureAwait(false);
     }
 }
