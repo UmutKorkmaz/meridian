@@ -84,22 +84,45 @@ public class ValidationBehavior<TRequest, TResponse> : IPipelineBehavior<TReques
     /// <inheritdoc/>
     public async Task<TResponse> Handle(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken cancellationToken)
     {
-        var errors = new List<ValidationError>();
-
-        foreach (var validator in _validators)
+        // ⚡ Bolt: Fast path for zero validators - prevents enumerator and list allocations
+        if (_validators is object[] { Length: 0 } || _validators is ICollection<IValidator<TRequest>> { Count: 0 })
         {
-            var result = await validator.ValidateAsync(request, cancellationToken);
-            if (!result.IsValid)
+            return await next().ConfigureAwait(false);
+        }
+
+        List<ValidationError>? errors = null;
+
+        // ⚡ Bolt: Use index-based loop for IReadOnlyList (e.g., T[]) to avoid IEnumerator allocations
+        if (_validators is IReadOnlyList<IValidator<TRequest>> validatorList)
+        {
+            for (int i = 0; i < validatorList.Count; i++)
             {
-                errors.AddRange(result.Errors);
+                var result = await validatorList[i].ValidateAsync(request, cancellationToken).ConfigureAwait(false);
+                if (!result.IsValid)
+                {
+                    errors ??= new List<ValidationError>();
+                    errors.AddRange(result.Errors);
+                }
+            }
+        }
+        else
+        {
+            foreach (var validator in _validators)
+            {
+                var result = await validator.ValidateAsync(request, cancellationToken).ConfigureAwait(false);
+                if (!result.IsValid)
+                {
+                    errors ??= new List<ValidationError>();
+                    errors.AddRange(result.Errors);
+                }
             }
         }
 
-        if (errors.Count > 0)
+        if (errors is not null && errors.Count > 0)
         {
             throw new ValidationException(errors);
         }
 
-        return await next();
+        return await next().ConfigureAwait(false);
     }
 }

@@ -61,3 +61,7 @@
 ## 2026-06-23 - Avoid LINQ .Reverse() and .Aggregate() in Delegate Pipeline Construction
 **Learning:** Using LINQ `.Reverse()` and `.Aggregate()` to build delegate pipelines in hot paths (like request dispatchers) incurs significant per-request allocations. It allocates an enumerator for `.Reverse()`, an enumerator for `.Aggregate()`, and delegates for the aggregation function. This can noticeably drop performance and increase GC pressure when multiple pipeline behaviors are registered.
 **Action:** Always prefer looping backward via indexers to construct the pipeline when building nested delegates. If using a collection returned by DI, check if it's an `IList<T>` (as they often return lists or arrays) to allow index-based access, and only fallback to `.ToArray()` if it isn't.
+
+## 2026-06-27 - [Lazy Allocate Lists on Happy Path]
+**Learning:** Instantiating tracking collections (like `new List<ValidationError>()`) before traversing loops in pipeline behaviors creates an unnecessary per-request heap allocation when no errors occur (the happy path).
+**Action:** Always wait to instantiate collections until the first element is actually added (e.g., `errors ??= new List<ValidationError>();`) when modifying or writing mediator pipeline components.
