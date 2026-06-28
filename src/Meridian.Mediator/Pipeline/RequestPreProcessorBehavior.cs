@@ -23,9 +23,33 @@ public class RequestPreProcessorBehavior<TRequest, TResponse> : IPipelineBehavio
     /// <inheritdoc/>
     public async Task<TResponse> Handle(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken cancellationToken)
     {
-        foreach (var processor in _preProcessors)
+        // ⚡ Bolt: Fast path for zero pre-processors (array covariance check is fastest)
+        if (_preProcessors is object[] { Length: 0 } || _preProcessors is ICollection<IRequestPreProcessor<TRequest>> { Count: 0 })
         {
-            await processor.Process(request, cancellationToken).ConfigureAwait(false);
+            return await next().ConfigureAwait(false);
+        }
+
+        // ⚡ Bolt: Zero-allocation enumeration via IList/IReadOnlyList for-loop
+        if (_preProcessors is IReadOnlyList<IRequestPreProcessor<TRequest>> list)
+        {
+            for (int i = 0; i < list.Count; i++)
+            {
+                await list[i].Process(request, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        else if (_preProcessors is IList<IRequestPreProcessor<TRequest>> ilist)
+        {
+            for (int i = 0; i < ilist.Count; i++)
+            {
+                await ilist[i].Process(request, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        else
+        {
+            foreach (var processor in _preProcessors)
+            {
+                await processor.Process(request, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         return await next().ConfigureAwait(false);

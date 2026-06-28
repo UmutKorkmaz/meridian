@@ -25,9 +25,33 @@ public class RequestPostProcessorBehavior<TRequest, TResponse> : IPipelineBehavi
     {
         var response = await next().ConfigureAwait(false);
 
-        foreach (var processor in _postProcessors)
+        // ⚡ Bolt: Fast path for zero post-processors (array covariance check is fastest)
+        if (_postProcessors is object[] { Length: 0 } || _postProcessors is ICollection<IRequestPostProcessor<TRequest, TResponse>> { Count: 0 })
         {
-            await processor.Process(request, response, cancellationToken).ConfigureAwait(false);
+            return response;
+        }
+
+        // ⚡ Bolt: Zero-allocation enumeration via IList/IReadOnlyList for-loop
+        if (_postProcessors is IReadOnlyList<IRequestPostProcessor<TRequest, TResponse>> list)
+        {
+            for (int i = 0; i < list.Count; i++)
+            {
+                await list[i].Process(request, response, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        else if (_postProcessors is IList<IRequestPostProcessor<TRequest, TResponse>> ilist)
+        {
+            for (int i = 0; i < ilist.Count; i++)
+            {
+                await ilist[i].Process(request, response, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        else
+        {
+            foreach (var processor in _postProcessors)
+            {
+                await processor.Process(request, response, cancellationToken).ConfigureAwait(false);
+            }
         }
 
         return response;
