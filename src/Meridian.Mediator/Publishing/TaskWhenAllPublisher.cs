@@ -25,7 +25,8 @@ public class TaskWhenAllPublisher : INotificationPublisher
     public async Task Publish(IEnumerable<NotificationHandlerExecutor> handlerExecutors, INotification notification, CancellationToken cancellationToken)
     {
         // ⚡ Bolt: Fast path for zero handlers - prevents SemaphoreSlim and List<Task> allocations
-        if (handlerExecutors is ICollection<NotificationHandlerExecutor> { Count: 0 } ||
+        if (handlerExecutors is object[] { Length: 0 } ||
+            handlerExecutors is ICollection<NotificationHandlerExecutor> { Count: 0 } ||
             handlerExecutors is IReadOnlyCollection<NotificationHandlerExecutor> { Count: 0 })
         {
             return;
@@ -34,31 +35,58 @@ public class TaskWhenAllPublisher : INotificationPublisher
         List<Task> tasks;
         using var limiter = _maxDegreeOfParallelism == -1 ? null : new SemaphoreSlim(_maxDegreeOfParallelism);
 
-        if (handlerExecutors is ICollection<NotificationHandlerExecutor> collection)
+        if (handlerExecutors is NotificationHandlerExecutor[] array)
         {
-            tasks = new List<Task>(collection.Count);
-        }
-        else if (handlerExecutors is IReadOnlyCollection<NotificationHandlerExecutor> roCollection)
-        {
-            tasks = new List<Task>(roCollection.Count);
-        }
-        else
-        {
-            tasks = new List<Task>();
-        }
-
-        if (limiter == null)
-        {
-            foreach (var handler in handlerExecutors)
+            tasks = new List<Task>(array.Length);
+            if (limiter == null)
             {
-                tasks.Add(handler.HandlerCallback(notification, cancellationToken));
+                for (int i = 0; i < array.Length; i++)
+                {
+                    tasks.Add(array[i].HandlerCallback(notification, cancellationToken));
+                }
+            }
+            else
+            {
+                for (int i = 0; i < array.Length; i++)
+                {
+                    tasks.Add(RunBounded(array[i], notification, cancellationToken, limiter));
+                }
+            }
+        }
+        else if (handlerExecutors is IList<NotificationHandlerExecutor> list)
+        {
+            tasks = new List<Task>(list.Count);
+            if (limiter == null)
+            {
+                for (int i = 0; i < list.Count; i++)
+                {
+                    tasks.Add(list[i].HandlerCallback(notification, cancellationToken));
+                }
+            }
+            else
+            {
+                for (int i = 0; i < list.Count; i++)
+                {
+                    tasks.Add(RunBounded(list[i], notification, cancellationToken, limiter));
+                }
             }
         }
         else
         {
-            foreach (var handler in handlerExecutors)
+            tasks = new List<Task>();
+            if (limiter == null)
             {
-                tasks.Add(RunBounded(handler, notification, cancellationToken, limiter));
+                foreach (var handler in handlerExecutors)
+                {
+                    tasks.Add(handler.HandlerCallback(notification, cancellationToken));
+                }
+            }
+            else
+            {
+                foreach (var handler in handlerExecutors)
+                {
+                    tasks.Add(RunBounded(handler, notification, cancellationToken, limiter));
+                }
             }
         }
 
@@ -71,10 +99,15 @@ public class TaskWhenAllPublisher : INotificationPublisher
         catch
         {
             // Task.WhenAll throws only the first exception — collect ALL faulted exceptions.
-            var exceptions = tasks
-                .Where(t => t.IsFaulted)
-                .SelectMany(t => t.Exception!.InnerExceptions)
-                .ToList();
+            var exceptions = new List<Exception>();
+            for (int i = 0; i < tasks.Count; i++)
+            {
+                var t = tasks[i];
+                if (t.IsFaulted && t.Exception != null)
+                {
+                    exceptions.AddRange(t.Exception.InnerExceptions);
+                }
+            }
 
             if (exceptions.Count == 1)
                 throw; // preserve original stack trace for single exception
@@ -128,7 +161,8 @@ public class ResilientTaskWhenAllPublisher : INotificationPublisher
     public async Task Publish(IEnumerable<NotificationHandlerExecutor> handlerExecutors, INotification notification, CancellationToken cancellationToken)
     {
         // ⚡ Bolt: Fast path for zero handlers - prevents SemaphoreSlim and List<Task> allocations
-        if (handlerExecutors is ICollection<NotificationHandlerExecutor> { Count: 0 } ||
+        if (handlerExecutors is object[] { Length: 0 } ||
+            handlerExecutors is ICollection<NotificationHandlerExecutor> { Count: 0 } ||
             handlerExecutors is IReadOnlyCollection<NotificationHandlerExecutor> { Count: 0 })
         {
             return;
@@ -139,31 +173,58 @@ public class ResilientTaskWhenAllPublisher : INotificationPublisher
         List<Task> tasks;
         using var limiter = _maxDegreeOfParallelism == -1 ? null : new SemaphoreSlim(_maxDegreeOfParallelism);
 
-        if (handlerExecutors is ICollection<NotificationHandlerExecutor> collection)
+        if (handlerExecutors is NotificationHandlerExecutor[] array)
         {
-            tasks = new List<Task>(collection.Count);
-        }
-        else if (handlerExecutors is IReadOnlyCollection<NotificationHandlerExecutor> roCollection)
-        {
-            tasks = new List<Task>(roCollection.Count);
-        }
-        else
-        {
-            tasks = new List<Task>();
-        }
-
-        if (limiter == null)
-        {
-            foreach (var handler in handlerExecutors)
+            tasks = new List<Task>(array.Length);
+            if (limiter == null)
             {
-                tasks.Add(RunResilient(handler, notification, cancellationToken, exceptions));
+                for (int i = 0; i < array.Length; i++)
+                {
+                    tasks.Add(RunResilient(array[i], notification, cancellationToken, exceptions));
+                }
+            }
+            else
+            {
+                for (int i = 0; i < array.Length; i++)
+                {
+                    tasks.Add(RunBoundedResilient(array[i], notification, cancellationToken, limiter, exceptions));
+                }
+            }
+        }
+        else if (handlerExecutors is IList<NotificationHandlerExecutor> list)
+        {
+            tasks = new List<Task>(list.Count);
+            if (limiter == null)
+            {
+                for (int i = 0; i < list.Count; i++)
+                {
+                    tasks.Add(RunResilient(list[i], notification, cancellationToken, exceptions));
+                }
+            }
+            else
+            {
+                for (int i = 0; i < list.Count; i++)
+                {
+                    tasks.Add(RunBoundedResilient(list[i], notification, cancellationToken, limiter, exceptions));
+                }
             }
         }
         else
         {
-            foreach (var handler in handlerExecutors)
+            tasks = new List<Task>();
+            if (limiter == null)
             {
-                tasks.Add(RunBoundedResilient(handler, notification, cancellationToken, limiter, exceptions));
+                foreach (var handler in handlerExecutors)
+                {
+                    tasks.Add(RunResilient(handler, notification, cancellationToken, exceptions));
+                }
+            }
+            else
+            {
+                foreach (var handler in handlerExecutors)
+                {
+                    tasks.Add(RunBoundedResilient(handler, notification, cancellationToken, limiter, exceptions));
+                }
             }
         }
 
