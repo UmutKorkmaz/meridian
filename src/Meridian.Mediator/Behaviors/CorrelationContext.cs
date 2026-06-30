@@ -16,7 +16,25 @@ public static class CorrelationContext
     public static string? CorrelationId
     {
         get => _correlationId.Value;
-        set => _correlationId.Value = value;
+        set
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                _correlationId.Value = value;
+                return;
+            }
+
+            // Sanitize: remove newlines to prevent log injection (CWE-117)
+            var sanitized = value.Replace("\r", string.Empty).Replace("\n", string.Empty);
+
+            // Truncate to prevent DoS via massive strings in logs/memory (CWE-400)
+            if (sanitized.Length > 128)
+            {
+                sanitized = sanitized.Substring(0, 128);
+            }
+
+            _correlationId.Value = sanitized;
+        }
     }
 
     /// <summary>
