@@ -49,16 +49,34 @@ public class TaskWhenAllPublisher : INotificationPublisher
 
         if (limiter == null)
         {
-            foreach (var handler in handlerExecutors)
+            // ⚡ Bolt: Use indexers for lists to avoid IEnumerator allocations
+            if (handlerExecutors is IList<NotificationHandlerExecutor> list)
             {
-                tasks.Add(handler.HandlerCallback(notification, cancellationToken));
+                for (int i = 0; i < list.Count; i++) tasks.Add(list[i].HandlerCallback(notification, cancellationToken));
+            }
+            else if (handlerExecutors is IReadOnlyList<NotificationHandlerExecutor> readOnlyList)
+            {
+                for (int i = 0; i < readOnlyList.Count; i++) tasks.Add(readOnlyList[i].HandlerCallback(notification, cancellationToken));
+            }
+            else
+            {
+                foreach (var handler in handlerExecutors) tasks.Add(handler.HandlerCallback(notification, cancellationToken));
             }
         }
         else
         {
-            foreach (var handler in handlerExecutors)
+            // ⚡ Bolt: Use indexers for lists to avoid IEnumerator allocations
+            if (handlerExecutors is IList<NotificationHandlerExecutor> list)
             {
-                tasks.Add(RunBounded(handler, notification, cancellationToken, limiter));
+                for (int i = 0; i < list.Count; i++) tasks.Add(RunBounded(list[i], notification, cancellationToken, limiter));
+            }
+            else if (handlerExecutors is IReadOnlyList<NotificationHandlerExecutor> readOnlyList)
+            {
+                for (int i = 0; i < readOnlyList.Count; i++) tasks.Add(RunBounded(readOnlyList[i], notification, cancellationToken, limiter));
+            }
+            else
+            {
+                foreach (var handler in handlerExecutors) tasks.Add(RunBounded(handler, notification, cancellationToken, limiter));
             }
         }
 
@@ -154,16 +172,34 @@ public class ResilientTaskWhenAllPublisher : INotificationPublisher
 
         if (limiter == null)
         {
-            foreach (var handler in handlerExecutors)
+            // ⚡ Bolt: Use indexers for lists to avoid IEnumerator allocations
+            if (handlerExecutors is IList<NotificationHandlerExecutor> list)
             {
-                tasks.Add(RunResilient(handler, notification, cancellationToken, exceptions));
+                for (int i = 0; i < list.Count; i++) tasks.Add(RunResilient(list[i], notification, cancellationToken, exceptions));
+            }
+            else if (handlerExecutors is IReadOnlyList<NotificationHandlerExecutor> readOnlyList)
+            {
+                for (int i = 0; i < readOnlyList.Count; i++) tasks.Add(RunResilient(readOnlyList[i], notification, cancellationToken, exceptions));
+            }
+            else
+            {
+                foreach (var handler in handlerExecutors) tasks.Add(RunResilient(handler, notification, cancellationToken, exceptions));
             }
         }
         else
         {
-            foreach (var handler in handlerExecutors)
+            // ⚡ Bolt: Use indexers for lists to avoid IEnumerator allocations
+            if (handlerExecutors is IList<NotificationHandlerExecutor> list)
             {
-                tasks.Add(RunBoundedResilient(handler, notification, cancellationToken, limiter, exceptions));
+                for (int i = 0; i < list.Count; i++) tasks.Add(RunBoundedResilient(list[i], notification, cancellationToken, limiter, exceptions));
+            }
+            else if (handlerExecutors is IReadOnlyList<NotificationHandlerExecutor> readOnlyList)
+            {
+                for (int i = 0; i < readOnlyList.Count; i++) tasks.Add(RunBoundedResilient(readOnlyList[i], notification, cancellationToken, limiter, exceptions));
+            }
+            else
+            {
+                foreach (var handler in handlerExecutors) tasks.Add(RunBoundedResilient(handler, notification, cancellationToken, limiter, exceptions));
             }
         }
 
