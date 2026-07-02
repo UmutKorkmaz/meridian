@@ -67,3 +67,8 @@
 **Vulnerability:** The application was extracting and logging `Exception.Message` strings in `LoggingBehavior.cs`, potentially exposing sensitive internal details (e.g., query parameters, validation secrets, exact paths) that often leak into `Message` properties of framework exceptions.
 **Learning:** Even when sanitizing stack traces by instantiating new base exceptions, reading `ex.Message` and passing it to the logger still triggers Information Exposure vulnerabilities (CWE-532).
 **Prevention:** Mask raw exception messages in all logging behaviors (using a fallback string like `"An error occurred during request processing."`) unless the application explicitly overrides this privacy default (e.g. via `MediatorTelemetryOptions.RecordExceptionMessage`).
+
+## 2025-02-23 - Prevent Log Injection and DoS via Correlation Context
+**Vulnerability:** The application was setting `CorrelationContext.CorrelationId` directly without sanitization, allowing potential log injection (CRLF, CWE-117) and Denial of Service (DoS, CWE-400) if a malicious actor submitted excessively long correlation IDs.
+**Learning:** Correlation IDs often originate from untrusted external sources (like HTTP headers) and are heavily logged across pipeline behaviors. Passing raw data into static ambient state opens a wide surface for log forgery and memory bloat.
+**Prevention:** Ambient contexts (`AsyncLocal`) acting as carriers for external tracking IDs must enforce sanitization on the property setter. Strip newline characters (`\r` and `\n`) and truncate values to a safe length (e.g., 128 characters).
