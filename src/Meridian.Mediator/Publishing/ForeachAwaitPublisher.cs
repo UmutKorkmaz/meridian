@@ -9,6 +9,12 @@ public class ForeachAwaitPublisher : INotificationPublisher
     /// <inheritdoc/>
     public async Task Publish(IEnumerable<NotificationHandlerExecutor> handlerExecutors, INotification notification, CancellationToken cancellationToken)
     {
+        // ⚡ Bolt: Fast path for zero handlers
+        if (handlerExecutors is ICollection<NotificationHandlerExecutor> { Count: 0 })
+        {
+            return;
+        }
+
         foreach (var handler in handlerExecutors)
         {
             await handler.HandlerCallback(notification, cancellationToken).ConfigureAwait(false);
