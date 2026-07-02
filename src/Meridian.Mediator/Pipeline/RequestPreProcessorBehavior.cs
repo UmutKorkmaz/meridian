@@ -23,6 +23,12 @@ public class RequestPreProcessorBehavior<TRequest, TResponse> : IPipelineBehavio
     /// <inheritdoc/>
     public async Task<TResponse> Handle(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken cancellationToken)
     {
+        // ⚡ Bolt: Fast path for zero processors
+        if (_preProcessors is ICollection<IRequestPreProcessor<TRequest>> { Count: 0 })
+        {
+            return await next().ConfigureAwait(false);
+        }
+
         foreach (var processor in _preProcessors)
         {
             await processor.Process(request, cancellationToken).ConfigureAwait(false);

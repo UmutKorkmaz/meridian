@@ -25,6 +25,12 @@ public class RequestPostProcessorBehavior<TRequest, TResponse> : IPipelineBehavi
     {
         var response = await next().ConfigureAwait(false);
 
+        // ⚡ Bolt: Fast path for zero processors
+        if (_postProcessors is ICollection<IRequestPostProcessor<TRequest, TResponse>> { Count: 0 })
+        {
+            return response;
+        }
+
         foreach (var processor in _postProcessors)
         {
             await processor.Process(request, response, cancellationToken).ConfigureAwait(false);
