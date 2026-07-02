@@ -826,6 +826,30 @@ public class BehaviorTests
         Assert.Equal(existingId, capturedCorrelationId);
     }
 
+    [Fact]
+    public void CorrelationContext_CorrelationId_StripsNewlines_And_TruncatesLength()
+    {
+        // Arrange
+        CorrelationContext.CorrelationId = null; // Clean slate
+        var maliciousInput = "line1\r\nline2\nline3\rline4" + new string('A', 150);
+        var expectedSanitized = "line1line2line3line4" + new string('A', 150);
+        expectedSanitized = expectedSanitized.Substring(0, 128); // Truncated to 128 chars
+
+        // Act
+        CorrelationContext.CorrelationId = maliciousInput;
+        var result = CorrelationContext.CorrelationId;
+
+        // Assert
+        Assert.NotNull(result);
+        Assert.Equal(expectedSanitized, result);
+        Assert.DoesNotContain("\r", result!);
+        Assert.DoesNotContain("\n", result!);
+        Assert.True(result!.Length <= 128);
+
+        // Cleanup
+        CorrelationContext.CorrelationId = null;
+    }
+
     #endregion
 
     #region 8. IdempotencyBehavior Tests
