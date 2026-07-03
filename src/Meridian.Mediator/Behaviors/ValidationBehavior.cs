@@ -84,18 +84,20 @@ public class ValidationBehavior<TRequest, TResponse> : IPipelineBehavior<TReques
     /// <inheritdoc/>
     public async Task<TResponse> Handle(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken cancellationToken)
     {
-        var errors = new List<ValidationError>();
+        List<ValidationError>? errors = null;
 
         foreach (var validator in _validators)
         {
             var result = await validator.ValidateAsync(request, cancellationToken);
             if (!result.IsValid)
             {
+                // ⚡ Bolt: Lazy allocation of error list to prevent per-request overhead on happy path
+                errors ??= new List<ValidationError>();
                 errors.AddRange(result.Errors);
             }
         }
 
-        if (errors.Count > 0)
+        if (errors?.Count > 0)
         {
             throw new ValidationException(errors);
         }

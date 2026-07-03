@@ -44,12 +44,15 @@ public sealed class LocalizedValidationBehavior<TRequest, TResponse> : IPipeline
     public async Task<TResponse> Handle(
         TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken cancellationToken)
     {
-        var errors = new List<ValidationError>();
+        List<ValidationError>? errors = null;
 
         foreach (var validator in _validators)
         {
             var result = await validator.ValidateAsync(request, cancellationToken).ConfigureAwait(false);
             if (result.IsValid) continue;
+
+            // ⚡ Bolt: Lazy allocation of error list to prevent per-request overhead on happy path
+            errors ??= new List<ValidationError>();
 
             foreach (var raw in result.Errors)
             {
@@ -62,7 +65,7 @@ public sealed class LocalizedValidationBehavior<TRequest, TResponse> : IPipeline
             }
         }
 
-        if (errors.Count > 0)
+        if (errors?.Count > 0)
             throw new ValidationException(errors);
 
         return await next().ConfigureAwait(false);
