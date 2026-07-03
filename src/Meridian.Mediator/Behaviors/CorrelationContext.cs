@@ -16,7 +16,7 @@ public static class CorrelationContext
     public static string? CorrelationId
     {
         get => _correlationId.Value;
-        set => _correlationId.Value = value;
+        set => _correlationId.Value = Sanitize(value);
     }
 
     /// <summary>
@@ -28,6 +28,15 @@ public static class CorrelationContext
         if (string.IsNullOrEmpty(_correlationId.Value))
             _correlationId.Value = Guid.NewGuid().ToString("N");
         return _correlationId.Value!;
+    }
+
+    private static string? Sanitize(string? value)
+    {
+        if (string.IsNullOrEmpty(value)) return value;
+
+        var sanitized = value.Replace("\r", "").Replace("\n", "");
+        if (sanitized.Length > 128) sanitized = sanitized.Substring(0, 128);
+        return sanitized;
     }
 }
 

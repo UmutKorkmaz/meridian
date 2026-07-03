@@ -826,6 +826,34 @@ public class BehaviorTests
         Assert.Equal(existingId, capturedCorrelationId);
     }
 
+    [Fact]
+    public void CorrelationId_Setter_TruncatesTo128Characters()
+    {
+        // Arrange
+        var longId = new string('A', 200);
+
+        // Act
+        CorrelationContext.CorrelationId = longId;
+
+        // Assert
+        Assert.NotNull(CorrelationContext.CorrelationId);
+        Assert.Equal(128, CorrelationContext.CorrelationId!.Length);
+        Assert.Equal(new string('A', 128), CorrelationContext.CorrelationId);
+    }
+
+    [Fact]
+    public void CorrelationId_Setter_StripsNewlines()
+    {
+        // Arrange
+        var idWithNewlines = "line1\r\nline2\nline3\r";
+
+        // Act
+        CorrelationContext.CorrelationId = idWithNewlines;
+
+        // Assert
+        Assert.Equal("line1line2line3", CorrelationContext.CorrelationId);
+    }
+
     #endregion
 
     #region 8. IdempotencyBehavior Tests
