@@ -12,11 +12,24 @@ public static class CorrelationContext
 
     /// <summary>
     /// Gets or sets the current correlation ID for the async flow.
+    /// External inputs are sanitized to prevent Log Injection and truncated to 128 characters.
     /// </summary>
     public static string? CorrelationId
     {
         get => _correlationId.Value;
-        set => _correlationId.Value = value;
+        set
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                _correlationId.Value = value;
+                return;
+            }
+
+            var sanitized = value.Length > 128 ? value.Substring(0, 128) : value;
+            sanitized = sanitized.Replace("\r", string.Empty).Replace("\n", string.Empty);
+
+            _correlationId.Value = sanitized;
+        }
     }
 
     /// <summary>
