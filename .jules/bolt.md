@@ -61,3 +61,7 @@
 ## 2026-06-23 - Avoid LINQ .Reverse() and .Aggregate() in Delegate Pipeline Construction
 **Learning:** Using LINQ `.Reverse()` and `.Aggregate()` to build delegate pipelines in hot paths (like request dispatchers) incurs significant per-request allocations. It allocates an enumerator for `.Reverse()`, an enumerator for `.Aggregate()`, and delegates for the aggregation function. This can noticeably drop performance and increase GC pressure when multiple pipeline behaviors are registered.
 **Action:** Always prefer looping backward via indexers to construct the pipeline when building nested delegates. If using a collection returned by DI, check if it's an `IList<T>` (as they often return lists or arrays) to allow index-based access, and only fallback to `.ToArray()` if it isn't.
+
+## 2026-07-04 - Optimize Validation Pipeline Tracking Collections
+**Learning:** In Meridian.Mediator hot paths (e.g., pipeline behaviors like `ValidationBehavior` and `LocalizedValidationBehavior`), unconditionally instantiating error lists (like `var errors = new List<ValidationError>();`) adds unnecessary per-request heap allocation overhead for the successful/happy paths where no validation errors occur.
+**Action:** When tracking collections in hot path pipelines, delay their initialization using lazy allocation (e.g., `errors ??= new List<T>();`). Then, enforce a fast-path condition for subsequent logic, checking `if (errors is { Count: > 0 })` to ensure allocations are strictly limited to failure branches.

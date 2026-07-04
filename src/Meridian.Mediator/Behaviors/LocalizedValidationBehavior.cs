@@ -44,7 +44,8 @@ public sealed class LocalizedValidationBehavior<TRequest, TResponse> : IPipeline
     public async Task<TResponse> Handle(
         TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken cancellationToken)
     {
-        var errors = new List<ValidationError>();
+        // ⚡ Bolt: Delay initialization of errors list to avoid unnecessary per-request heap allocations on successful/happy paths.
+        List<ValidationError>? errors = null;
 
         foreach (var validator in _validators)
         {
@@ -58,11 +59,12 @@ public sealed class LocalizedValidationBehavior<TRequest, TResponse> : IPipeline
                 // the original message rather than letting the localiser's
                 // fallback (which echoes the key) leak through opaque.
                 var message = localised.ResourceNotFound ? raw.ErrorMessage : localised.Value;
+                errors ??= new List<ValidationError>();
                 errors.Add(new ValidationError(raw.PropertyName, message));
             }
         }
 
-        if (errors.Count > 0)
+        if (errors is { Count: > 0 })
             throw new ValidationException(errors);
 
         return await next().ConfigureAwait(false);
