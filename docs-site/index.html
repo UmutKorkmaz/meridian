@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Meridian — .NET Mediator &amp; Mapping</title>
+  <meta name="description" content="Lightweight CQRS-style mediator and high-performance object mapping for .NET 8–11." />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="hero">
+    <p class="eyebrow">Open Source · .NET 8–11</p>
+    <h1>Meridian</h1>
+    <p class="lede">
+      A lightweight toolset for .NET applications — <strong>Meridian.Mediator</strong> for CQRS-style
+      in-process messaging and <strong>Meridian.Mapping</strong> for high-performance object mapping.
+    </p>
+    <div class="actions">
+      <a class="btn primary" href="https://github.com/UmutKorkmaz/meridian">View on GitHub</a>
+      <a class="btn" href="https://www.nuget.org/packages/Meridian.Mediator">NuGet · Mediator</a>
+      <a class="btn" href="https://www.nuget.org/packages/Meridian.Mapping">NuGet · Mapping</a>
+    </div>
+  </header>
+
+  <main>
+    <section>
+      <h2>Packages</h2>
+      <div class="grid">
+        <article class="card">
+          <h3>Meridian.Mediator</h3>
+          <p>Requests, notifications, streams, pipeline behaviors, and focused abstractions (<code>ISender</code>, <code>IPublisher</code>, <code>IStreamSender</code>).</p>
+        </article>
+        <article class="card">
+          <h3>Meridian.Mapping</h3>
+          <p>Profiles, resolvers, converters, and query projection with a performance-first mapping pipeline.</p>
+        </article>
+      </div>
+    </section>
+
+    <section>
+      <h2>Quick start</h2>
+      <pre><code>services.AddMeridianMediator(cfg =&gt;
+{
+    cfg.RegisterServicesFromAssemblyContaining&lt;Program&gt;();
+});</code></pre>
+    </section>
+
+    <section>
+      <h2>Samples</h2>
+      <ul class="samples">
+        <li><strong>QuickStart</strong> — smallest end-to-end setup</li>
+        <li><strong>Showcase</strong> — mapping + mediator feature tour</li>
+        <li><strong>CleanArchitecture</strong> — domain boundaries &amp; transactional commands</li>
+        <li><strong>ModularMonolith</strong> — module registration &amp; cross-module notifications</li>
+        <li><strong>VerticalSlice</strong> — feature-first handlers &amp; validation</li>
+        <li><strong>EventDrivenCqrs</strong> — write/read split with streams</li>
+      </ul>
+    </section>
+
+    <section>
+      <h2>Docs</h2>
+      <ul class="links">
+        <li><a href="https://github.com/UmutKorkmaz/meridian/blob/main/docs/security-model.md">Security model</a></li>
+        <li><a href="https://github.com/UmutKorkmaz/meridian/blob/main/docs/source-gen-guide.md">Source generator guide</a></li>
+        <li><a href="https://github.com/UmutKorkmaz/meridian/blob/main/CHANGELOG.md">Changelog</a></li>
+      </ul>
+    </section>
+  </main>
+
+  <footer>
+    <p>Apache-2.0 · <a href="https://github.com/UmutKorkmaz/meridian">UmutKorkmaz/meridian</a></p>
+  </footer>
+</body>
+</html>
