@@ -826,6 +826,33 @@ public class BehaviorTests
         Assert.Equal(existingId, capturedCorrelationId);
     }
 
+    [Fact]
+    public void CorrelationContext_Should_Sanitize_CRLF_From_CorrelationId()
+    {
+        // Arrange
+        var maliciousId = "id-1234\r\nSomeOtherData";
+
+        // Act
+        CorrelationContext.CorrelationId = maliciousId;
+
+        // Assert
+        Assert.Equal("id-1234SomeOtherData", CorrelationContext.CorrelationId);
+    }
+
+    [Fact]
+    public void CorrelationContext_Should_Truncate_Oversized_CorrelationId()
+    {
+        // Arrange
+        var oversizedId = new string('a', 200);
+
+        // Act
+        CorrelationContext.CorrelationId = oversizedId;
+
+        // Assert
+        Assert.Equal(128, CorrelationContext.CorrelationId?.Length);
+        Assert.Equal(new string('a', 128), CorrelationContext.CorrelationId);
+    }
+
     #endregion
 
     #region 8. IdempotencyBehavior Tests
