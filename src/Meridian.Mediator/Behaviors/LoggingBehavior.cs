@@ -73,25 +73,26 @@ public class LoggingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, 
 
         _logger.LogInformation("Handling {RequestName}", requestName);
 
-        var stopwatch = Stopwatch.StartNew();
+        // Avoid per-request heap allocations by using GetTimestamp() instead of StartNew()
+        var startTimestamp = Stopwatch.GetTimestamp();
         try
         {
             var response = await next();
-            stopwatch.Stop();
+            var elapsedMs = (long)Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
 
-            _logger.LogInformation("Handled {RequestName} in {ElapsedMilliseconds}ms", requestName, stopwatch.ElapsedMilliseconds);
+            _logger.LogInformation("Handled {RequestName} in {ElapsedMilliseconds}ms", requestName, elapsedMs);
 
             return response;
         }
         catch (Exception ex)
         {
-            stopwatch.Stop();
+            var elapsedMs = (long)Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
 
             // Sanitize exception to prevent leaking sensitive system details (e.g. stack traces) into logs.
             // Only expose the raw exception message if telemetry options allow it (CWE-532 protection).
             var errorMessage = _telemetryOptions.RecordExceptionMessage ? ex.Message : RedactedFailureMessage;
             var sanitizedException = new InvalidOperationException(errorMessage);
-            _logger.LogError(sanitizedException, "Error ({ExceptionType}) handling {RequestName} after {ElapsedMilliseconds}ms", ex.GetType().Name, requestName, stopwatch.ElapsedMilliseconds);
+            _logger.LogError(sanitizedException, "Error ({ExceptionType}) handling {RequestName} after {ElapsedMilliseconds}ms", ex.GetType().Name, requestName, elapsedMs);
 
             throw;
         }

@@ -61,3 +61,7 @@
 ## 2026-06-23 - Avoid LINQ .Reverse() and .Aggregate() in Delegate Pipeline Construction
 **Learning:** Using LINQ `.Reverse()` and `.Aggregate()` to build delegate pipelines in hot paths (like request dispatchers) incurs significant per-request allocations. It allocates an enumerator for `.Reverse()`, an enumerator for `.Aggregate()`, and delegates for the aggregation function. This can noticeably drop performance and increase GC pressure when multiple pipeline behaviors are registered.
 **Action:** Always prefer looping backward via indexers to construct the pipeline when building nested delegates. If using a collection returned by DI, check if it's an `IList<T>` (as they often return lists or arrays) to allow index-based access, and only fallback to `.ToArray()` if it isn't.
+
+## 2026-06-25 - Avoid Stopwatch.StartNew() in hot paths
+**Learning:** Instantiating `Stopwatch` via `Stopwatch.StartNew()` causes a heap allocation on every request in hot paths like logging and auditing behaviors, accumulating GC pressure under load.
+**Action:** Use the allocation-free `Stopwatch.GetTimestamp()` combined with `Stopwatch.GetElapsedTime()` (available in .NET 7+) to track durations in high-throughput pipeline components without allocating per-request objects.
