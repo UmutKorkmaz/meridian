@@ -61,3 +61,7 @@
 ## 2026-06-23 - Avoid LINQ .Reverse() and .Aggregate() in Delegate Pipeline Construction
 **Learning:** Using LINQ `.Reverse()` and `.Aggregate()` to build delegate pipelines in hot paths (like request dispatchers) incurs significant per-request allocations. It allocates an enumerator for `.Reverse()`, an enumerator for `.Aggregate()`, and delegates for the aggregation function. This can noticeably drop performance and increase GC pressure when multiple pipeline behaviors are registered.
 **Action:** Always prefer looping backward via indexers to construct the pipeline when building nested delegates. If using a collection returned by DI, check if it's an `IList<T>` (as they often return lists or arrays) to allow index-based access, and only fallback to `.ToArray()` if it isn't.
+
+## 2024-07-07 - [Avoid Stopwatch.StartNew() for Per-Request Timing]
+**Learning:** `Stopwatch.StartNew()` instantiates a new `Stopwatch` object on the heap. In highly executed paths (like Mediator behaviors evaluating every request), this adds measurable GC pressure due to per-request allocations. .NET 7 introduced `Stopwatch.GetTimestamp()` and `Stopwatch.GetElapsedTime()` which perform allocation-free high-resolution timing.
+**Action:** Always prefer `var start = Stopwatch.GetTimestamp();` and `Stopwatch.GetElapsedTime(start)` over creating new `Stopwatch` objects for timing internal operations.
