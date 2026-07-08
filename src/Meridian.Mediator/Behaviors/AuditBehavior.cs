@@ -125,16 +125,17 @@ public sealed class AuditBehavior<TRequest, TResponse> : IPipelineBehavior<TRequ
         var correlationId = CorrelationContext.EnsureCorrelationId();
         var requestTypeName = typeof(TRequest).FullName ?? typeof(TRequest).Name;
         var startedAt = DateTimeOffset.UtcNow;
-        var sw = Stopwatch.StartNew();
+        // Optimization: Use Stopwatch.GetTimestamp() instead of Stopwatch.StartNew() to avoid allocating a new Stopwatch instance on the heap per request.
+        var startTimestamp = Stopwatch.GetTimestamp();
 
         try
         {
             var response = await next().ConfigureAwait(false);
-            sw.Stop();
+            var elapsedMs = (long)Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
 
             await _sink.RecordAsync(
                 new AuditEntry(startedAt, correlationId, requestTypeName,
-                    sw.ElapsedMilliseconds, Success: true,
+                    elapsedMs, Success: true,
                     FailureMessage: null, FailureType: null),
                 cancellationToken).ConfigureAwait(false);
 
@@ -142,7 +143,7 @@ public sealed class AuditBehavior<TRequest, TResponse> : IPipelineBehavior<TRequ
         }
         catch (Exception ex)
         {
-            sw.Stop();
+            var elapsedMs = (long)Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds;
 
             // Best-effort audit of the failure. We deliberately do not let a
             // sink failure mask the original exception — if the sink throws,
@@ -152,7 +153,7 @@ public sealed class AuditBehavior<TRequest, TResponse> : IPipelineBehavior<TRequ
             {
                 await _sink.RecordAsync(
                     new AuditEntry(startedAt, correlationId, requestTypeName,
-                        sw.ElapsedMilliseconds, Success: false,
+                        elapsedMs, Success: false,
                         FailureMessage: GetFailureMessage(ex), FailureType: ex.GetType().FullName),
                     CancellationToken.None).ConfigureAwait(false);
             }
