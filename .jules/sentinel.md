@@ -67,3 +67,8 @@
 **Vulnerability:** The application was extracting and logging `Exception.Message` strings in `LoggingBehavior.cs`, potentially exposing sensitive internal details (e.g., query parameters, validation secrets, exact paths) that often leak into `Message` properties of framework exceptions.
 **Learning:** Even when sanitizing stack traces by instantiating new base exceptions, reading `ex.Message` and passing it to the logger still triggers Information Exposure vulnerabilities (CWE-532).
 **Prevention:** Mask raw exception messages in all logging behaviors (using a fallback string like `"An error occurred during request processing."`) unless the application explicitly overrides this privacy default (e.g. via `MediatorTelemetryOptions.RecordExceptionMessage`).
+
+## 2025-02-23 - Prevent Log Injection in Ambient Context
+**Vulnerability:** `CorrelationContext.CorrelationId` allowed setting arbitrary strings which could be extracted from external input (like HTTP headers). Because `AuditBehavior` and other behaviors log this ambient state, unvalidated input could lead to Log Injection (CWE-117) via CRLF characters and DoS (CWE-400) via extremely long string payloads.
+**Learning:** Any ambient context variable (like correlation IDs, tenant IDs, or request origin tags) that might be sourced from external input and automatically logged must be treated as untrusted input. Logging frameworks can be tricked into injecting fake log entries if CRLF characters aren't stripped.
+**Prevention:** Sanitize external inputs used for ambient context or logging by stripping newline characters (CRLF) and truncating to a reasonable length (e.g., 128 characters) upon assignment, preventing malicious payloads from ever entering the system's shared state.
