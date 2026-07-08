@@ -23,14 +23,26 @@ public static class MediatorHandlerValidation
     /// </exception>
     public static void AssertHandlerRegistration(this IServiceProvider provider, params Assembly[] assemblies)
     {
-        var requestTypes = new List<Type>();
-        foreach (var assembly in assemblies.Distinct())
+        ValidateTypes(provider, GetValidTypes(assemblies));
+    }
+
+    // Optimization: yield return types to avoid unnecessary List<Type> materialization and array resizing
+    private static IEnumerable<Type> GetValidTypes(Assembly[] assemblies)
+    {
+        var seenAssemblies = new HashSet<Assembly>();
+        foreach (var assembly in assemblies)
         {
-            requestTypes.AddRange(
-                assembly.GetTypes()
-                    .Where(t => t is { IsAbstract: false, IsInterface: false, IsGenericTypeDefinition: false }));
+            if (!seenAssemblies.Add(assembly))
+                continue;
+
+            foreach (var type in assembly.GetTypes())
+            {
+                if (type is { IsAbstract: false, IsInterface: false, IsGenericTypeDefinition: false })
+                {
+                    yield return type;
+                }
+            }
         }
-        ValidateTypes(provider, requestTypes);
     }
 
     /// <summary>

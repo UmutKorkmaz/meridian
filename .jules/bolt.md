@@ -61,3 +61,7 @@
 ## 2026-06-23 - Avoid LINQ .Reverse() and .Aggregate() in Delegate Pipeline Construction
 **Learning:** Using LINQ `.Reverse()` and `.Aggregate()` to build delegate pipelines in hot paths (like request dispatchers) incurs significant per-request allocations. It allocates an enumerator for `.Reverse()`, an enumerator for `.Aggregate()`, and delegates for the aggregation function. This can noticeably drop performance and increase GC pressure when multiple pipeline behaviors are registered.
 **Action:** Always prefer looping backward via indexers to construct the pipeline when building nested delegates. If using a collection returned by DI, check if it's an `IList<T>` (as they often return lists or arrays) to allow index-based access, and only fallback to `.ToArray()` if it isn't.
+
+## 2026-06-25 - Avoid intermediate collection materialization in validation routines
+**Learning:** Using `new List<T>()` and `.AddRange()` coupled with LINQ `.Distinct()` allocates intermediate state machines and contiguous memory blocks. Even in startup routines like handler validation, scanning numerous assemblies can generate thousands of types, resulting in measurable GC overhead and array resizing penalties.
+**Action:** Replace `List<T>` creation and LINQ pipelines with iterator blocks (`yield return`) and `HashSet<T>` for tracking seen assemblies. This lazy evaluation avoids large contiguous block allocations and ensures items are processed linearly without intermediate buffer copies.
