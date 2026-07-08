@@ -101,7 +101,7 @@ public class PropertyBasedTests
         }
         catch (Exception ex) when (ex is StackOverflowException or OutOfMemoryException)
         {
-            // These are unrecoverable and indicate a real bug in the mapper.
+            // These are unrecoverable and indicate a real defect in the mapper.
             return false;
         }
         // Any other exception type is an undocumented leak — FsCheck will
@@ -186,6 +186,7 @@ public class PropertyBasedTests
         }
         catch (Exception ex) when (ex is StackOverflowException or OutOfMemoryException)
         {
+            // These are unrecoverable and indicate a real defect in the mapper.
             return false;
         }
     }
