@@ -1,5 +1,3 @@
-using System.Security.Cryptography;
-
 namespace Meridian.Mediator.Behaviors;
 
 /// <summary>
@@ -18,7 +16,7 @@ public static class RetryPolicy
     public static TimeSpan MaxBackoff { get; set; } = TimeSpan.FromMinutes(5);
 
     internal static Func<double> JitterProvider { get; set; } = static () =>
-        RandomNumberGenerator.GetInt32(0, int.MaxValue) / (double)int.MaxValue;
+        Random.Shared.NextDouble();
 
     /// <summary>
     /// Conservative transient-exception filter suitable as a default retry predicate.

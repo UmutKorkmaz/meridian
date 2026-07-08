@@ -67,3 +67,8 @@
 **Vulnerability:** The application was extracting and logging `Exception.Message` strings in `LoggingBehavior.cs`, potentially exposing sensitive internal details (e.g., query parameters, validation secrets, exact paths) that often leak into `Message` properties of framework exceptions.
 **Learning:** Even when sanitizing stack traces by instantiating new base exceptions, reading `ex.Message` and passing it to the logger still triggers Information Exposure vulnerabilities (CWE-532).
 **Prevention:** Mask raw exception messages in all logging behaviors (using a fallback string like `"An error occurred during request processing."`) unless the application explicitly overrides this privacy default (e.g. via `MediatorTelemetryOptions.RecordExceptionMessage`).
+
+## 2024-05-24 - Cryptographic RNG used for non-security jitter
+**Vulnerability:** `RandomNumberGenerator` from `System.Security.Cryptography` was used in `RetryPolicy` for computing exponential backoff jitter.
+**Learning:** Jitter calculation doesn't require a cryptographic boundary. Using `RandomNumberGenerator` introduces unnecessary system entropy exhaustion, state management overhead, and allocation overhead.
+**Prevention:** Always use `System.Random.Shared` (available in modern .NET) for jitter and standard randomization unless true cryptographic randomness is explicitly required.
