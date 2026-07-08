@@ -31,21 +31,54 @@ public class TaskWhenAllPublisher : INotificationPublisher
             return;
         }
 
-        List<Task> tasks;
         using var limiter = _maxDegreeOfParallelism == -1 ? null : new SemaphoreSlim(_maxDegreeOfParallelism);
 
-        if (handlerExecutors is ICollection<NotificationHandlerExecutor> collection)
+        // ⚡ Bolt: Avoid List<T> allocation and multiple .Add calls when we can allocate a single array
+        if (handlerExecutors.TryGetNonEnumeratedCount(out int count))
         {
-            tasks = new List<Task>(collection.Count);
+            var taskArray = count == 0 ? Array.Empty<Task>() : new Task[count];
+            int i = 0;
+
+            if (limiter == null)
+            {
+                foreach (var handler in handlerExecutors)
+                {
+                    taskArray[i++] = handler.HandlerCallback(notification, cancellationToken);
+                }
+            }
+            else
+            {
+                foreach (var handler in handlerExecutors)
+                {
+                    taskArray[i++] = RunBounded(handler, notification, cancellationToken, limiter);
+                }
+            }
+
+            if (taskArray.Length == 0) return;
+
+            try
+            {
+                await Task.WhenAll(taskArray).ConfigureAwait(false);
+            }
+            catch
+            {
+                var exceptions = taskArray
+                    .Where(t => t.IsFaulted)
+                    .SelectMany(t => t.Exception!.InnerExceptions)
+                    .ToList();
+
+                if (exceptions.Count == 1)
+                    throw;
+
+                throw new AggregateException(
+                    $"{exceptions.Count} notification handler(s) failed for {notification.GetType().Name}.",
+                    exceptions);
+            }
+
+            return;
         }
-        else if (handlerExecutors is IReadOnlyCollection<NotificationHandlerExecutor> roCollection)
-        {
-            tasks = new List<Task>(roCollection.Count);
-        }
-        else
-        {
-            tasks = new List<Task>();
-        }
+
+        var tasks = new List<Task>();
 
         if (limiter == null)
         {
@@ -136,38 +169,52 @@ public class ResilientTaskWhenAllPublisher : INotificationPublisher
 
         var exceptions = new List<Exception>();
 
-        List<Task> tasks;
         using var limiter = _maxDegreeOfParallelism == -1 ? null : new SemaphoreSlim(_maxDegreeOfParallelism);
 
-        if (handlerExecutors is ICollection<NotificationHandlerExecutor> collection)
+        // ⚡ Bolt: Avoid List<T> allocation and multiple .Add calls when we can allocate a single array
+        if (handlerExecutors.TryGetNonEnumeratedCount(out int count))
         {
-            tasks = new List<Task>(collection.Count);
-        }
-        else if (handlerExecutors is IReadOnlyCollection<NotificationHandlerExecutor> roCollection)
-        {
-            tasks = new List<Task>(roCollection.Count);
+            var taskArray = count == 0 ? Array.Empty<Task>() : new Task[count];
+            int i = 0;
+
+            if (limiter == null)
+            {
+                foreach (var handler in handlerExecutors)
+                {
+                    taskArray[i++] = RunResilient(handler, notification, cancellationToken, exceptions);
+                }
+            }
+            else
+            {
+                foreach (var handler in handlerExecutors)
+                {
+                    taskArray[i++] = RunBoundedResilient(handler, notification, cancellationToken, limiter, exceptions);
+                }
+            }
+
+            await Task.WhenAll(taskArray).ConfigureAwait(false);
         }
         else
         {
-            tasks = new List<Task>();
-        }
+            var tasks = new List<Task>();
 
-        if (limiter == null)
-        {
-            foreach (var handler in handlerExecutors)
+            if (limiter == null)
             {
-                tasks.Add(RunResilient(handler, notification, cancellationToken, exceptions));
+                foreach (var handler in handlerExecutors)
+                {
+                    tasks.Add(RunResilient(handler, notification, cancellationToken, exceptions));
+                }
             }
-        }
-        else
-        {
-            foreach (var handler in handlerExecutors)
+            else
             {
-                tasks.Add(RunBoundedResilient(handler, notification, cancellationToken, limiter, exceptions));
+                foreach (var handler in handlerExecutors)
+                {
+                    tasks.Add(RunBoundedResilient(handler, notification, cancellationToken, limiter, exceptions));
+                }
             }
-        }
 
-        await Task.WhenAll(tasks).ConfigureAwait(false);
+            await Task.WhenAll(tasks).ConfigureAwait(false);
+        }
 
         if (exceptions.Count > 0)
         {

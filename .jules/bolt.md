@@ -61,3 +61,6 @@
 ## 2026-06-23 - Avoid LINQ .Reverse() and .Aggregate() in Delegate Pipeline Construction
 **Learning:** Using LINQ `.Reverse()` and `.Aggregate()` to build delegate pipelines in hot paths (like request dispatchers) incurs significant per-request allocations. It allocates an enumerator for `.Reverse()`, an enumerator for `.Aggregate()`, and delegates for the aggregation function. This can noticeably drop performance and increase GC pressure when multiple pipeline behaviors are registered.
 **Action:** Always prefer looping backward via indexers to construct the pipeline when building nested delegates. If using a collection returned by DI, check if it's an `IList<T>` (as they often return lists or arrays) to allow index-based access, and only fallback to `.ToArray()` if it isn't.
+## 2024-05-24 - Pre-allocate arrays instead of Lists for Task Collections
+**Learning:** In hot paths where an `IEnumerable<T>` of tasks (or executors) must be awaited concurrently, using a `List<Task>` incurs allocation overhead and multiple `.Add()` calls.
+**Action:** When iterating over collections, use `TryGetNonEnumeratedCount(out int count)` to determine if the size is known. If known, allocate a `Task[count]` array (or `Array.Empty<Task>()` if 0) and track the index to avoid `List<T>` overhead. Fall back to a `List<T>` if the count is unknown.
