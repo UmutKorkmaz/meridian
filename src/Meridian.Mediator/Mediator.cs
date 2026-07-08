@@ -334,20 +334,11 @@ public class Mediator : IMediator
     {
         using (activity)
         {
-            try
+            await HandleActivityExceptionAsync(activity, async () =>
             {
                 await operation().ConfigureAwait(false);
                 activity?.SetStatus(ActivityStatusCode.Ok);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                MarkActivityFailure(activity, ex);
-                throw;
-            }
+            }, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -358,21 +349,12 @@ public class Mediator : IMediator
     {
         using (activity)
         {
-            try
+            return await HandleActivityExceptionAsync(activity, async () =>
             {
                 var result = await operation().ConfigureAwait(false);
                 activity?.SetStatus(ActivityStatusCode.Ok);
                 return result;
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                MarkActivityFailure(activity, ex);
-                throw;
-            }
+            }, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -384,24 +366,13 @@ public class Mediator : IMediator
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
     {
         using var activity = StartStreamActivity(requestType, responseType);
-        IAsyncEnumerator<TResponse> enumerator;
 
-        try
-        {
-            enumerator = ExecuteWithCurrentActivity(
+        var enumerator = await HandleActivityExceptionAsync(activity, () =>
+            Task.FromResult(ExecuteWithCurrentActivity(
                 activity,
                 () => handler.Handle(request, _serviceProvider, cancellationToken)
-                    .GetAsyncEnumerator(cancellationToken));
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            MarkActivityFailure(activity, ex);
-            throw;
-        }
+                    .GetAsyncEnumerator(cancellationToken))),
+            cancellationToken).ConfigureAwait(false);
 
         await using (enumerator.ConfigureAwait(false))
         {
@@ -409,26 +380,17 @@ public class Mediator : IMediator
             {
                 TResponse current;
 
-                try
-                {
-                    if (!await MoveNextAsync(enumerator, activity).ConfigureAwait(false))
-                    {
-                        activity?.SetStatus(ActivityStatusCode.Ok);
-                        yield break;
-                    }
+                var hasNext = await HandleActivityExceptionAsync(activity, async () =>
+                    await MoveNextAsync(enumerator, activity).ConfigureAwait(false),
+                    cancellationToken).ConfigureAwait(false);
 
-                    current = enumerator.Current;
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                if (!hasNext)
                 {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    MarkActivityFailure(activity, ex);
-                    throw;
+                    activity?.SetStatus(ActivityStatusCode.Ok);
+                    yield break;
                 }
 
+                current = enumerator.Current;
                 yield return current;
             }
         }
@@ -442,14 +404,44 @@ public class Mediator : IMediator
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken cancellationToken)
     {
         using var activity = StartStreamActivity(requestType, responseType);
-        IAsyncEnumerator<object?> enumerator;
 
-        try
-        {
-            enumerator = ExecuteWithCurrentActivity(
+        var enumerator = await HandleActivityExceptionAsync(activity, () =>
+            Task.FromResult(ExecuteWithCurrentActivity(
                 activity,
                 () => handler.Handle(request, _serviceProvider, cancellationToken)
-                    .GetAsyncEnumerator(cancellationToken));
+                    .GetAsyncEnumerator(cancellationToken))),
+            cancellationToken).ConfigureAwait(false);
+
+        await using (enumerator.ConfigureAwait(false))
+        {
+            while (true)
+            {
+                object? current;
+
+                var hasNext = await HandleActivityExceptionAsync(activity, async () =>
+                    await MoveNextAsync(enumerator, activity).ConfigureAwait(false),
+                    cancellationToken).ConfigureAwait(false);
+
+                if (!hasNext)
+                {
+                    activity?.SetStatus(ActivityStatusCode.Ok);
+                    yield break;
+                }
+
+                current = enumerator.Current;
+                yield return current;
+            }
+        }
+    }
+
+    private async Task HandleActivityExceptionAsync(
+        Activity? activity,
+        Func<Task> operation,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await operation().ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -460,35 +452,25 @@ public class Mediator : IMediator
             MarkActivityFailure(activity, ex);
             throw;
         }
+    }
 
-        await using (enumerator.ConfigureAwait(false))
+    private async Task<T> HandleActivityExceptionAsync<T>(
+        Activity? activity,
+        Func<Task<T>> operation,
+        CancellationToken cancellationToken)
+    {
+        try
         {
-            while (true)
-            {
-                object? current;
-
-                try
-                {
-                    if (!await MoveNextAsync(enumerator, activity).ConfigureAwait(false))
-                    {
-                        activity?.SetStatus(ActivityStatusCode.Ok);
-                        yield break;
-                    }
-
-                    current = enumerator.Current;
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    MarkActivityFailure(activity, ex);
-                    throw;
-                }
-
-                yield return current;
-            }
+            return await operation().ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            MarkActivityFailure(activity, ex);
+            throw;
         }
     }
 
