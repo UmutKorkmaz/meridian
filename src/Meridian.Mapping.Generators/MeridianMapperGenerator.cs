@@ -169,36 +169,36 @@ namespace Meridian.Mapping
         if (usings.Count > 0)
             sb.AppendLine();
 
-        var indent = "";
+        var indentLevel = 0;
         if (target.Namespace is not null)
         {
             sb.Append("namespace ").Append(target.Namespace).AppendLine();
             sb.AppendLine("{");
-            indent = "    ";
+            indentLevel = 1;
         }
 
         foreach (var containingType in target.ContainingTypes)
         {
-            EmitTypeDeclarationOpen(sb, indent, containingType);
-            indent += "    ";
+            EmitTypeDeclarationOpen(sb, indentLevel, containingType);
+            indentLevel++;
         }
 
-        EmitTypeDeclarationOpen(sb, indent, target.TargetType);
-        indent += "    ";
+        EmitTypeDeclarationOpen(sb, indentLevel, target.TargetType);
+        indentLevel++;
 
         foreach (var (src, dst) in target.Pairs)
         {
-            EmitMapMethod(sb, indent, src, dst);
+            EmitMapMethod(sb, indentLevel, src, dst);
             sb.AppendLine();
         }
 
-        indent = indent.Substring(0, indent.Length - 4);
-        EmitTypeDeclarationClose(sb, indent);
+        indentLevel--;
+        EmitTypeDeclarationClose(sb, indentLevel);
 
         for (var i = target.ContainingTypes.Length - 1; i >= 0; i--)
         {
-            indent = indent.Substring(0, indent.Length - 4);
-            EmitTypeDeclarationClose(sb, indent);
+            indentLevel--;
+            EmitTypeDeclarationClose(sb, indentLevel);
         }
 
         if (target.Namespace is not null)
@@ -208,9 +208,9 @@ namespace Meridian.Mapping
         spc.AddSource(hint, SourceText.From(sb.ToString(), Encoding.UTF8));
     }
 
-    private static void EmitTypeDeclarationOpen(StringBuilder sb, string indent, TypeDeclarationInfo typeInfo)
+    private static void EmitTypeDeclarationOpen(StringBuilder sb, int indentLevel, TypeDeclarationInfo typeInfo)
     {
-        sb.Append(indent);
+        sb.Append(' ', indentLevel * 4);
 
         if (!string.IsNullOrWhiteSpace(typeInfo.Accessibility))
         {
@@ -231,30 +231,30 @@ namespace Meridian.Mapping
 
         foreach (var clause in typeInfo.ConstraintClauses)
         {
-            sb.Append(indent).Append("    ").Append("where ").AppendLine(clause);
+            sb.Append(' ', indentLevel * 4).Append("    ").Append("where ").AppendLine(clause);
         }
 
-        sb.Append(indent).AppendLine("{");
+        sb.Append(' ', indentLevel * 4).AppendLine("{");
     }
 
-    private static void EmitTypeDeclarationClose(StringBuilder sb, string indent)
+    private static void EmitTypeDeclarationClose(StringBuilder sb, int indentLevel)
     {
-        sb.Append(indent).AppendLine("}");
+        sb.Append(' ', indentLevel * 4).AppendLine("}");
     }
 
-    private static void EmitMapMethod(StringBuilder sb, string indent, ITypeSymbol src, ITypeSymbol dst)
+    private static void EmitMapMethod(StringBuilder sb, int indentLevel, ITypeSymbol src, ITypeSymbol dst)
     {
         var srcFull = src.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
         var dstFull = dst.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
         var methodSuffix = dst.Name;
 
-        sb.Append(indent).Append("/// <summary>Source-generated mapper emitted by Meridian. Maps ")
+        sb.Append(' ', indentLevel * 4).Append("/// <summary>Source-generated mapper emitted by Meridian. Maps ")
             .Append(src.Name).Append(" to ").Append(dst.Name).AppendLine(".</summary>");
-        sb.Append(indent).Append("public static ").Append(dstFull)
+        sb.Append(' ', indentLevel * 4).Append("public static ").Append(dstFull)
             .Append(" MapTo").Append(methodSuffix).Append('(').Append(srcFull).AppendLine(" source)");
-        sb.Append(indent).AppendLine("{");
-        sb.Append(indent).AppendLine("    if (source is null) return default!;");
-        sb.Append(indent).Append("    var result = new ").Append(dstFull).AppendLine("();");
+        sb.Append(' ', indentLevel * 4).AppendLine("{");
+        sb.Append(' ', indentLevel * 4).AppendLine("    if (source is null) return default!;");
+        sb.Append(' ', indentLevel * 4).Append("    var result = new ").Append(dstFull).AppendLine("();");
 
         var srcProps = GetWritableNameLookup(src, forWriting: false);
         var dstProps = GetWritableNameLookup(dst, forWriting: true);
@@ -269,25 +269,25 @@ namespace Meridian.Mapping
                 // Only simple same-type assignment in MVP. Emit a diagnostic
                 // comment so users know this destination member is unmapped
                 // and why, without failing the build.
-                sb.Append(indent).Append("    // Skipped: ").Append(dstProp.Name)
+                sb.Append(' ', indentLevel * 4).Append("    // Skipped: ").Append(dstProp.Name)
                     .Append(" — source is ").Append(srcProp.Type.ToDisplayString())
                     .Append(", destination is ").Append(dstProp.Type.ToDisplayString())
                     .AppendLine(". Use runtime IMapper for type conversion.");
                 continue;
             }
 
-            sb.Append(indent).Append("    result.").Append(dstProp.Name)
+            sb.Append(' ', indentLevel * 4).Append("    result.").Append(dstProp.Name)
                 .Append(" = source.").Append(srcProp.Name).AppendLine(";");
             matched++;
         }
 
         if (matched == 0)
         {
-            sb.Append(indent).AppendLine("    // No matching properties between source and destination.");
+            sb.Append(' ', indentLevel * 4).AppendLine("    // No matching properties between source and destination.");
         }
 
-        sb.Append(indent).AppendLine("    return result;");
-        sb.Append(indent).AppendLine("}");
+        sb.Append(' ', indentLevel * 4).AppendLine("    return result;");
+        sb.Append(' ', indentLevel * 4).AppendLine("}");
     }
 
     private static Dictionary<string, IPropertySymbol> GetWritableNameLookup(ITypeSymbol type, bool forWriting)
