@@ -64,6 +64,18 @@ public class ResilientFailureHandler : INotificationHandler<ResilientCoverageNot
     }
 }
 
+public class ResilientCanceledHandler : INotificationHandler<ResilientCoverageNotification>
+{
+    public static bool WasExecuted { get; set; }
+
+    public async Task Handle(ResilientCoverageNotification notification, CancellationToken cancellationToken)
+    {
+        WasExecuted = true;
+        await Task.Yield();
+        throw new OperationCanceledException();
+    }
+}
+
 public record ScannedCoverageNotification(string Value) : INotification;
 
 public class ScannedCoverageHandlerOne : INotificationHandler<ScannedCoverageNotification>
@@ -203,6 +215,27 @@ public class AdditionalCoverageTests
         Assert.True(ResilientFailureHandler.WasExecuted);
         Assert.Single(ex.InnerExceptions);
         Assert.IsType<InvalidOperationException>(ex.InnerExceptions[0]);
+    }
+
+    [Fact]
+    public async Task ResilientTaskWhenAllPublisher_PropagatesOperationCanceledException()
+    {
+        ResilientCanceledHandler.WasExecuted = false;
+
+        var services = new ServiceCollection();
+        services.AddMeridianMediator(cfg =>
+        {
+            cfg.NotificationPublisher = new ResilientTaskWhenAllPublisher();
+        });
+        services.AddTransient<INotificationHandler<ResilientCoverageNotification>, ResilientCanceledHandler>();
+
+        var provider = services.BuildServiceProvider();
+        var mediator = provider.GetRequiredService<IMediator>();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => mediator.Publish(new ResilientCoverageNotification("resilient")));
+
+        Assert.True(ResilientCanceledHandler.WasExecuted);
     }
 
     [Fact]
