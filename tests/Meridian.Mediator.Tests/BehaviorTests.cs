@@ -748,7 +748,6 @@ public class BehaviorTests
 
         // Assert the logged message contains the request name and original exception type
         Assert.Contains("LoggedRequest", logger.ErrorMessages[0].Message);
-        Assert.Contains("InvalidOperationException", logger.ErrorMessages[0].Message);
     }
 
     [Fact]

@@ -67,3 +67,8 @@
 **Vulnerability:** The application was extracting and logging `Exception.Message` strings in `LoggingBehavior.cs`, potentially exposing sensitive internal details (e.g., query parameters, validation secrets, exact paths) that often leak into `Message` properties of framework exceptions.
 **Learning:** Even when sanitizing stack traces by instantiating new base exceptions, reading `ex.Message` and passing it to the logger still triggers Information Exposure vulnerabilities (CWE-532).
 **Prevention:** Mask raw exception messages in all logging behaviors (using a fallback string like `"An error occurred during request processing."`) unless the application explicitly overrides this privacy default (e.g. via `MediatorTelemetryOptions.RecordExceptionMessage`).
+
+## 2024-06-25 - Stop Logging Original Exception Type
+**Vulnerability:** Information Exposure (Exception Details Exposed in Logs). `LoggingBehavior` unconditionally embedded the original exception type name (`ex.GetType().Name`) in the logged string message even when raw exception details were supposed to be sanitized.
+**Learning:** Even when instantiating new base exceptions to sanitize stack traces, exposing `ex.GetType().Name` in log strings can still map out attack surfaces (e.g. by revealing specific internal database or system exceptions).
+**Prevention:** Avoid embedding `ex.GetType().Name` directly into log string templates. The `MediatorTelemetryOptions` config (or standard `Exception` parameter of `LogError`) should be the sole conduit for exception details.

@@ -91,7 +91,7 @@ public class LoggingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, 
             // Only expose the raw exception message if telemetry options allow it (CWE-532 protection).
             var errorMessage = _telemetryOptions.RecordExceptionMessage ? ex.Message : RedactedFailureMessage;
             var sanitizedException = new InvalidOperationException(errorMessage);
-            _logger.LogError(sanitizedException, "Error ({ExceptionType}) handling {RequestName} after {ElapsedMilliseconds}ms", ex.GetType().Name, requestName, stopwatch.ElapsedMilliseconds);
+            _logger.LogError(sanitizedException, "Error handling {RequestName} after {ElapsedMilliseconds}ms", requestName, stopwatch.ElapsedMilliseconds);
 
             throw;
         }
