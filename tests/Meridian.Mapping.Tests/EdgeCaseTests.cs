@@ -138,4 +138,34 @@ public class EdgeCaseTests
 
         Assert.Equal("hello", result);
     }
+    private class ThrowingDest
+    {
+        public string Name
+        {
+            get => _name;
+            set => throw new FormatException("Simulated exception in setter.");
+        }
+        private string _name = string.Empty;
+    }
+
+    private class NormalSource
+    {
+        public string Name { get; set; } = "Test";
+    }
+
+    [Fact]
+    public void MappingEngine_Should_Throw_InvalidOperationException_When_Setter_Throws()
+    {
+        var mapper = CreateMapper(cfg =>
+            cfg.CreateMap<NormalSource, ThrowingDest>()
+               .AfterMap((s, d) => { }) // This forces the interpreter instead of the fast path delegate
+        );
+
+        var source = new NormalSource();
+
+        var ex = Assert.Throws<InvalidOperationException>(() => mapper.Map<NormalSource, ThrowingDest>(source));
+
+        Assert.Contains("Error mapping property", ex.Message);
+        Assert.IsType<FormatException>(ex.InnerException);
+    }
 }
