@@ -125,16 +125,16 @@ public sealed class AuditBehavior<TRequest, TResponse> : IPipelineBehavior<TRequ
         var correlationId = CorrelationContext.EnsureCorrelationId();
         var requestTypeName = typeof(TRequest).FullName ?? typeof(TRequest).Name;
         var startedAt = DateTimeOffset.UtcNow;
-        var sw = Stopwatch.StartNew();
+        // Use allocation-free Stopwatch.GetTimestamp() and Stopwatch.GetElapsedTime() to avoid per-request heap allocations in hot paths.
+        var startTimestamp = Stopwatch.GetTimestamp();
 
         try
         {
             var response = await next().ConfigureAwait(false);
-            sw.Stop();
 
             await _sink.RecordAsync(
                 new AuditEntry(startedAt, correlationId, requestTypeName,
-                    sw.ElapsedMilliseconds, Success: true,
+                    (long)Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds, Success: true,
                     FailureMessage: null, FailureType: null),
                 cancellationToken).ConfigureAwait(false);
 
@@ -142,7 +142,6 @@ public sealed class AuditBehavior<TRequest, TResponse> : IPipelineBehavior<TRequ
         }
         catch (Exception ex)
         {
-            sw.Stop();
 
             // Best-effort audit of the failure. We deliberately do not let a
             // sink failure mask the original exception — if the sink throws,
@@ -152,7 +151,7 @@ public sealed class AuditBehavior<TRequest, TResponse> : IPipelineBehavior<TRequ
             {
                 await _sink.RecordAsync(
                     new AuditEntry(startedAt, correlationId, requestTypeName,
-                        sw.ElapsedMilliseconds, Success: false,
+                        (long)Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds, Success: false,
                         FailureMessage: GetFailureMessage(ex), FailureType: ex.GetType().FullName),
                     CancellationToken.None).ConfigureAwait(false);
             }
