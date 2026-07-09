@@ -826,6 +826,26 @@ public class BehaviorTests
         Assert.Equal(existingId, capturedCorrelationId);
     }
 
+[Fact]
+public void CorrelationContext_CorrelationId_Should_Sanitize_Input()
+{
+    // Arrange
+    var baseString = new string('a', 130);
+    var dirtyString = "evil\r\n" + baseString + "end";
+
+    // Act
+    CorrelationContext.CorrelationId = dirtyString;
+    var sanitizedId = CorrelationContext.CorrelationId;
+    CorrelationContext.CorrelationId = null; // Clean up
+
+    // Assert
+    Assert.NotNull(sanitizedId);
+    Assert.DoesNotContain("\r", sanitizedId);
+    Assert.DoesNotContain("\n", sanitizedId);
+    Assert.Equal(128, sanitizedId.Length);
+    Assert.StartsWith("evil", sanitizedId);
+}
+
     #endregion
 
     #region 8. IdempotencyBehavior Tests
