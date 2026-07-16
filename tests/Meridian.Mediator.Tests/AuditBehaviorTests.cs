@@ -37,6 +37,14 @@ public class AuditBehaviorTests
         }
     }
 
+    private sealed class ThrowingSink : IAuditSink
+    {
+        public Task RecordAsync(AuditEntry entry, CancellationToken ct)
+        {
+            throw new InvalidOperationException("sink failure");
+        }
+    }
+
     private static IMediator BuildMediator(IAuditSink sink)
     {
         var services = new ServiceCollection();
@@ -81,6 +89,21 @@ public class AuditBehaviorTests
         Assert.False(sink.Entries[0].Success);
         Assert.Equal("An error occurred during request processing.", sink.Entries[0].FailureMessage);
         Assert.Contains("InvalidOperationException", sink.Entries[0].FailureType);
+    }
+
+    [Fact]
+    public async Task Failing_Request_And_Failing_Sink_Produces_AggregateException()
+    {
+        var sink = new ThrowingSink();
+        var mediator = BuildMediator(sink);
+
+        var ex = await Assert.ThrowsAsync<AggregateException>(() =>
+            mediator.Send(new FailingPing()));
+
+        Assert.Contains("Request handler failed AND audit sink failed", ex.Message);
+        Assert.Equal(2, ex.InnerExceptions.Count);
+        Assert.Equal("intentional", ex.InnerExceptions[0].Message);
+        Assert.Equal("sink failure", ex.InnerExceptions[1].Message);
     }
 
     [Fact]
