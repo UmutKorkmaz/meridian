@@ -161,4 +161,26 @@ public class PublishingStrategyTests
         Assert.True(FailingHandler1.WasExecuted);
         Assert.True(FailingHandler2.WasExecuted);
     }
+
+    [Fact]
+    public async Task TaskWhenAllPublisher_AggregatesMultipleExceptions()
+    {
+        FailingHandler1.WasExecuted = false;
+        FailingHandler2.WasExecuted = false;
+        var services = new ServiceCollection();
+        services.AddMeridianMediator(cfg =>
+        {
+            cfg.NotificationPublisher = new TaskWhenAllPublisher();
+        });
+        services.AddTransient<INotificationHandler<FailingNotification>, FailingHandler1>();
+        services.AddTransient<INotificationHandler<FailingNotification>, FailingHandler2>();
+        var provider = services.BuildServiceProvider();
+        var mediator = provider.GetRequiredService<IMediator>();
+
+        var ex = await Assert.ThrowsAsync<AggregateException>(() => mediator.Publish(new FailingNotification()));
+
+        Assert.Equal(2, ex.InnerExceptions.Count);
+        Assert.Contains(ex.InnerExceptions, e => e is InvalidOperationException);
+        Assert.Contains(ex.InnerExceptions, e => e is ArgumentException);
+    }
 }
