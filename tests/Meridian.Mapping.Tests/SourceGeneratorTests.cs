@@ -240,6 +240,104 @@ namespace Meridian.Mapping.Tests
             Assert.Contains(" MapToGoodDto(", result.GeneratedSource);
         }
 
+        [Theory]
+        [InlineData("protected")]
+        [InlineData("private protected")]
+        public void Protected_Constructor_Is_Not_Used_By_Derived_Mapper(string accessibility)
+        {
+            var result = GeneratorTestHarness.Compile($$"""
+                using Meridian.Mapping;
+                public class Source { public int Value { get; set; } }
+                public class Dto
+                {
+                    {{accessibility}} Dto() { Value = 7; }
+                    public int Value { get; set; }
+                }
+                public class GoodDto { public int Value { get; init; } }
+                [GenerateMapper(typeof(Source), typeof(Dto))]
+                [GenerateMapper(typeof(Source), typeof(GoodDto))]
+                public partial class Maps : Dto
+                {
+                    public static int Proof() => MapToGoodDto(new Source { Value = 42 }).Value;
+                }
+                """);
+            Assert.Empty(result.Compilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error));
+            var diagnostic = Assert.Single(result.Diagnostics.Where(d => d.Id == "MERIDIANGEN003"));
+            Assert.Contains("no accessible parameterless constructor", diagnostic.GetMessage());
+            Assert.DoesNotContain(" MapToDto(", result.GeneratedSource);
+            Assert.Contains(" MapToGoodDto(", result.GeneratedSource);
+            Assert.Equal(42, GeneratorTestHarness.InvokeStatic<int>(result, "Maps", "Proof"));
+        }
+
+        [Theory]
+        [InlineData("protected internal")]
+        [InlineData("internal")]
+        public void Same_Assembly_Constructor_Access_Is_Preserved(string accessibility)
+        {
+            var result = GeneratorTestHarness.Compile($$"""
+                using Meridian.Mapping;
+                public class Source { public int Value { get; set; } }
+                public class Dto
+                {
+                    {{accessibility}} Dto() { Value = 7; }
+                    public int Value { get; init; }
+                }
+                [GenerateMapper(typeof(Source), typeof(Dto))]
+                public static partial class Maps
+                {
+                    public static int Proof() => MapToDto(new Source { Value = 42 }).Value;
+                }
+                """);
+            AssertNoCompilationErrors(result);
+            Assert.Equal(42, GeneratorTestHarness.InvokeStatic<int>(result, "Maps", "Proof"));
+        }
+
+        [Theory]
+        [InlineData("private")]
+        [InlineData("protected")]
+        [InlineData("private protected")]
+        public void Nested_Mapper_Can_Call_Accessible_Destination_Constructor(string accessibility)
+        {
+            var result = GeneratorTestHarness.Compile($$"""
+                using Meridian.Mapping;
+                public class Source { public int Value { get; set; } }
+                public partial class Dto
+                {
+                    {{accessibility}} Dto() { Value = 7; }
+                    public int Value { get; init; }
+                    [GenerateMapper(typeof(Source), typeof(Dto))]
+                    public static partial class Maps
+                    {
+                        public static int Proof() => MapToDto(new Source { Value = 42 }).Value;
+                    }
+                }
+                """);
+            AssertNoCompilationErrors(result);
+            Assert.Equal(42, GeneratorTestHarness.InvokeStatic<int>(result, "Dto+Maps", "Proof"));
+        }
+
+        [Fact]
+        public void SetsRequiredMembers_Parameterless_Constructor_Preserves_Legacy_Mapping()
+        {
+            var result = GeneratorTestHarness.Compile("""
+                using Meridian.Mapping;
+                using System.Diagnostics.CodeAnalysis;
+                public class Source { public int Value { get; set; } }
+                public class Dto
+                {
+                    [SetsRequiredMembers] public Dto() { Value = 7; }
+                    public required int Value { get; set; }
+                }
+                [GenerateMapper(typeof(Source), typeof(Dto))]
+                public static partial class Maps
+                {
+                    public static int Proof() => MapToDto(new Source { Value = 42 }).Value;
+                }
+                """);
+            AssertNoCompilationErrors(result);
+            Assert.Equal(42, GeneratorTestHarness.InvokeStatic<int>(result, "Maps", "Proof"));
+        }
+
         [Fact]
         public void Inherited_Required_Member_Has_Construction_Diagnostic()
         {

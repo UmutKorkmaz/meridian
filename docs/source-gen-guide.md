@@ -124,11 +124,19 @@ in emitted C#.
 Destinations are constructed with an object initializer, which supports
 both ordinary setters and `init` accessors. A destination must be a
 concrete class or struct with a parameterless constructor accessible
-from the mapper container. Required destination properties and fields,
-including inherited required members, remain unsupported. These cases
-produce error `MERIDIANGEN003` at the mapper attribute with a suggested
-fix or the runtime `IMapper` alternative; the unsupported mapping method
-is omitted. Other valid pairs in the same container are still generated.
+from the mapper container for object creation. A protected constructor
+cannot be called through `new Destination()` merely because the mapper
+derives from the destination; same-assembly `protected internal` access
+and accessible constructors within nested mapper containers remain usable.
+
+Required destination properties and fields, including inherited required
+members, need a parameterless constructor marked `[SetsRequiredMembers]`.
+This preserves existing mappings whose constructors already satisfy that
+contract; public writable/init properties are still assigned from the source.
+Unsatisfied required construction and inaccessible constructors produce
+error `MERIDIANGEN003` at the mapper attribute with a suggested fix or the
+runtime `IMapper` alternative; the unsupported mapping method is omitted.
+Other valid pairs in the same container are still generated.
 
 Existing `MapTo{Destination}(Source source)` names and null-source return
 behavior are preserved. Same-type reference properties (including
