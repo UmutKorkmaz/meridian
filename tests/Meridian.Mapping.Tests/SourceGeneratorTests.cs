@@ -215,8 +215,8 @@ namespace Meridian.Mapping.Tests
         }
 
         [Theory]
-        [InlineData("public Dto(int value) { Value = value; } public int Value { get; }", "no accessible parameterless constructor")]
-        [InlineData("private Dto() { } public int Value { get; set; }", "no accessible parameterless constructor")]
+        [InlineData("public Dto(int value) { Value = value; } public int Value { get; }", "no accessible unambiguous constructor")]
+        [InlineData("private Dto() { } public int Value { get; set; }", "no accessible unambiguous constructor")]
         [InlineData("public required int Value { get; init; }", "required destination members")]
         [InlineData("public required int Value;", "required destination members")]
         public void Unsupported_Required_Constructor_Has_Actionable_Diagnostic(string members, string reason)
@@ -263,7 +263,7 @@ namespace Meridian.Mapping.Tests
                 """);
             Assert.Empty(result.Compilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error));
             var diagnostic = Assert.Single(result.Diagnostics.Where(d => d.Id == "MERIDIANGEN003"));
-            Assert.Contains("no accessible parameterless constructor", diagnostic.GetMessage());
+            Assert.Contains("no accessible unambiguous constructor", diagnostic.GetMessage());
             Assert.DoesNotContain(" MapToDto(", result.GeneratedSource);
             Assert.Contains(" MapToGoodDto(", result.GeneratedSource);
             Assert.Equal(42, GeneratorTestHarness.InvokeStatic<int>(result, "Maps", "Proof"));
@@ -416,6 +416,157 @@ namespace Meridian.Mapping.Tests
             AssertNoCompilationErrors(result);
             Assert.Contains("// Skipped: Number", result.GeneratedSource);
             Assert.True(GeneratorTestHarness.InvokeStatic<bool>(result, "Maps", "Proof"));
+        }
+
+        [Theory]
+        [InlineData("public Dto(int seed = 7) { ConstructorValue = seed; }", 7)]
+        [InlineData("public Dto(params int[] seed) { ConstructorValue = seed.Length; }", 0)]
+        [InlineData("public Dto(int seed = 7, params int[] other) { ConstructorValue = seed + other.Length; }", 7)]
+        public void Callable_Constructor_Preserves_Defaults_Without_Source_Binding(string constructor, int expected)
+        {
+            var result = GeneratorTestHarness.Compile($$"""
+                using Meridian.Mapping;
+                public class Source { public int Value { get; set; } public int Seed { get; set; } }
+                public class Dto
+                {
+                    {{constructor}}
+                    public int ConstructorValue { get; }
+                    public int Value { get; set; }
+                    public int Seed { get; set; }
+                }
+                [GenerateMapper(typeof(Source), typeof(Dto))]
+                public static partial class Maps
+                {
+                    public static int Proof()
+                    {
+                        var dto = MapToDto(new Source { Value = 42, Seed = 99 });
+                        return dto.Seed == 99 ? dto.ConstructorValue + dto.Value : -1;
+                    }
+                }
+                """);
+            AssertNoCompilationErrors(result);
+            Assert.Contains("new global::Dto()", result.GeneratedSource);
+            Assert.Equal(42 + expected, GeneratorTestHarness.InvokeStatic<int>(result, "Maps", "Proof"));
+        }
+
+        [Theory]
+        [InlineData("public", 3)]
+        [InlineData("private", 7)]
+        public void Callable_Constructor_Uses_Accessible_CSharp_Overload(string accessibility, int expected)
+        {
+            var result = GeneratorTestHarness.Compile($$"""
+                using Meridian.Mapping;
+                public class Source { public int Value { get; set; } }
+                public class Dto
+                {
+                    {{accessibility}} Dto() { ConstructorValue = 3; }
+                    public Dto(int seed = 7) { ConstructorValue = seed; }
+                    public int ConstructorValue { get; }
+                    public int Value { get; set; }
+                }
+                [GenerateMapper(typeof(Source), typeof(Dto))]
+                public static partial class Maps
+                {
+                    public static int Proof() { var dto = MapToDto(new Source { Value = 42 }); return dto.Value + dto.ConstructorValue; }
+                }
+                """);
+            AssertNoCompilationErrors(result);
+            Assert.Equal(42 + expected, GeneratorTestHarness.InvokeStatic<int>(result, "Maps", "Proof"));
+        }
+
+        [Theory]
+        [InlineData("public Dto(int seed = 7) { } public Dto(string seed = \"seven\") { }")]
+        [InlineData("public Dto(params int[] seed) { } public Dto(params string[] seed) { }")]
+        [InlineData("private Dto(params int[] seed) { }")]
+        public void Callable_Constructor_Ambiguity_And_Inaccessibility_Are_Diagnosed(string constructors)
+        {
+            var result = GeneratorTestHarness.Compile($$"""
+                using Meridian.Mapping;
+                public class Source { public int Value { get; set; } }
+                public class Dto { {{constructors}} public int Value { get; set; } }
+                public class GoodDto { public int Value { get; set; } }
+                [GenerateMapper(typeof(Source), typeof(Dto))]
+                [GenerateMapper(typeof(Source), typeof(GoodDto))]
+                public static partial class Maps { public static int Proof() => MapToGoodDto(new Source { Value = 42 }).Value; }
+                """);
+            Assert.Empty(result.Compilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error));
+            Assert.Single(result.Diagnostics.Where(d => d.Id == "MERIDIANGEN003"));
+            Assert.DoesNotContain(" MapToDto(", result.GeneratedSource);
+            Assert.Equal(42, GeneratorTestHarness.InvokeStatic<int>(result, "Maps", "Proof"));
+        }
+
+        [Theory]
+        [InlineData("internal")]
+        [InlineData("protected internal")]
+        public void Callable_Constructor_Same_Assembly_Access_Is_Preserved(string accessibility)
+        {
+            var result = GeneratorTestHarness.Compile($$"""
+                using Meridian.Mapping;
+                public class Source { public int Value { get; set; } }
+                public class Dto { {{accessibility}} Dto(int seed = 7) { ConstructorValue = seed; } public int ConstructorValue { get; } public int Value { get; set; } }
+                [GenerateMapper(typeof(Source), typeof(Dto))]
+                public static partial class Maps { public static int Proof() { var dto = MapToDto(new Source { Value = 42 }); return dto.ConstructorValue + dto.Value; } }
+                """);
+            AssertNoCompilationErrors(result);
+            Assert.Equal(49, GeneratorTestHarness.InvokeStatic<int>(result, "Maps", "Proof"));
+        }
+
+        [Theory]
+        [InlineData("private")]
+        [InlineData("protected")]
+        [InlineData("private protected")]
+        public void Callable_Constructor_Nested_Access_Is_Preserved(string accessibility)
+        {
+            var result = GeneratorTestHarness.Compile($$"""
+                using Meridian.Mapping;
+                public class Source { public int Value { get; set; } }
+                public partial class Dto
+                {
+                    {{accessibility}} Dto(int seed = 7) { ConstructorValue = seed; }
+                    public int ConstructorValue { get; }
+                    public int Value { get; set; }
+                    [GenerateMapper(typeof(Source), typeof(Dto))]
+                    public static partial class Maps { public static int Proof() { var dto = MapToDto(new Source { Value = 42 }); return dto.ConstructorValue + dto.Value; } }
+                }
+                """);
+            AssertNoCompilationErrors(result);
+            Assert.Equal(49, GeneratorTestHarness.InvokeStatic<int>(result, "Dto+Maps", "Proof"));
+        }
+
+        [Theory]
+        [InlineData("protected")]
+        [InlineData("private protected")]
+        public void Callable_Constructor_Protected_Derived_Creation_Is_Rejected(string accessibility)
+        {
+            var result = GeneratorTestHarness.Compile($$"""
+                using Meridian.Mapping;
+                public class Source { public int Value { get; set; } }
+                public class Dto { {{accessibility}} Dto(int seed = 7) { } public int Value { get; set; } }
+                [GenerateMapper(typeof(Source), typeof(Dto))]
+                public partial class Maps : Dto { }
+                """);
+            Assert.Empty(result.Compilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error));
+            Assert.Single(result.Diagnostics.Where(d => d.Id == "MERIDIANGEN003"));
+            Assert.DoesNotContain(" MapToDto(", result.GeneratedSource);
+        }
+
+        [Fact]
+        public void Callable_Constructor_Required_Contract_Uses_Selected_Overload()
+        {
+            var result = GeneratorTestHarness.Compile("""
+                using Meridian.Mapping;
+                using System.Diagnostics.CodeAnalysis;
+                public class Source { public int Value { get; set; } }
+                public class Dto
+                {
+                    [SetsRequiredMembers] public Dto(int seed = 7) { Value = seed; }
+                    public required int Value { get; set; }
+                }
+                [GenerateMapper(typeof(Source), typeof(Dto))]
+                public static partial class Maps { public static int Proof() => MapToDto(new Source { Value = 42 }).Value; }
+                """);
+            AssertNoCompilationErrors(result);
+            Assert.Equal(42, GeneratorTestHarness.InvokeStatic<int>(result, "Maps", "Proof"));
         }
 
         private static void AssertNoCompilationErrors(GeneratorCompilationResult result)

@@ -80,7 +80,7 @@ namespace Meridian.Mapping
     private static readonly DiagnosticDescriptor UnsupportedConstruction = new(
         id: "MERIDIANGEN003",
         title: "Destination construction is not supported",
-        messageFormat: "Meridian cannot generate a mapper for destination '{0}': {1}. Use a concrete destination with an accessible parameterless constructor that satisfies required members, or use runtime IMapper for constructor mapping.",
+        messageFormat: "Meridian cannot generate a mapper for destination '{0}': {1}. Use a concrete destination with an accessible constructor callable without arguments that satisfies required members, or use runtime IMapper for constructor mapping.",
         category: DiagnosticCategory,
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true);
@@ -120,7 +120,8 @@ namespace Meridian.Mapping
             var dst = attr.ConstructorArguments[1].Value as ITypeSymbol;
             if (src is null || dst is null) continue;
 
-            var constructionFailure = GetConstructionFailure(dst, ctx.SemanticModel.Compilation, classSymbol);
+            var constructionFailure = GetConstructionFailure(
+                dst, ctx.SemanticModel, classSymbol, ((ClassDeclarationSyntax)ctx.TargetNode).CloseBraceToken.SpanStart);
             var constructionDiagnostic = constructionFailure is null ? null : Diagnostic.Create(
                 UnsupportedConstruction, attr.ApplicationSyntaxReference?.GetSyntax().GetLocation(),
                 dst.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat), constructionFailure);
@@ -342,16 +343,23 @@ namespace Meridian.Mapping
     }
 
     private static string? GetConstructionFailure(
-        ITypeSymbol destination, Compilation compilation, INamedTypeSymbol mapperContainer)
+        ITypeSymbol destination, SemanticModel semanticModel, INamedTypeSymbol mapperContainer, int position)
     {
         if (destination is not INamedTypeSymbol named ||
             named.TypeKind is not (TypeKind.Class or TypeKind.Struct) || named.IsAbstract || named.IsStatic)
             return "the destination is not a concrete class or struct";
 
-        var constructor = named.InstanceConstructors.FirstOrDefault(ctor => ctor.Parameters.Length == 0 &&
-            IsConstructorAccessibleForCreation(ctor, compilation, mapperContainer));
-        if (constructor is null)
-            return "no accessible parameterless constructor is available";
+        // Bind the exact legacy construction expression in the mapper's scope. Roslyn
+        // resolves optional/params overloads and ambiguity; selecting an arbitrary
+        // accessible constructor could disagree with what emitted new Dto() calls.
+        var creation = SyntaxFactory.ObjectCreationExpression(
+                SyntaxFactory.ParseTypeName(named.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)))
+            .WithArgumentList(SyntaxFactory.ArgumentList());
+        var constructor = semanticModel.GetSpeculativeSymbolInfo(
+            position, creation, SpeculativeBindingOption.BindAsExpression).Symbol as IMethodSymbol;
+        if (constructor is null ||
+            !IsConstructorAccessibleForCreation(constructor, semanticModel.Compilation, mapperContainer))
+            return "no accessible unambiguous constructor can be called without arguments";
 
         var satisfiesRequiredMembers = constructor.GetAttributes().Any(attribute =>
             attribute.AttributeClass?.ToDisplayString() == "System.Diagnostics.CodeAnalysis.SetsRequiredMembersAttribute");
@@ -361,7 +369,7 @@ namespace Meridian.Mapping
             {
                 if (current.GetMembers().Any(member => member is IPropertySymbol { IsRequired: true } ||
                     member is IFieldSymbol { IsRequired: true }))
-                    return "required destination members are not satisfied by the parameterless constructor";
+                    return "required destination members are not satisfied by the selected constructor";
             }
         }
 

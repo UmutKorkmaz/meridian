@@ -6,6 +6,9 @@ var dto = Container.Maps.MapToDto(new Source { Value = 42, Child = shared });
 Check(dto.Value == 42 && ReferenceEquals(dto.Child, shared), "legacy shallow/nested mapping");
 Check(Container.Maps.MapToDto(null!) is null, "legacy null return");
 Console.WriteLine("COMMON generated nested=42 shallow=true null=true");
+var optional = Container.OptionalMaps.MapToOptionalDto(new OptionalSource { Value = 42, Seed = 99 });
+Check(optional.Value == 42 && optional.ConstructorSeed == 7 && optional.Seed == 99, "optional constructor default and legacy member assignments");
+Console.WriteLine("COMMON generated optional=49 constructorSeed=7 copiedSeed=99");
 #if !BASELINE
 var inherited = Container.EnhancedMaps.MapToInitDto(new InheritedSource { Id = 42, Name = "init" });
 Check(inherited.Id == 42 && inherited.Name == "init", "inherited/init destination");
@@ -20,6 +23,8 @@ public partial class Container
 {
     [GenerateMapper(typeof(Source), typeof(Dto))]
     public static partial class Maps { }
+    [GenerateMapper(typeof(OptionalSource), typeof(OptionalDto))]
+    public static partial class OptionalMaps { }
 #if !BASELINE
     [GenerateMapper(typeof(InheritedSource), typeof(InitDto))]
     public static partial class EnhancedMaps { }
@@ -39,3 +44,12 @@ public sealed class RequiredDto
     public RequiredDto() { Value = 0; }
 }
 #endif
+
+public sealed class OptionalSource { public int Value { get; set; } public int Seed { get; set; } }
+public sealed class OptionalDto
+{
+    public OptionalDto(int seed = 7) { ConstructorSeed = seed; Seed = seed; }
+    public int ConstructorSeed { get; }
+    public int Seed { get; set; }
+    public int Value { get; set; }
+}

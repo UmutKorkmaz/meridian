@@ -123,14 +123,18 @@ in emitted C#.
 
 Destinations are constructed with an object initializer, which supports
 both ordinary setters and `init` accessors. A destination must be a
-concrete class or struct with a parameterless constructor accessible
-from the mapper container for object creation. A protected constructor
+concrete class or struct with a constructor accessible from the mapper
+container that C# can call without arguments. Optional and `params`
+constructors are supported when overload resolution selects an accessible,
+unambiguous call. Generated methods still emit `new Destination()`:
+constructor defaults and empty `params` arguments are preserved, and source
+values are not bound to constructor parameters. A protected constructor
 cannot be called through `new Destination()` merely because the mapper
 derives from the destination; same-assembly `protected internal` access
 and accessible constructors within nested mapper containers remain usable.
 
 Required destination properties and fields, including inherited required
-members, need a parameterless constructor marked `[SetsRequiredMembers]`.
+members, need the selected constructor marked `[SetsRequiredMembers]`.
 This preserves existing mappings whose constructors already satisfy that
 contract; public writable/init properties are still assigned from the source.
 Unsatisfied required construction and inaccessible constructors produce
