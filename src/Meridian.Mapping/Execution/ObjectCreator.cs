@@ -112,7 +112,9 @@ public static class ObjectCreator
                 return ctor.Invoke(args);
         }
 
-        return CreateInstance(destinationType);
+        throw new InvalidOperationException(
+            $"No public constructor on type '{destinationType.Name}' has all required arguments mapped. " +
+            "Use ForCtorParam to supply missing arguments or ConstructUsing to specify construction.");
     }
 
     /// <summary>

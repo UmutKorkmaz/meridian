@@ -192,4 +192,34 @@ public class HighPriorityFeaturesTests
         Assert.IsType<DogDest>(result);
         Assert.Equal("Collie", ((DogDest)result).Breed);
     }
+    [Fact]
+    public void OverlappingIncludedMembersUseDeclaredPrecedenceAndDirectSourceWins()
+    {
+        var mapper = CreateMapper(c => c.CreateMap<OverlappingSource, OverlappingDto>()
+            .IncludeMembers(s => s.First, s => s.Second));
+        var mapped = mapper.Map<OverlappingSource, OverlappingDto>(new()
+        {
+            Name = "root",
+            First = new IncludedDetails { Name = "first", Email = "first@example.com" },
+            Second = new IncludedDetails { Name = "second", Email = "second@example.com" }
+        });
+        Assert.Equal("root", mapped.Name);
+        Assert.Equal("first@example.com", mapped.Email);
+    }
+    public sealed class IncludedDetails
+    {
+        public string Name { get; set; } = "";
+        public string Email { get; set; } = "";
+    }
+    public sealed class OverlappingSource
+    {
+        public string Name { get; set; } = "";
+        public IncludedDetails First { get; set; } = new();
+        public IncludedDetails Second { get; set; } = new();
+    }
+    public sealed class OverlappingDto
+    {
+        public string Name { get; set; } = "";
+        public string Email { get; set; } = "";
+    }
 }

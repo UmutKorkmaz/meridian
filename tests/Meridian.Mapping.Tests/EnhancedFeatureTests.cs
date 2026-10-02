@@ -527,6 +527,24 @@ public class ValueTransformerTests
     }
 
     [Fact]
+    public void TransformersRetainRegistrationOrderAndSkipNullMembers()
+    {
+        var calls = new List<string>();
+        var mapper = new MapperConfiguration(c =>
+        {
+            c.ValueTransformers.Add<string>(value => { calls.Add("trim"); return value.Trim(); });
+            c.ValueTransformers.Add<string>(value => { calls.Add("suffix"); return value + "!"; });
+            c.CreateMap<TransformerSource, TransformerDest>();
+        }).CreateMapper();
+        var result = mapper.Map<TransformerSource, TransformerDest>(new()
+        {
+            Name = "  Meridian  ", Description = null!
+        });
+        Assert.Equal("Meridian!", result.Name);
+        Assert.Null(result.Description);
+        Assert.Collection(calls, call => Assert.Equal("trim", call), call => Assert.Equal("suffix", call));
+    }
+    [Fact]
     public void Should_Not_Apply_Transformer_To_NonMatching_Types()
     {
         var config = new MapperConfiguration(cfg =>
@@ -606,4 +624,41 @@ public class OpenGenericMappingTests
         Assert.Equal("text", strResult.Value);
         Assert.Equal("Str", strResult.Label);
     }
+    [Fact]
+    public void ConstrainedOpenGenericMappingAcceptsValidClosureAndRejectsInvalidClrArgument()
+    {
+        var configuration = new MapperConfiguration(c =>
+            c.CreateMap(typeof(UnconstrainedSource<>), typeof(StructDestination<>)));
+        var mapper = configuration.CreateMapper();
+        object MapClosed(object source, Type argument) => mapper.Map(source,
+            typeof(UnconstrainedSource<>).MakeGenericType(argument),
+            typeof(StructDestination<>).MakeGenericType(argument));
+
+        // The CLR rejects an invalid constrained Type before Meridian receives it.
+        Assert.Throws<ArgumentException>(() => MapClosed(new UnconstrainedSource<string> { Value = "bad" }, typeof(string)));
+        Assert.Empty(configuration.GetAllTypeMaps());
+        var mapped = Assert.IsType<StructDestination<int>>(MapClosed(new UnconstrainedSource<int> { Value = 42 }, typeof(int)));
+        Assert.Equal(42, mapped.Value);
+        Assert.Single(configuration.GetAllTypeMaps());
+    }
+
+    [Fact]
+    public void UnclosedGenericDestinationFailsWithoutPoisoningClosedMapCache()
+    {
+        var configuration = new MapperConfiguration(c =>
+            c.CreateMap(typeof(UnconstrainedSource<>), typeof(StructDestination<>)));
+        var mapper = configuration.CreateMapper();
+        Assert.Throws<ArgumentException>(() => mapper.Map(new UnconstrainedSource<int> { Value = 42 },
+            typeof(UnconstrainedSource<int>), typeof(StructDestination<>)));
+        Assert.Empty(configuration.GetAllTypeMaps());
+        var mapped = mapper.Map<UnconstrainedSource<int>, StructDestination<int>>(new() { Value = 7 });
+        Assert.Equal(7, mapped.Value);
+        Assert.Single(configuration.GetAllTypeMaps());
+        Assert.Throws<InvalidOperationException>(() =>
+            mapper.Map<UnconstrainedSource<int>, UnregisteredDestination<int>>(new() { Value = 99 }));
+        Assert.Single(configuration.GetAllTypeMaps()); // Only the explicitly registered definition closes.
+    }
+    public sealed class UnconstrainedSource<T> { public T Value { get; set; } = default!; }
+    public sealed class StructDestination<T> where T : struct { public T Value { get; set; } }
+    public sealed class UnregisteredDestination<T> { public T Value { get; set; } = default!; }
 }

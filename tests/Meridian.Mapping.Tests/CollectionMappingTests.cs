@@ -138,4 +138,30 @@ public class CollectionMappingTests
         Assert.Equal(2, result["dup"]);
         Assert.Equal(3, result["other"]);
     }
+    [Fact]
+    public void SetInterfaceMappingRetainsDistinctValues()
+    {
+        var mapper = CreateMapper(_ => { });
+        var mapped = mapper.Map<int[], ISet<int>>([1, 1, 2]);
+        Assert.Equal(2, mapped.Count);
+        Assert.Contains(1, mapped);
+        Assert.Contains(2, mapped);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void NullCollectionMemberRetainsConfiguredPolicy(bool allowNull)
+    {
+        var mapper = CreateMapper(c =>
+        {
+            c.AllowNullCollections = allowNull;
+            c.CreateMap<NullCollectionSource, NullCollectionDto>();
+        });
+        var mapped = mapper.Map<NullCollectionSource, NullCollectionDto>(new());
+        if (allowNull) Assert.Null(mapped.Values);
+        else Assert.Empty(Assert.IsType<List<int>>(mapped.Values));
+    }
+    public sealed class NullCollectionSource { public List<int>? Values { get; set; } }
+    public sealed class NullCollectionDto { public List<int>? Values { get; set; } }
 }

@@ -101,6 +101,11 @@ public class MappingEngine
             ?? throw new InvalidOperationException(
                 $"Missing mapping configuration for {sourceType.Name} -> {destinationType.Name}.");
 
+        // Nested references to this source must reuse the supplied destination,
+        // just as create-new mapping caches its destination before mapping members.
+        if (typeMap.PreserveReferences)
+            context.CacheMapped(source, typeMap.DestinationType, destination);
+
         return MapProperties(source, destination, typeMap, context);
     }
 

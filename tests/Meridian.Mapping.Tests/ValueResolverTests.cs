@@ -103,4 +103,26 @@ public class ValueResolverTests
         // Resolver has access to source, dest, and context, and produces the combined name
         Assert.Equal("A B", result.FullName);
     }
+    [Fact]
+    public void ResolverFailureRetainsOriginalExceptionThroughDiInvocation()
+    {
+        var failure = new InvalidOperationException("resolver failed");
+        var services = new ServiceCollection();
+        services.AddSingleton(new FailingResolver(failure));
+        services.AddMeridianMapping(c => c.CreateMap<ResolverSource, ResolverDest>()
+            .ForMember(d => d.FullName, o => o.MapFrom<FailingResolver>()));
+        using var provider = services.BuildServiceProvider();
+        using var scope = provider.CreateScope();
+        var observed = Record.Exception(() => scope.ServiceProvider.GetRequiredService<IMapper>()
+            .Map<ResolverSource, ResolverDest>(new() { FirstName = "Meridian" }));
+        Assert.NotNull(observed);
+        Assert.Same(failure, observed.GetBaseException());
+    }
+    public sealed class FailingResolver : IValueResolver<ResolverSource, ResolverDest, string>
+    {
+        private readonly Exception _failure;
+        public FailingResolver(Exception failure) => _failure = failure;
+        public string Resolve(ResolverSource source, ResolverDest destination, string destMember,
+            ResolutionContext context) => throw _failure;
+    }
 }

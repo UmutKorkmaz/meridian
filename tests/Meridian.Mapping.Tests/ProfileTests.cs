@@ -1,3 +1,6 @@
+using System.Reflection;
+using System.Reflection.Emit;
+
 namespace Meridian.Mapping.Tests;
 
 public class ProfileTests
@@ -121,4 +124,43 @@ public class ProfileTests
         profile.AllowNullDestinationValues = false;
         Assert.False(profile.AllowNullDestinationValues);
     }
+    [Fact]
+    public void ScanningTwoProfileAssembliesRetainsBothMappings()
+    {
+        var first = CreateProfileAssembly<FirstAssemblySource, FirstAssemblyDto>("First");
+        var second = CreateProfileAssembly<SecondAssemblySource, SecondAssemblyDto>("Second");
+        var mapper = new MapperConfiguration(c => c.AddMaps(first, second)).CreateMapper();
+        Assert.Equal(42, mapper.Map<FirstAssemblySource, FirstAssemblyDto>(new() { Value = 42 }).Value);
+        Assert.Equal("second", mapper.Map<SecondAssemblySource, SecondAssemblyDto>(new() { Name = "second" }).Name);
+    }
+
+    private static AssemblyBuilder CreateProfileAssembly<TSource, TDestination>(string suffix)
+    {
+        // Real profile subclasses in separate collectible assemblies exercise assembly discovery.
+        var assembly = AssemblyBuilder.DefineDynamicAssembly(
+            new AssemblyName("MappingProfile" + suffix + Guid.NewGuid().ToString("N")),
+            AssemblyBuilderAccess.RunAndCollect);
+        var module = assembly.DefineDynamicModule("Profiles");
+        var profile = module.DefineType("Profile" + suffix, TypeAttributes.Public | TypeAttributes.Sealed,
+            typeof(Profile));
+        var constructor = profile.DefineConstructor(MethodAttributes.Public,
+            CallingConventions.Standard, Type.EmptyTypes);
+        var il = constructor.GetILGenerator();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, typeof(Profile).GetConstructor(BindingFlags.NonPublic | BindingFlags.Instance,
+            binder: null, Type.EmptyTypes, modifiers: null)!);
+        il.Emit(OpCodes.Ldarg_0);
+        var createMap = typeof(Profile).GetMethods(BindingFlags.NonPublic | BindingFlags.Instance)
+            .Single(method => method.Name == "CreateMap" && method.IsGenericMethodDefinition)
+            .MakeGenericMethod(typeof(TSource), typeof(TDestination));
+        il.Emit(OpCodes.Call, createMap);
+        il.Emit(OpCodes.Pop);
+        il.Emit(OpCodes.Ret);
+        profile.CreateType();
+        return assembly;
+    }
+    public sealed class FirstAssemblySource { public int Value { get; set; } }
+    public sealed class FirstAssemblyDto { public int Value { get; set; } }
+    public sealed class SecondAssemblySource { public string Name { get; set; } = ""; }
+    public sealed class SecondAssemblyDto { public string Name { get; set; } = ""; }
 }

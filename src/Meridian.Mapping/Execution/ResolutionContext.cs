@@ -15,6 +15,10 @@ public class ResolutionContext
     /// </summary>
     private Dictionary<(object, Type), object>? _mappedObjects;
 
+    // Share the operation root, not a snapshot of its lazily allocated dictionary.
+    // A child may be the first map that enables PreserveReferences.
+    private readonly ResolutionContext _cacheOwner;
+
     /// <summary>
     /// Gets the mapper instance, available for nested/child mappings.
     /// </summary>
@@ -55,6 +59,7 @@ public class ResolutionContext
         IMappingOperationOptions? options = null)
     {
         Mapper = mapper ?? throw new ArgumentNullException(nameof(mapper));
+        _cacheOwner = this;
         Depth = depth;
         ServiceProvider = serviceProvider;
         options ??= new MappingOperationOptions();
@@ -69,14 +74,14 @@ public class ResolutionContext
         IMapper mapper,
         int depth,
         IServiceProvider? serviceProvider,
-        Dictionary<(object, Type), object>? mappedObjects,
+        ResolutionContext cacheOwner,
         IDictionary<string, object?> items,
         object? state)
     {
         Mapper = mapper;
         Depth = depth;
         ServiceProvider = serviceProvider;
-        _mappedObjects = mappedObjects;
+        _cacheOwner = cacheOwner;
         Items = items;
         State = state;
     }
@@ -87,7 +92,7 @@ public class ResolutionContext
     /// <returns>A new resolution context one level deeper.</returns>
     public ResolutionContext IncrementDepth()
     {
-        return new ResolutionContext(Mapper, Depth + 1, ServiceProvider, _mappedObjects, Items, State);
+        return new ResolutionContext(Mapper, Depth + 1, ServiceProvider, _cacheOwner, Items, State);
     }
 
     /// <summary>
@@ -101,10 +106,10 @@ public class ResolutionContext
     public bool TryGetMapped(object source, Type destType, out object? mapped)
     {
         mapped = null;
-        if (_mappedObjects == null)
+        if (_cacheOwner._mappedObjects == null)
             return false;
 
-        return _mappedObjects.TryGetValue((source, destType), out mapped);
+        return _cacheOwner._mappedObjects.TryGetValue((source, destType), out mapped);
     }
 
     /// <summary>
@@ -116,8 +121,8 @@ public class ResolutionContext
     /// <param name="mapped">The mapped destination object.</param>
     public void CacheMapped(object source, Type destType, object mapped)
     {
-        _mappedObjects ??= new Dictionary<(object, Type), object>(ReferenceEqualityKeyComparer.Instance);
-        _mappedObjects.TryAdd((source, destType), mapped);
+        _cacheOwner._mappedObjects ??= new Dictionary<(object, Type), object>(ReferenceEqualityKeyComparer.Instance);
+        _cacheOwner._mappedObjects.TryAdd((source, destType), mapped);
     }
 
     /// <summary>

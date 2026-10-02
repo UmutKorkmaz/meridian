@@ -110,4 +110,62 @@ public class ConstructorSelectionTests
             ConstructorUsed = "optional";
         }
     }
+    [Fact]
+    public void MissingRequiredConstructorArgumentsFailInsteadOfSilentlyDefaulting()
+    {
+        var mapper = CreateMapper(c => c.CreateMap<OptionalSource, RequiredCtorTarget>());
+        var failure = Assert.Throws<InvalidOperationException>(() =>
+            mapper.Map<OptionalSource, RequiredCtorTarget>(new() { Name = "Meridian" }));
+        Assert.Contains(nameof(RequiredCtorTarget), failure.Message);
+        Assert.Contains("ForCtorParam", failure.Message);
+        Assert.Contains("ConstructUsing", failure.Message);
+    }
+    public sealed class RequiredCtorTarget
+    {
+        public RequiredCtorTarget(string name, Guid tenantId) { Name = name; TenantId = tenantId; }
+        public string Name { get; }
+        public Guid TenantId { get; }
+    }
+    [Fact]
+    public void MissingRequiredReferenceConstructorArgumentFails()
+    {
+        var mapper = CreateMapper(c => c.CreateMap<OptionalSource, RequiredReferenceTarget>());
+        Assert.Throws<InvalidOperationException>(() =>
+            mapper.Map<OptionalSource, RequiredReferenceTarget>(new() { Name = "Meridian" }));
+    }
+
+    [Fact]
+    public void ExplicitConstructorArgumentAndConstructionRemainAvailable()
+    {
+        var tenant = Guid.Parse("b72d245d-e40c-4f84-b5dd-b8e6d16fafbf");
+        var mapper = CreateMapper(c =>
+        {
+            c.CreateMap<OptionalSource, RequiredCtorTarget>()
+                .ForCtorParam("tenantId", o => o.MapFrom(_ => tenant));
+            c.CreateMap<OptionalSource, RequiredReferenceTarget>()
+                .ConstructUsing(s => new RequiredReferenceTarget(s.Name, "explicit"));
+        });
+        var source = new OptionalSource { Name = "Meridian" };
+        var byArgument = mapper.Map<OptionalSource, RequiredCtorTarget>(source);
+        Assert.Equal("Meridian", byArgument.Name);
+        Assert.Equal(tenant, byArgument.TenantId);
+        var byFactory = mapper.Map<OptionalSource, RequiredReferenceTarget>(source);
+        Assert.Equal("Meridian", byFactory.Name);
+        Assert.Equal("explicit", byFactory.Required);
+    }
+
+    [Fact]
+    public void DirectObjectCreationRetainsItsExplicitFallbackContract()
+    {
+        var created = Assert.IsType<RequiredCtorTarget>(
+            Meridian.Mapping.Execution.ObjectCreator.CreateInstance(typeof(RequiredCtorTarget)));
+        Assert.Null(created.Name);
+        Assert.Equal(Guid.Empty, created.TenantId);
+    }
+    public sealed class RequiredReferenceTarget
+    {
+        public RequiredReferenceTarget(string name, string required) { Name = name; Required = required; }
+        public string Name { get; }
+        public string Required { get; }
+    }
 }

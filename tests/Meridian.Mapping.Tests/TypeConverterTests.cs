@@ -117,4 +117,29 @@ public class TypeConverterTests
 
         Assert.Equal(30, result.Age); // Doubled by converter
     }
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ConverterFailuresRetainOriginalExceptionForInstanceAndDiPaths(bool useDi)
+    {
+        var failure = new InvalidOperationException("converter failed");
+        var converter = new FailingConverter(failure);
+        using var provider = new ServiceCollection().AddSingleton(converter).BuildServiceProvider();
+        var configuration = new MapperConfiguration(c =>
+        {
+            var map = c.CreateMap<Source, Destination>();
+            if (useDi) map.ConvertUsing<FailingConverter>();
+            else map.ConvertUsing(converter);
+        });
+        var mapper = configuration.CreateMapper(provider);
+        var observed = Record.Exception(() => mapper.Map<Source, Destination>(new() { Id = 42 }));
+        Assert.NotNull(observed);
+        Assert.Same(failure, observed.GetBaseException());
+    }
+    public sealed class FailingConverter : ITypeConverter<Source, Destination>
+    {
+        private readonly Exception _failure;
+        public FailingConverter(Exception failure) => _failure = failure;
+        public Destination Convert(Source source, Destination destination, ResolutionContext context) => throw _failure;
+    }
 }
