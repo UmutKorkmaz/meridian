@@ -18,6 +18,17 @@ parser.add_argument('--output', required=True, type=Path)
 args = parser.parse_args()
 root = Path(subprocess.check_output(['git', 'rev-parse', '--show-toplevel'], text=True).strip()).resolve()
 out = args.output.resolve()
+evidence_files = {
+    'source-manifest.json', 'git-status.z', 'git-status.txt', 'metadata.json',
+    'dotnet-info.log', 'dotnet-sdks.log', 'dotnet-runtimes.log', 'build-release.log',
+    'source-manifest-after.json', 'git-status-after.z', 'summary.json',
+    *(f'test-{suite}-{framework}.log' for suite in ['mapping', 'mediator']
+      for framework in ['net8.0', 'net9.0', 'net10.0']),
+}
+
+def git(*arguments):
+    return subprocess.check_output(['git', '-C', str(root), *arguments])
+
 try:
     relative = out.relative_to(root)
 except ValueError:
@@ -25,15 +36,33 @@ except ValueError:
 if relative is not None:
     if not relative.parts or relative.parts[0] == '.git':
         parser.error('output cannot be the checkout root or its Git metadata')
-    ignored = subprocess.run(['git', '-C', str(root), 'check-ignore', '-q', str(out / 'capture-probe')]).returncode == 0
-    if not ignored:
-        parser.error('output inside the checkout must be Git-ignored; use a directory outside the checkout')
+    # Index membership matters even when an ignored, force-tracked file has
+    # been deleted from disk. HEAD also covers staged deletions removed from
+    # the index. Check both descendants and tracked ancestors.
+    tracked_paths = set(git('ls-files', '--cached', '-z').split(b'\0'))
+    tracked_paths.update(git('ls-tree', '--name-only', '-r', '-z', 'HEAD').split(b'\0'))
+    for raw in sorted(tracked_paths):
+        if not raw:
+            continue
+        tracked = root / os.fsdecode(raw)
+        if tracked == out or tracked in out.parents or out in tracked.parents:
+            parser.error('output intersects tracked source: ' + os.fsdecode(raw))
+    for name in sorted(evidence_files):
+        ignored = subprocess.run(['git', '-C', str(root), 'check-ignore', '-q',
+                                  str(out / name)]).returncode == 0
+        if not ignored:
+            parser.error('each evidence destination inside the checkout must be Git-ignored: ' + name)
 if out.exists() and (not out.is_dir() or any(out.iterdir())):
     parser.error('output must be a new or empty directory; existing evidence is never overwritten')
 out.mkdir(parents=True, exist_ok=True)
 
-def git(*arguments):
-    return subprocess.check_output(['git', '-C', str(root), *arguments])
+def evidence_path(name):
+    if name not in evidence_files:
+        parser.error('unknown evidence destination: ' + name)
+    path = out / name
+    if path.resolve().parent != out:
+        parser.error('evidence destination escapes output directory: ' + name)
+    return path
 
 def manifest():
     tracked = set(git('ls-files', '--cached', '-z').split(b'\0')) - {b''}
@@ -55,13 +84,13 @@ def manifest():
     return {'root': str(root), 'files': files}
 
 def write_json(name, value):
-    (out / name).write_text(json.dumps(value, indent=2) + '\n', encoding='utf-8')
+    evidence_path(name).write_text(json.dumps(value, indent=2) + '\n', encoding='utf-8')
 
 before = manifest()
 write_json('source-manifest.json', before)
 status_before = git('status', '--porcelain=v1', '-z')
-(out / 'git-status.z').write_bytes(status_before)
-(out / 'git-status.txt').write_bytes(git('status', '--short'))
+evidence_path('git-status.z').write_bytes(status_before)
+evidence_path('git-status.txt').write_bytes(git('status', '--short'))
 write_json('metadata.json', {'captured_at_utc': datetime.now(timezone.utc).isoformat(),
                             'head': git('rev-parse', 'HEAD').decode().strip(),
                             'platform': platform.platform(), 'machine': platform.machine()})
@@ -69,7 +98,7 @@ env = dict(os.environ, DOTNET_ROLL_FORWARD='LatestPatch', DOTNET_ROLL_FORWARD_TO
            MeridianIncludeNet11Samples='false')
 
 def run(command, log):
-    with (out / log).open('wb') as stream:
+    with evidence_path(log).open('wb') as stream:
         try:
             return subprocess.run(command, cwd=root, env=env, stdout=stream, stderr=subprocess.STDOUT).returncode
         except OSError as error:
@@ -79,7 +108,7 @@ def run(command, log):
 metadata_codes = {}
 for option, log in [('--info', 'dotnet-info.log'), ('--list-sdks', 'dotnet-sdks.log'), ('--list-runtimes', 'dotnet-runtimes.log')]:
     metadata_codes[option] = run(['dotnet', option], log)
-runtimes = (out / 'dotnet-runtimes.log').read_text(errors='replace')
+runtimes = evidence_path('dotnet-runtimes.log').read_text(errors='replace')
 commands = []
 command = ['dotnet', 'build', 'Meridian.sln', '-c', 'Release']
 code = run(command, 'build-release.log')
@@ -99,11 +128,17 @@ for framework in ['net8.0', 'net9.0', 'net10.0']:
 after = manifest()
 write_json('source-manifest-after.json', after)
 status_after = git('status', '--porcelain=v1', '-z')
-(out / 'git-status-after.z').write_bytes(status_after)
+evidence_path('git-status-after.z').write_bytes(status_after)
 source_unchanged = before == after and status_before == status_after
 summary = {'source_unchanged': source_unchanged, 'metadata_exit_codes': metadata_codes,
            'runtime_roll_forward': 'LatestPatch (same runtime family only)', 'commands': commands}
 write_json('summary.json', summary)
+# Include the final evidence writes in the preservation decision. No successful
+# capture may rely on a snapshot taken before summary.json was written.
+if before != manifest() or status_before != git('status', '--porcelain=v1', '-z'):
+    source_unchanged = False
+    summary['source_unchanged'] = False
+    write_json('summary.json', summary)
 print(f'Evidence: {out}')
 for result in commands:
     print(f"{result['verification']}: {' '.join(result['command'])} (exit {result['exit_code']})")

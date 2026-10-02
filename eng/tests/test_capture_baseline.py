@@ -73,5 +73,72 @@ else: print('Build succeeded')
         rows = [x for x in summary['commands'] if x.get('framework') == 'net9.0']
         self.assertEqual(len(rows), 2)
         self.assertTrue(all((x['verification'] == 'unverified' for x in rows)))
+    def test_ignored_untracked_output_preserves_source(self):
+        root, previous_output, _, _ = self.capture()
+        output = root / 'ignored/capture'
+        status_before = subprocess.check_output(['git', '-C', str(root), 'status', '--porcelain=v1', '-z'])
+        env = dict(os.environ, PATH=str(previous_output.parent / 'bin') + os.pathsep + os.environ['PATH'])
+        result = subprocess.run(['bash', str(SCRIPT), '--output', str(output)],
+                                cwd=root, env=env, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(json.loads((output / 'summary.json').read_text())['source_unchanged'])
+        self.assertEqual(subprocess.check_output(['git', '-C', str(root), 'status', '--porcelain=v1', '-z']), status_before)
+
+    def test_rejects_deleted_tracked_evidence_under_ignored_output(self):
+        root, previous_output, _, _ = self.capture()
+        output = root / 'ignored/capture'
+        output.mkdir()
+        summary = output / 'summary.json'
+        summary.write_text('preserve inherited tracked evidence\n')
+        subprocess.run(['git', '-C', str(root), 'add', '.gitignore'], check=True)
+        subprocess.run(['git', '-C', str(root), 'add', '-f', str(summary)], check=True)
+        subprocess.run(['git', '-C', str(root), '-c', 'user.name=Fixture',
+                        '-c', 'user.email=fixture@example.invalid', '-c',
+                        'commit.gpgsign=false', 'commit', '-qm', 'Tracked evidence'], check=True)
+        summary.unlink()
+        output.rmdir()
+        status_before = subprocess.check_output(['git', '-C', str(root), 'status', '--porcelain=v1', '-z'])
+        env = dict(os.environ, PATH=str(previous_output.parent / 'bin') + os.pathsep + os.environ['PATH'])
+        result = subprocess.run(['bash', str(SCRIPT), '--output', str(output)],
+                                cwd=root, env=env, text=True, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(output.exists(), 'rejected capture recreated inherited deleted output')
+        self.assertEqual(subprocess.check_output(['git', '-C', str(root), 'status', '--porcelain=v1', '-z']), status_before)
+
+    def test_rejects_staged_deleted_evidence_under_ignored_output(self):
+        root, previous_output, _, _ = self.capture()
+        output = root / 'ignored/capture'
+        output.mkdir()
+        summary = output / 'summary.json'
+        summary.write_text('preserve inherited tracked evidence\n')
+        subprocess.run(['git', '-C', str(root), 'add', '.gitignore'], check=True)
+        subprocess.run(['git', '-C', str(root), 'add', '-f', str(summary)], check=True)
+        subprocess.run(['git', '-C', str(root), '-c', 'user.name=Fixture',
+                        '-c', 'user.email=fixture@example.invalid', '-c',
+                        'commit.gpgsign=false', 'commit', '-qm', 'Tracked evidence'], check=True)
+        subprocess.run(['git', '-C', str(root), 'rm', str(summary)], check=True, capture_output=True)
+        if output.exists():
+            output.rmdir()
+        status_before = subprocess.check_output(['git', '-C', str(root), 'status', '--porcelain=v1', '-z'])
+        env = dict(os.environ, PATH=str(previous_output.parent / 'bin') + os.pathsep + os.environ['PATH'])
+        result = subprocess.run(['bash', str(SCRIPT), '--output', str(output)],
+                                cwd=root, env=env, text=True, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(output.exists(), 'rejected capture recreated inherited deleted output')
+        self.assertEqual(subprocess.check_output(['git', '-C', str(root), 'status', '--porcelain=v1', '-z']), status_before)
+
+    def test_rejects_individually_unignored_evidence_destination(self):
+        root, previous_output, _, _ = self.capture()
+        (root / '.gitignore').write_text(
+            'ignored/*\n!ignored/capture/\nignored/capture/*\n!ignored/capture/summary.json\n')
+        output = root / 'ignored/capture'
+        status_before = subprocess.check_output(['git', '-C', str(root), 'status', '--porcelain=v1', '-z'])
+        env = dict(os.environ, PATH=str(previous_output.parent / 'bin') + os.pathsep + os.environ['PATH'])
+        result = subprocess.run(['bash', str(SCRIPT), '--output', str(output)],
+                                cwd=root, env=env, text=True, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(output.exists(), 'rejected capture wrote unignored evidence')
+        self.assertEqual(subprocess.check_output(['git', '-C', str(root), 'status', '--porcelain=v1', '-z']), status_before)
+
 if __name__ == '__main__':
     unittest.main()
