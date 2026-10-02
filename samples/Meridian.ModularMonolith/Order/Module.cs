@@ -41,8 +41,8 @@ public static class Order
         {
             public string[] CacheKeysToInvalidate =>
             [
-                "modular:catalog:all",
-                "modular:billing:summary"
+                CacheKeyComposer.Compose<Catalog.Queries.GetCatalogOverviewQuery>("modular:catalog:all"),
+                CacheKeyComposer.Compose<Billing.Queries.GetBillingSummaryQuery>("modular:billing:summary")
             ];
         }
 

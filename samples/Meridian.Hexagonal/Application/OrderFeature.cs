@@ -72,7 +72,7 @@ public sealed class BrowseCatalogQueryValidator : IValidator<BrowseCatalogQuery>
 public sealed record PlaceOrderCommand(string CustomerName, string ProductSku, int Quantity)
     : IRequest<OrderConfirmation>, ICacheInvalidatingRequest, ITransactionalRequest
 {
-    public string[] CacheKeysToInvalidate => ["hexagonal:catalog"];
+    public string[] CacheKeysToInvalidate => [CacheKeyComposer.Compose<BrowseCatalogQuery>("hexagonal:catalog")];
 }
 
 public sealed class PlaceOrderCommandHandler : IRequestHandler<PlaceOrderCommand, OrderConfirmation>
