@@ -5,7 +5,7 @@ name: Fuzz
 # SharpFuzz + AFL requires an OS-level AFL install and is not reliable on
 # GitHub-hosted runners. Until a dedicated runner with AFL is provisioned,
 # this workflow runs the FsCheck property-based tests at elevated
-# iteration counts (10 000 vs the default 100). That covers the same
+# iteration counts (10 000 scalar/depth cases, 500 collection cases). That covers the same
 # invariants — no StackOverflow, no OOM, no undocumented exceptions — at
 # lower fidelity but on every scheduled run. See
 # tests/Meridian.Mapping.Fuzz/README.md for the local coverage-guided
@@ -21,7 +21,7 @@ permissions:
 
 jobs:
   property-tests-high-count:
-    name: FsCheck properties (10k iterations)
+    name: FsCheck properties (10k scalar/depth, 500 collections)
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -37,17 +37,33 @@ jobs:
           global-json-file: global.json
 
       - name: Build tests
-        run: dotnet build tests/Meridian.Mapping.Tests -c Release
+        run: dotnet build tests/Meridian.Mapping.Tests -c Release -f net10.0
+
+      - name: Choose replay seed
+        shell: bash
+        run: |
+          seed="$(od -An -N8 -tu8 /dev/urandom | tr -d '[:space:]')"
+          echo "MERIDIAN_FSCHECK_REPLAY=$seed,11400714819323198485" >> "$GITHUB_ENV"
 
       - name: Run FsCheck property tests with elevated iteration count
         env:
-          FsCheck_MaxTest: "10000"
-        run: >
-          dotnet test tests/Meridian.Mapping.Tests -c Release --no-build
-          --filter "FullyQualifiedName~PropertyBasedTests"
-          --logger "console;verbosity=detailed"
-          --logger "trx;LogFileName=fuzz-properties.trx"
-          --results-directory ./fuzz-results
+          MERIDIAN_FSCHECK_MAX_TEST: "10000"
+          MERIDIAN_FSCHECK_COLLECTION_MAX_TEST: "500"
+          # Hexadecimal bytes: a 1 GiB managed heap budget, not an RSS cap.
+          DOTNET_GCHeapHardLimit: "40000000"
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p fuzz-results
+          dotnet --info > fuzz-results/dotnet-info.log
+          printf 'Configured budgets: scalar/depth=%s collections=%s replay=%s managed_heap_bytes=1073741824\n' \
+            "$MERIDIAN_FSCHECK_MAX_TEST" "$MERIDIAN_FSCHECK_COLLECTION_MAX_TEST" \
+            "$MERIDIAN_FSCHECK_REPLAY" | tee fuzz-results/property-output.log
+          dotnet test tests/Meridian.Mapping.Tests -c Release -f net10.0 --no-build \
+            --filter "FullyQualifiedName~PropertyBasedTests" \
+            --logger "console;verbosity=detailed" \
+            --logger "trx;LogFileName=fuzz-properties.trx" \
+            --results-directory ./fuzz-results 2>&1 | tee -a fuzz-results/property-output.log
 
       - name: Upload results
         if: always()
