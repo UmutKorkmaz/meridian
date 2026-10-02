@@ -56,10 +56,12 @@ public static partial class CustomerMappers
     public static CustomerDto MapToCustomerDto(CustomerSource source)
     {
         if (source is null) return default!;
-        var result = new CustomerDto();
-        result.Id = source.Id;
-        result.FullName = source.FullName;
-        result.Email = source.Email;
+        var result = new CustomerDto()
+        {
+            Id = source.Id,
+            FullName = source.FullName,
+            Email = source.Email,
+        };
         return result;
     }
 }
@@ -109,6 +111,31 @@ If a mapper container is nested inside a non-`partial` type, Meridian
 emits warning `MERIDIANGEN001` and skips that generated file rather than
 producing an invalid partial declaration.
 
+## Inherited and init-only properties
+
+The generator copies public readable source properties to public writable
+or `init` destination properties with the same name and type. It walks
+base types after the most-derived type. A derived declaration reserves its
+name, including an inaccessible, static, or non-property declaration, so
+it does not accidentally map a hidden base property. Indexers and
+inaccessible accessors are excluded. Keyword property names are escaped
+in emitted C#.
+
+Destinations are constructed with an object initializer, which supports
+both ordinary setters and `init` accessors. A destination must be a
+concrete class or struct with a parameterless constructor accessible
+from the mapper container. Required destination properties and fields,
+including inherited required members, remain unsupported. These cases
+produce error `MERIDIANGEN003` at the mapper attribute with a suggested
+fix or the runtime `IMapper` alternative; the unsupported mapping method
+is omitted. Other valid pairs in the same container are still generated.
+
+Existing `MapTo{Destination}(Source source)` names and null-source return
+behavior are preserved. Same-type reference properties (including
+collections) are assigned directly and retain the source reference;
+there is no implicit deep copy or element mapping. Different property
+types remain skipped with an explanatory comment.
+
 ## What the MVP does NOT yet cover
 
 The current generator deliberately handles only the simple
@@ -128,8 +155,9 @@ everything below:
   the MVP also skips (same-type-only assignment). Hand-call the nested
   `MapTo*` method, or use the runtime path.
 - **Profiles, before/after-map actions, conditions** — runtime only.
-- **Collections** — destination collection properties are not yet
-  emitted by source-gen. Map them manually or via runtime IMapper.
+- **Collection conversion or element mapping** — the generator only
+  assigns collections when source and destination property types match.
+  Use runtime `IMapper` for a different collection shape or mapped elements.
 
 These are tracked as Phase 5 follow-ups; the runtime IMapper continues
 to handle them correctly today.

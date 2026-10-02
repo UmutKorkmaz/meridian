@@ -4,6 +4,7 @@ using System.Collections.Immutable;
 using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
 
@@ -76,6 +77,14 @@ namespace Meridian.Mapping
         defaultSeverity: DiagnosticSeverity.Warning,
         isEnabledByDefault: true);
 
+    private static readonly DiagnosticDescriptor UnsupportedConstruction = new(
+        id: "MERIDIANGEN003",
+        title: "Destination construction is not supported",
+        messageFormat: "Meridian cannot generate a mapper for destination '{0}': {1}. Use a concrete destination without required members and with an accessible parameterless constructor, or use runtime IMapper for constructor mapping.",
+        category: DiagnosticCategory,
+        defaultSeverity: DiagnosticSeverity.Error,
+        isEnabledByDefault: true);
+
     public void Initialize(IncrementalGeneratorInitializationContext context)
     {
         // 1. Emit the attribute into the consumer's compilation so they
@@ -102,7 +111,7 @@ namespace Meridian.Mapping
         if (ctx.TargetSymbol is not INamedTypeSymbol classSymbol)
             return null;
 
-        var pairs = new List<(ITypeSymbol Source, ITypeSymbol Dest)>();
+        var pairs = new List<(ITypeSymbol Source, ITypeSymbol Dest, Diagnostic? Diagnostic)>();
         foreach (var attr in ctx.Attributes)
         {
             if (attr.ConstructorArguments.Length != 2) continue;
@@ -111,7 +120,11 @@ namespace Meridian.Mapping
             var dst = attr.ConstructorArguments[1].Value as ITypeSymbol;
             if (src is null || dst is null) continue;
 
-            pairs.Add((src, dst));
+            var constructionFailure = GetConstructionFailure(dst, ctx.SemanticModel.Compilation, classSymbol);
+            var constructionDiagnostic = constructionFailure is null ? null : Diagnostic.Create(
+                UnsupportedConstruction, attr.ApplicationSyntaxReference?.GetSyntax().GetLocation(),
+                dst.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat), constructionFailure);
+            pairs.Add((src, dst, constructionDiagnostic));
         }
 
         if (pairs.Count == 0) return null;
@@ -156,7 +169,7 @@ namespace Meridian.Mapping
         sb.AppendLine();
 
         var usings = new SortedSet<string>(StringComparer.Ordinal);
-        foreach (var (src, dst) in target.Pairs)
+        foreach (var (src, dst, _) in target.Pairs)
         {
             if (src.ContainingNamespace is { IsGlobalNamespace: false } srcNs)
                 usings.Add(srcNs.ToDisplayString());
@@ -186,8 +199,14 @@ namespace Meridian.Mapping
         EmitTypeDeclarationOpen(sb, indent, target.TargetType);
         indent += "    ";
 
-        foreach (var (src, dst) in target.Pairs)
+        foreach (var (src, dst, diagnostic) in target.Pairs)
         {
+            if (diagnostic is not null)
+            {
+                spc.ReportDiagnostic(diagnostic);
+                continue;
+            }
+
             EmitMapMethod(sb, indent, src, dst);
             sb.AppendLine();
         }
@@ -225,7 +244,7 @@ namespace Meridian.Mapping
         sb.Append("partial ")
             .Append(typeInfo.Keyword)
             .Append(' ')
-            .Append(typeInfo.Name)
+            .Append(EscapeIdentifier(typeInfo.Name))
             .Append(typeInfo.TypeParameters)
             .AppendLine();
 
@@ -254,7 +273,8 @@ namespace Meridian.Mapping
             .Append(" MapTo").Append(methodSuffix).Append('(').Append(srcFull).AppendLine(" source)");
         sb.Append(indent).AppendLine("{");
         sb.Append(indent).AppendLine("    if (source is null) return default!;");
-        sb.Append(indent).Append("    var result = new ").Append(dstFull).AppendLine("();");
+        sb.Append(indent).Append("    var result = new ").Append(dstFull).AppendLine("()");
+        sb.Append(indent).AppendLine("    {");
 
         var srcProps = GetWritableNameLookup(src, forWriting: false);
         var dstProps = GetWritableNameLookup(dst, forWriting: true);
@@ -276,8 +296,8 @@ namespace Meridian.Mapping
                 continue;
             }
 
-            sb.Append(indent).Append("    result.").Append(dstProp.Name)
-                .Append(" = source.").Append(srcProp.Name).AppendLine(";");
+            sb.Append(indent).Append("        ").Append(EscapeIdentifier(dstProp.Name))
+                .Append(" = source.").Append(EscapeIdentifier(srcProp.Name)).AppendLine(",");
             matched++;
         }
 
@@ -286,6 +306,7 @@ namespace Meridian.Mapping
             sb.Append(indent).AppendLine("    // No matching properties between source and destination.");
         }
 
+        sb.Append(indent).AppendLine("    };");
         sb.Append(indent).AppendLine("    return result;");
         sb.Append(indent).AppendLine("}");
     }
@@ -293,23 +314,52 @@ namespace Meridian.Mapping
     private static Dictionary<string, IPropertySymbol> GetWritableNameLookup(ITypeSymbol type, bool forWriting)
     {
         var result = new Dictionary<string, IPropertySymbol>(StringComparer.Ordinal);
-        foreach (var member in type.GetMembers())
+        var seenNames = new HashSet<string>(StringComparer.Ordinal);
+        for (var current = type as INamedTypeSymbol; current is not null; current = current.BaseType)
         {
-            if (member is not IPropertySymbol prop) continue;
-            if (prop.IsIndexer) continue;
-            if (prop.IsStatic) continue;
-            if (prop.DeclaredAccessibility != Accessibility.Public) continue;
-            if (forWriting && prop.SetMethod is null) continue;
-            if (forWriting && prop.SetMethod!.DeclaredAccessibility != Accessibility.Public) continue;
-            if (!forWriting && prop.GetMethod is null) continue;
-            if (!forWriting && prop.GetMethod!.DeclaredAccessibility != Accessibility.Public) continue;
+            foreach (var member in current.GetMembers())
+            {
+                // Reserve the most-derived name before filtering: an inaccessible,
+                // static or non-property declaration can hide an eligible base property.
+                if (!seenNames.Add(member.Name)) continue;
+                if (member is not IPropertySymbol prop) continue;
+                if (prop.IsIndexer || prop.IsStatic) continue;
+                if (prop.DeclaredAccessibility != Accessibility.Public) continue;
+                var accessor = forWriting ? prop.SetMethod : prop.GetMethod;
+                if (accessor?.DeclaredAccessibility != Accessibility.Public) continue;
 
-            // First declaration wins if a property is somehow doubled.
-            if (!result.ContainsKey(prop.Name))
-                result[prop.Name] = prop;
+                result.Add(prop.Name, prop);
+            }
         }
 
         return result;
+    }
+
+    private static string EscapeIdentifier(string name)
+    {
+        return SyntaxFacts.GetKeywordKind(name) != SyntaxKind.None ||
+            SyntaxFacts.GetContextualKeywordKind(name) != SyntaxKind.None ? "@" + name : name;
+    }
+
+    private static string? GetConstructionFailure(
+        ITypeSymbol destination, Compilation compilation, INamedTypeSymbol mapperContainer)
+    {
+        if (destination is not INamedTypeSymbol named ||
+            named.TypeKind is not (TypeKind.Class or TypeKind.Struct) || named.IsAbstract || named.IsStatic)
+            return "the destination is not a concrete class or struct";
+
+        for (var current = named; current is not null; current = current.BaseType)
+        {
+            if (current.GetMembers().Any(member => member is IPropertySymbol { IsRequired: true } ||
+                member is IFieldSymbol { IsRequired: true }))
+                return "required destination members are not supported";
+        }
+
+        if (!named.InstanceConstructors.Any(ctor => ctor.Parameters.Length == 0 &&
+            compilation.IsSymbolAccessibleWithin(ctor, mapperContainer)))
+            return "no accessible parameterless constructor is available";
+
+        return null;
     }
 
     private static IEnumerable<INamedTypeSymbol> GetContainingTypes(INamedTypeSymbol symbol)
@@ -439,7 +489,7 @@ namespace Meridian.Mapping
     {
         return typeSymbol.TypeParameters.Length == 0
             ? ""
-            : "<" + string.Join(", ", typeSymbol.TypeParameters.Select(tp => tp.Name)) + ">";
+            : "<" + string.Join(", ", typeSymbol.TypeParameters.Select(tp => EscapeIdentifier(tp.Name))) + ">";
     }
 
     private static ImmutableArray<string> BuildConstraintClauses(INamedTypeSymbol typeSymbol)
@@ -487,7 +537,7 @@ namespace Meridian.Mapping
 
             if (parts.Count > 0)
             {
-                builder.Add($"{typeParameter.Name} : {string.Join(", ", parts)}");
+                builder.Add($"{EscapeIdentifier(typeParameter.Name)} : {string.Join(", ", parts)}");
             }
         }
 
@@ -509,6 +559,6 @@ namespace Meridian.Mapping
         ImmutableArray<TypeDeclarationInfo> ContainingTypes,
         TypeDeclarationInfo TargetType,
         string MetadataPath,
-        ImmutableArray<(ITypeSymbol Source, ITypeSymbol Dest)> Pairs,
+        ImmutableArray<(ITypeSymbol Source, ITypeSymbol Dest, Diagnostic? Diagnostic)> Pairs,
         Diagnostic? Diagnostic);
 }
