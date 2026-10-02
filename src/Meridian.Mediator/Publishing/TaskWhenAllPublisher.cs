@@ -51,7 +51,7 @@ public class TaskWhenAllPublisher : INotificationPublisher
         {
             foreach (var handler in handlerExecutors)
             {
-                tasks.Add(handler.HandlerCallback(notification, cancellationToken));
+                tasks.Add(RunUnbounded(handler, notification, cancellationToken));
             }
         }
         else
@@ -83,6 +83,14 @@ public class TaskWhenAllPublisher : INotificationPublisher
                 $"{exceptions.Count} notification handler(s) failed for {notification.GetType().Name}.",
                 exceptions);
         }
+    }
+
+    private static async Task RunUnbounded(
+        NotificationHandlerExecutor handler,
+        INotification notification,
+        CancellationToken cancellationToken)
+    {
+        await handler.HandlerCallback(notification, cancellationToken).ConfigureAwait(false);
     }
 
     private static async Task RunBounded(

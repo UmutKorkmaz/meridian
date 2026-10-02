@@ -173,6 +173,78 @@ public class PublishingConcurrencyTests
         Assert.Same(failure, observed);
     }
 
+    [Theory]
+    [InlineData(16)]
+    [InlineData(-1)]
+    public async Task TaskWhenAllPublisherContinuesAfterSynchronousThrow(int concurrency)
+    {
+        var firstHandler = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var synchronousFailure = new InvalidOperationException("synchronous failure");
+        var asynchronousFailure = new ArgumentException("returned-task failure");
+        var invoked = 0;
+        var executors = new[]
+        {
+            new NotificationHandlerExecutor(new object(), (_, _) =>
+            {
+                Interlocked.Increment(ref invoked);
+                return firstHandler.Task;
+            }),
+            new NotificationHandlerExecutor(new object(), (_, _) =>
+            {
+                Interlocked.Increment(ref invoked);
+                throw synchronousFailure;
+            }),
+            new NotificationHandlerExecutor(new object(), (_, _) =>
+            {
+                Interlocked.Increment(ref invoked);
+                return Task.FromException(asynchronousFailure);
+            })
+        };
+
+        var publication = new TaskWhenAllPublisher(concurrency)
+            .Publish(executors, new TestNotification(), CancellationToken.None);
+        try
+        {
+            Assert.Equal(3, invoked);
+            Assert.False(publication.IsCompleted);
+            firstHandler.TrySetResult();
+
+            var observed = await Assert.ThrowsAsync<AggregateException>(() => publication);
+            Assert.Equal(2, observed.InnerExceptions.Count);
+            Assert.Contains(observed.InnerExceptions, failure => ReferenceEquals(synchronousFailure, failure));
+            Assert.Contains(observed.InnerExceptions, failure => ReferenceEquals(asynchronousFailure, failure));
+        }
+        finally
+        {
+            firstHandler.TrySetResult();
+        }
+    }
+
+    [Theory]
+    [InlineData(16)]
+    [InlineData(-1)]
+    public async Task TaskWhenAllPublisherSynchronousCancellationPreservesIdentity(int concurrency)
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var original = new OperationCanceledException("synchronous cancellation", cancellation.Token);
+        var invoked = 0;
+        var executors = Enumerable.Range(0, 2).Select(_ =>
+            new NotificationHandlerExecutor(new object(), (_, _) =>
+            {
+                Interlocked.Increment(ref invoked);
+                throw original;
+            })).ToArray();
+
+        var publication = new TaskWhenAllPublisher(concurrency)
+            .Publish(executors, new TestNotification(), CancellationToken.None);
+        var observed = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => publication);
+        Assert.Equal(2, invoked);
+        Assert.Same(original, observed);
+        Assert.Equal(cancellation.Token, observed.CancellationToken);
+        Assert.True(publication.IsCanceled);
+    }
+
     private static void UpdateMax(ref int target, int candidate)
     {
         while (true)
