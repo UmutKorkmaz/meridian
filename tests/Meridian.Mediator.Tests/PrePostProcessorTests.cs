@@ -145,3 +145,94 @@ public class PrePostProcessorTests
         Assert.True(handlerIdx < postIdx, "Handler should execute before PostProcessor");
     }
 }
+
+public class ProcessorContractTests
+{
+    [Fact]
+    public async Task Processors_Execute_In_Exact_Registration_Order()
+    {
+        var run = new ProcessorRun();
+        using var provider = BuildProvider();
+        Assert.Equal("response", await provider.GetRequiredService<ISender>().Send(new ProcessorContractRequest(run)));
+        Assert.Equal(new[] { "pre-first", "pre-second", "handler", "post-first", "post-second" }, run.Events);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Processor_Failure_Preserves_Identity_And_Stops_Later_Stages(bool beforeHandler)
+    {
+        var run = new ProcessorRun { FailBeforeHandler = beforeHandler, FailAfterHandler = !beforeHandler };
+        using var provider = BuildProvider();
+        var observed = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            provider.GetRequiredService<ISender>().Send(new ProcessorContractRequest(run)));
+        Assert.Same(run.Failure, observed);
+        Assert.Equal(beforeHandler ? new[] { "pre-first" } :
+            new[] { "pre-first", "pre-second", "handler", "post-first" }, run.Events);
+    }
+
+    private static ServiceProvider BuildProvider()
+    {
+        var services = new ServiceCollection();
+        services.AddMeridianMediator(configuration =>
+        {
+            configuration.AddRequestPreProcessor(typeof(FirstPreProcessor));
+            configuration.AddRequestPreProcessor(typeof(SecondPreProcessor));
+            configuration.AddRequestPostProcessor(typeof(FirstPostProcessor));
+            configuration.AddRequestPostProcessor(typeof(SecondPostProcessor));
+        });
+        services.AddTransient<IRequestHandler<ProcessorContractRequest, string>, ProcessorContractHandler>();
+        return services.BuildServiceProvider();
+    }
+
+    public sealed class ProcessorRun
+    {
+        public List<string> Events { get; } = new();
+        public bool FailBeforeHandler { get; init; }
+        public bool FailAfterHandler { get; init; }
+        public InvalidOperationException Failure { get; } = new("processor failure");
+    }
+    public sealed record ProcessorContractRequest(ProcessorRun Run) : IRequest<string>;
+    public sealed class ProcessorContractHandler : IRequestHandler<ProcessorContractRequest, string>
+    {
+        public Task<string> Handle(ProcessorContractRequest request, CancellationToken cancellationToken)
+        {
+            request.Run.Events.Add("handler");
+            return Task.FromResult("response");
+        }
+    }
+    public sealed class FirstPreProcessor : IRequestPreProcessor<ProcessorContractRequest>
+    {
+        public Task Process(ProcessorContractRequest request, CancellationToken cancellationToken)
+        {
+            request.Run.Events.Add("pre-first");
+            return request.Run.FailBeforeHandler ? Task.FromException(request.Run.Failure) : Task.CompletedTask;
+        }
+    }
+    public sealed class SecondPreProcessor : IRequestPreProcessor<ProcessorContractRequest>
+    {
+        public Task Process(ProcessorContractRequest request, CancellationToken cancellationToken)
+        {
+            request.Run.Events.Add("pre-second");
+            return Task.CompletedTask;
+        }
+    }
+    public sealed class FirstPostProcessor : IRequestPostProcessor<ProcessorContractRequest, string>
+    {
+        public Task Process(ProcessorContractRequest request, string response, CancellationToken cancellationToken)
+        {
+            Assert.Equal("response", response);
+            request.Run.Events.Add("post-first");
+            return request.Run.FailAfterHandler ? Task.FromException(request.Run.Failure) : Task.CompletedTask;
+        }
+    }
+    public sealed class SecondPostProcessor : IRequestPostProcessor<ProcessorContractRequest, string>
+    {
+        public Task Process(ProcessorContractRequest request, string response, CancellationToken cancellationToken)
+        {
+            Assert.Equal("response", response);
+            request.Run.Events.Add("post-second");
+            return Task.CompletedTask;
+        }
+    }
+}

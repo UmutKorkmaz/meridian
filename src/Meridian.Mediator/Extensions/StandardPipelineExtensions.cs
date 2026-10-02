@@ -96,7 +96,7 @@ public static class StandardPipelineExtensions
                 if (iface.GetGenericTypeDefinition() != typeof(IValidator<>)) continue;
                 if (iface.ContainsGenericParameters) continue;
 
-                services.AddTransient(iface, type);
+                services.TryAddEnumerable(ServiceDescriptor.Transient(iface, type));
             }
         }
     }

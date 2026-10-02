@@ -154,3 +154,88 @@ public class ExceptionHandlingTests
         Assert.True(NonHandlingExceptionHandler.WasCalled);
     }
 }
+
+public class ExceptionContractTests
+{
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Exception_Handlers_And_Actions_Preserve_Order_And_Original_Identity(bool handled)
+    {
+        var run = new ExceptionRun(handled);
+        var services = new ServiceCollection();
+        services.AddMeridianMediator(configuration =>
+            configuration.AddOpenBehavior(typeof(RequestExceptionProcessorBehavior<,>)));
+        services.AddTransient<IRequestHandler<ExceptionContractRequest, string>, ContractHandler>();
+        services.AddTransient<IRequestExceptionHandler<ExceptionContractRequest, string, InvalidOperationException>, FirstExceptionHandler>();
+        services.AddTransient<IRequestExceptionHandler<ExceptionContractRequest, string, InvalidOperationException>, SecondExceptionHandler>();
+        services.AddTransient<IRequestExceptionAction<ExceptionContractRequest, InvalidOperationException>, ContractAction>();
+        using var provider = services.BuildServiceProvider();
+        using var cancellation = new CancellationTokenSource();
+        run.Token = cancellation.Token;
+        var sender = provider.GetRequiredService<ISender>();
+        if (handled)
+        {
+            Assert.Equal("recovered", await sender.Send(new ExceptionContractRequest(run), cancellation.Token));
+            Assert.Equal(new[] { "handler", "exception-first", "exception-second" }, run.Events);
+        }
+        else
+        {
+            var observed = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                sender.Send(new ExceptionContractRequest(run), cancellation.Token));
+            Assert.Same(run.Failure, observed);
+            Assert.Equal(new[] { "handler", "exception-first", "exception-second", "action" }, run.Events);
+        }
+    }
+
+    public sealed class ExceptionRun(bool handled)
+    {
+        public bool Handled { get; } = handled;
+        public List<string> Events { get; } = new();
+        public InvalidOperationException Failure { get; } = new("original handler failure");
+        public CancellationToken Token { get; set; }
+    }
+    public sealed record ExceptionContractRequest(ExceptionRun Run) : IRequest<string>;
+    public sealed class ContractHandler : IRequestHandler<ExceptionContractRequest, string>
+    {
+        public Task<string> Handle(ExceptionContractRequest request, CancellationToken cancellationToken)
+        {
+            request.Run.Events.Add("handler");
+            return Task.FromException<string>(request.Run.Failure);
+        }
+    }
+    public sealed class FirstExceptionHandler : IRequestExceptionHandler<ExceptionContractRequest, string, InvalidOperationException>
+    {
+        public Task Handle(ExceptionContractRequest request, InvalidOperationException exception,
+            RequestExceptionHandlerState<string> state, CancellationToken cancellationToken)
+        {
+            Assert.Same(request.Run.Failure, exception);
+            Assert.Equal(request.Run.Token, cancellationToken);
+            request.Run.Events.Add("exception-first");
+            return Task.CompletedTask;
+        }
+    }
+    public sealed class SecondExceptionHandler : IRequestExceptionHandler<ExceptionContractRequest, string, InvalidOperationException>
+    {
+        public Task Handle(ExceptionContractRequest request, InvalidOperationException exception,
+            RequestExceptionHandlerState<string> state, CancellationToken cancellationToken)
+        {
+            Assert.Same(request.Run.Failure, exception);
+            Assert.Equal(request.Run.Token, cancellationToken);
+            request.Run.Events.Add("exception-second");
+            if (request.Run.Handled)
+                state.SetHandled("recovered");
+            return Task.CompletedTask;
+        }
+    }
+    public sealed class ContractAction : IRequestExceptionAction<ExceptionContractRequest, InvalidOperationException>
+    {
+        public Task Execute(ExceptionContractRequest request, InvalidOperationException exception, CancellationToken cancellationToken)
+        {
+            Assert.Same(request.Run.Failure, exception);
+            Assert.Equal(request.Run.Token, cancellationToken);
+            request.Run.Events.Add("action");
+            return Task.CompletedTask;
+        }
+    }
+}

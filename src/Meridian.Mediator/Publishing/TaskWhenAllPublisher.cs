@@ -76,8 +76,8 @@ public class TaskWhenAllPublisher : INotificationPublisher
                 .SelectMany(t => t.Exception!.InnerExceptions)
                 .ToList();
 
-            if (exceptions.Count == 1)
-                throw; // preserve original stack trace for single exception
+            if (exceptions.Count <= 1)
+                throw; // preserve cancellation or the original single exception
 
             throw new AggregateException(
                 $"{exceptions.Count} notification handler(s) failed for {notification.GetType().Name}.",
