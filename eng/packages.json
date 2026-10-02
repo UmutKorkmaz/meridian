@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "packages": [
+    {
+      "id": "Meridian.Mapping",
+      "project": "src/Meridian.Mapping/Meridian.Mapping.csproj",
+      "kind": "runtime",
+      "versionSource": "Version",
+      "baselineVersion": "2.1.3",
+      "targetFrameworks": [
+        "net8.0",
+        "net9.0",
+        "net10.0"
+      ],
+      "analyzerPaths": [
+        {
+          "project": "src/Meridian.Mapping.Generators/Meridian.Mapping.Generators.csproj",
+          "packagePath": "analyzers/dotnet/cs/Meridian.Mapping.Generators.dll"
+        }
+      ],
+      "directPackageDependencies": [
+        {
+          "id": "Microsoft.Extensions.DependencyInjection.Abstractions",
+          "version": "10.0.9"
+        }
+      ]
+    },
+    {
+      "id": "Meridian.Mediator",
+      "project": "src/Meridian.Mediator/Meridian.Mediator.csproj",
+      "kind": "runtime",
+      "versionSource": "Version",
+      "baselineVersion": "2.1.3",
+      "targetFrameworks": [
+        "net8.0",
+        "net9.0",
+        "net10.0"
+      ],
+      "analyzerPaths": [],
+      "directPackageDependencies": [
+        {
+          "id": "Microsoft.Extensions.DependencyInjection.Abstractions",
+          "version": "10.0.9"
+        },
+        {
+          "id": "Microsoft.Extensions.Logging.Abstractions",
+          "version": "10.0.9"
+        },
+        {
+          "id": "Microsoft.Extensions.Localization.Abstractions",
+          "version": "10.0.9"
+        }
+      ]
+    }
+  ],
+  "compilerHosts": [
+    {
+      "framework": "net8.0",
+      "sdkVersion": "8.0.421"
+    },
+    {
+      "framework": "net9.0",
+      "sdkVersion": "9.0.318"
+    },
+    {
+      "framework": "net10.0",
+      "sdkVersion": "10.0.300"
+    }
+  ]
+}

@@ -14,6 +14,7 @@
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <EnablePackageValidation>true</EnablePackageValidation>
+    <PackageValidationBaselineVersion Condition="'$(PackageId)' == 'Meridian.Mapping' or '$(PackageId)' == 'Meridian.Mediator'">2.1.3</PackageValidationBaselineVersion>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <!--
       License is declared via PackageLicenseExpression (SPDX = MIT) in each

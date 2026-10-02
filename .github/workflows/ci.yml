@@ -87,3 +87,40 @@ jobs:
           name: packages
           path: ./artifacts/*.*nupkg
           retention-days: 14
+
+  package-compatibility:
+    name: package consumers (${{ matrix.os }}, SDK ${{ matrix.host.sdk }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        host:
+          - { framework: net8.0, sdk: 8.0.421 }
+          - { framework: net9.0, sdk: 9.0.318 }
+          - { framework: net10.0, sdk: 10.0.300 }
+    env:
+      CANDIDATE_VERSION: 2.1.4-a4.${{ github.run_id }}.${{ github.run_attempt }}
+      DOTNET_ROLL_FORWARD: LatestPatch
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: |
+            10.0.300
+            ${{ matrix.host.sdk }}
+      - name: Pack and validate stable API baseline
+        shell: pwsh
+        run: ./eng/pack-packages.ps1 -OutputDirectory artifacts/packages -CandidateVersion $env:CANDIDATE_VERSION
+      - name: Run isolated native compiler consumers
+        shell: pwsh
+        run: ./eng/verify-packages.ps1 -Feed artifacts/packages -CandidateVersion $env:CANDIDATE_VERSION -Framework '${{ matrix.host.framework }}' -SdkVersion '${{ matrix.host.sdk }}'
+      - name: Retain package hashes and compiler evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compatibility-${{ matrix.os }}-${{ matrix.host.framework }}
+          path: |
+            artifacts/packages/**
+            artifacts/package-consumers/**
+          retention-days: 14
