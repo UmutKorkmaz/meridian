@@ -22,7 +22,10 @@ public sealed class ActivityProbeRequestHandler : IRequestHandler<ActivityProbeR
     }
 }
 
-public sealed record FailingActivityProbeRequest() : IRequest<int>;
+public sealed record FailingActivityProbeRequest() : IRequest<int>
+{
+    public string Payload { get; init; } = "";
+}
 
 public sealed class FailingActivityProbeRequestHandler : IRequestHandler<FailingActivityProbeRequest, int>
 {

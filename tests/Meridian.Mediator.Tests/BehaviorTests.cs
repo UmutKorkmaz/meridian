@@ -758,7 +758,7 @@ public class BehaviorTests
         var logger = new FakeMediatorLogger();
         // Default options do not record exception messages
         var behavior = new Behaviors.LoggingBehavior<LoggedRequest, string>(logger);
-        var request = new LoggedRequest("fail");
+        var request = new LoggedRequest("payload-private-marker");
 
         RequestHandlerDelegate<string> next = () =>
             throw new InvalidOperationException("Sensitive data leakage");
@@ -772,6 +772,11 @@ public class BehaviorTests
         Assert.IsType<InvalidOperationException>(loggedException);
         Assert.Equal("An error occurred during request processing.", loggedException.Message);
         Assert.DoesNotContain("Sensitive data leakage", loggedException.Message);
+        Assert.Null(loggedException.StackTrace);
+        Assert.Null(loggedException.InnerException);
+        var output = string.Join("\n", logger.InformationMessages.Concat(logger.ErrorMessages.Select(x => x.Message + x.Exception)));
+        Assert.DoesNotContain("payload-private-marker", output);
+        Assert.DoesNotContain("Sensitive data leakage", output);
     }
 
     #endregion

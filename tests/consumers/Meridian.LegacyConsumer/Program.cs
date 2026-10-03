@@ -112,7 +112,7 @@ var leaksMessage = ((string?)stackOnly.GetTagItem("exception.stacktrace"))?.Cont
 #if BASELINE
 Check(leaksMessage, "published stack-only privacy behavior");
 #else
-Check(!leaksMessage && stackOnly.GetTagItem("exception.message") is null, "independent telemetry switches");
+Check(!string.IsNullOrWhiteSpace(stackOnly.GetTagItem("exception.stacktrace") as string) && !leaksMessage && stackOnly.GetTagItem("exception.message") is null, "independent telemetry switches retain stack");
 #endif
 Console.WriteLine("COMMON privacy default=false/false full-opt-in=true/true");
 Console.WriteLine($"OBSERVED stack-only-message-present={leaksMessage.ToString().ToLowerInvariant()}");

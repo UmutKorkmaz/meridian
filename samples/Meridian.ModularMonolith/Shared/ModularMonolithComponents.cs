@@ -22,6 +22,7 @@ public sealed class ModularMonolithProfile : Profile
     {
         CreateMap<Catalog.CatalogProduct, Catalog.CatalogItemVm>();
         CreateMap<Order.PlacedOrder, Order.OrderSummaryVm>()
+            .ForCtorParam(nameof(Order.OrderSummaryVm.Total), opt => opt.MapFrom(src => src.TotalPrice))
             .ForMember(dest => dest.Total, opt => opt.MapFrom(src => src.TotalPrice));
         CreateMap<Billing.Invoice, Billing.InvoiceVm>();
     }

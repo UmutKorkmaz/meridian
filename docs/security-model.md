@@ -267,3 +267,9 @@ source in a non-obvious way (truncation, sign flip, lossy conversion).
 If you believe you have found a security defect in Meridian, follow the
 private reporting flow in [SECURITY.md](../SECURITY.md). Do not open a
 public GitHub issue for unpatched security findings.
+
+## Mediator cleanup and uncertain outcomes
+
+Failure cleanup uses independent cooperative five-second cancellation tokens for claim release, rollback, and failure-audit writes. Uncooperative providers and tokenless transaction disposal can still block. Cleanup failures remain observable beside the primary failure. Successful business work followed by completion/commit/audit failure is uncertain; the built-in retry behavior suppresses replay, and atomic claims remain held for provider reconciliation. Legacy non-atomic stores still permit duplicates. There is no exactly-once guarantee.
+
+Default audit/log/Activity output excludes request payloads and exception messages/stacks. Explicit Activity stack-only opt-in retains stack frames while omitting the exception message. Consumers control correlation IDs and provider logging, so secrets must not be placed in either. See the failure-composition migration notes in [compatibility-policy.md](compatibility-policy.md).

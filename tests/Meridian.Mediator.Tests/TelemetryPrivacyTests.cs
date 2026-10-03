@@ -16,12 +16,17 @@ public class TelemetryPrivacyTests
 
         var mediator = services.BuildServiceProvider().GetRequiredService<IMediator>();
 
-        await Assert.ThrowsAsync<InvalidOperationException>(() => mediator.Send(new FailingActivityProbeRequest()));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => mediator.Send(new FailingActivityProbeRequest { Payload = "payload-private-marker" }));
 
         var stopped = collector.SingleStopped("Mediator.Send FailingActivityProbeRequest");
         Assert.Null(stopped.StatusDescription);
         Assert.Null(stopped.GetTagItem("exception.message"));
         Assert.Null(stopped.GetTagItem("exception.stacktrace"));
+        var output = string.Join(";", stopped.TagObjects.Select(tag => $"{tag.Key}={tag.Value}"))
+            + string.Join(";", stopped.Events.SelectMany(e => e.Tags).Select(tag => $"{tag.Key}={tag.Value}"));
+        Assert.DoesNotContain("payload-private-marker", output);
+        Assert.DoesNotContain("request boom", output);
+        Assert.DoesNotContain(nameof(FailingActivityProbeRequestHandler), output);
     }
 
     [Fact]
@@ -46,6 +51,26 @@ public class TelemetryPrivacyTests
         Assert.Equal("request boom", stopped.StatusDescription);
         Assert.Equal("request boom", stopped.GetTagItem("exception.message"));
         Assert.Contains("request boom", stopped.GetTagItem("exception.stacktrace") as string);
+    }
+
+    [Fact]
+    public async Task Stack_Only_Opt_In_Retains_Stack_Without_Exception_Message()
+    {
+        using var collector = new ActivityCollector();
+        var services = new ServiceCollection();
+        services.AddSingleton(new MediatorTelemetryOptions { RecordExceptionStackTrace = true });
+        services.AddMeridianMediator(_ => { });
+        services.AddTransient<IRequestHandler<FailingActivityProbeRequest, int>, FailingActivityProbeRequestHandler>();
+        using var provider = services.BuildServiceProvider();
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            provider.GetRequiredService<IMediator>().Send(new FailingActivityProbeRequest()));
+        var stopped = collector.SingleStopped("Mediator.Send FailingActivityProbeRequest");
+        var stack = Assert.IsType<string>(stopped.GetTagItem("exception.stacktrace"));
+        Assert.False(string.IsNullOrWhiteSpace(stack));
+        Assert.Contains(nameof(FailingActivityProbeRequestHandler), stack);
+        Assert.DoesNotContain("request boom", stack);
+        Assert.Null(stopped.GetTagItem("exception.message"));
+        Assert.Null(stopped.StatusDescription);
     }
 
     private sealed class ActivityCollector : IDisposable
