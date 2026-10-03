@@ -176,6 +176,33 @@ public class PublishingConcurrencyTests
     [Theory]
     [InlineData(16)]
     [InlineData(-1)]
+    public async Task TaskWhenAllPublisherPreservesSoleFaultedCancellationAfterCanceledTask(int concurrency)
+    {
+        using var canceledHandler = new CancellationTokenSource();
+        using var faultedHandler = new CancellationTokenSource();
+        canceledHandler.Cancel();
+        faultedHandler.Cancel();
+        var original = new OperationCanceledException("faulted callback", faultedHandler.Token);
+        var faultedTask = Task.FromException(original);
+        Assert.True(faultedTask.IsFaulted);
+        Assert.Same(original, Assert.Single(faultedTask.Exception!.InnerExceptions));
+        var executors = new[]
+        {
+            new NotificationHandlerExecutor(new object(), (_, _) => Task.FromCanceled(canceledHandler.Token)),
+            new NotificationHandlerExecutor(new object(), (_, _) => faultedTask)
+        };
+
+        var publication = new TaskWhenAllPublisher(concurrency)
+            .Publish(executors, new TestNotification(), CancellationToken.None);
+        var observed = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => publication);
+        Assert.Same(original, observed);
+        Assert.Equal(faultedHandler.Token, observed.CancellationToken);
+        Assert.True(publication.IsCanceled);
+    }
+
+    [Theory]
+    [InlineData(16)]
+    [InlineData(-1)]
     public async Task TaskWhenAllPublisherContinuesAfterSynchronousThrow(int concurrency)
     {
         var firstHandler = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

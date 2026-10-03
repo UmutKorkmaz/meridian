@@ -1,3 +1,5 @@
+using System.Runtime.ExceptionServices;
+
 namespace Meridian.Mediator.Publishing;
 
 /// <summary>
@@ -76,8 +78,11 @@ public class TaskWhenAllPublisher : INotificationPublisher
                 exceptions.AddRange(tasks.Where(t => t.IsFaulted)
                     .SelectMany(t => t.Exception!.InnerExceptions));
 
-            if (exceptions.Count <= 1)
-                throw; // preserve cancellation or the original single exception
+            if (exceptions.Count == 0)
+                throw; // preserve the selected cancellation when no handler task faulted
+
+            if (exceptions.Count == 1)
+                ExceptionDispatchInfo.Capture(exceptions[0]).Throw();
 
             throw new AggregateException(
                 $"{exceptions.Count} notification handler(s) failed for {notification.GetType().Name}.",
