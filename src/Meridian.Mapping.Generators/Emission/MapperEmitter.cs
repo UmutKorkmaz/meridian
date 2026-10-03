@@ -1,11 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Text;
+using Meridian.Mapping.Generators.Models;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.Text;
-using Meridian.Mapping.Generators.Models;
-
 namespace Meridian.Mapping.Generators.Emission;
 
 internal static class MapperEmitter
@@ -112,12 +111,12 @@ internal static class MapperEmitter
     {
         var srcFull = pair.SourceIdentity;
         var dstFull = pair.DestinationIdentity;
-        var methodSuffix = pair.DestinationName;
+        var methodName = pair.Options.MethodName ?? "MapTo" + pair.DestinationName;
 
         sb.Append(indent).Append("/// <summary>Source-generated mapper emitted by Meridian. Maps ")
             .Append(pair.SourceName).Append(" to ").Append(pair.DestinationName).AppendLine(".</summary>");
         sb.Append(indent).Append("public static ").Append(dstFull)
-            .Append(" MapTo").Append(methodSuffix).Append('(').Append(srcFull).AppendLine(" source)");
+            .Append(' ').Append(EscapeIdentifier(methodName)).Append('(').Append(srcFull).AppendLine(" source)");
         sb.Append(indent).AppendLine("{");
         sb.Append(indent).AppendLine("    if (source is null) return default!;");
         sb.Append(indent).Append("    var result = new ").Append(dstFull).AppendLine("()");

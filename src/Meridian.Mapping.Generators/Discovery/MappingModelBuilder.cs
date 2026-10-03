@@ -3,103 +3,222 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Threading;
+using Meridian.Mapping.Generators.Diagnostics;
+using Meridian.Mapping.Generators.Models;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
-using Meridian.Mapping.Generators.Models;
-
 namespace Meridian.Mapping.Generators.Discovery;
 
 internal static class MappingModelBuilder
 {
-    private const string DiagnosticCategory = "Meridian.Mapping.Generators";
-    private static readonly DiagnosticDescriptor NestedContainerMustBePartial = new(
-        id: "MERIDIANGEN001",
-        title: "Nested mapper containers require partial containing types",
-        messageFormat: "Meridian mapper container '{0}' is nested inside non-partial containing type '{1}'. Mark every containing type partial or move the mapper container to namespace scope.",
-        category: DiagnosticCategory,
-        defaultSeverity: DiagnosticSeverity.Warning,
-        isEnabledByDefault: true);
+    internal static MapperModel Build(GeneratorAttributeSyntaxContext context, CancellationToken cancellationToken) =>
+        Analyze(context, cancellationToken).Model;
 
-    private static readonly DiagnosticDescriptor UnsupportedConstruction = new(
-        id: "MERIDIANGEN003",
-        title: "Destination construction is not supported",
-        messageFormat: "Meridian cannot generate a mapper for destination '{0}': {1}. Use a concrete destination with an accessible constructor callable without arguments that satisfies required members, or use runtime IMapper for constructor mapping.",
-        category: DiagnosticCategory,
-        defaultSeverity: DiagnosticSeverity.Error,
-        isEnabledByDefault: true);
-
-
-    internal static MapperModel Build(GeneratorAttributeSyntaxContext context, CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        var classSymbol = (INamedTypeSymbol)context.TargetSymbol;
-        var pairs = ImmutableArray.CreateBuilder<MapPairModel>();
-        foreach (var attribute in context.Attributes)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (attribute.ConstructorArguments.Length != 2 ||
-                attribute.ConstructorArguments[0].Value is not ITypeSymbol source ||
-                attribute.ConstructorArguments[1].Value is not ITypeSymbol destination) continue;
-
-            var failure = GetConstructionFailure(destination, context.SemanticModel, classSymbol,
-                ((ClassDeclarationSyntax)context.TargetNode).CloseBraceToken.SpanStart);
-            var members = ImmutableArray.CreateBuilder<MemberModel>();
-            var sourceProperties = GetWritableNameLookup(source, forWriting: false);
-            foreach (var property in GetWritableNameLookup(destination, forWriting: true).Values)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (!sourceProperties.TryGetValue(property.Name, out var sourceProperty)) continue;
-                members.Add(new MemberModel(sourceProperty.Name, property.Name,
-                    sourceProperty.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-                    property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-                    new ConversionModel(SymbolEqualityComparer.Default.Equals(sourceProperty.Type, property.Type),
-                        sourceProperty.Type.ToDisplayString(), property.Type.ToDisplayString())));
-            }
-            pairs.Add(new MapPairModel(source.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-                destination.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), source.Name, destination.Name,
-                NamespaceOf(source), NamespaceOf(destination), members.ToImmutable(),
-                new ConstructorModel(failure is null), new GeneratedOptions()));
-        }
-        var containingTypes = GetContainingTypes(classSymbol).Select(CreateTypeDeclarationInfo).ToImmutableArray();
-        var nonPartial = containingTypes.FirstOrDefault(type => !type.IsPartial);
-        return new MapperModel(NamespaceOf(classSymbol), containingTypes, CreateTypeDeclarationInfo(classSymbol),
-            BuildMetadataPath(classSymbol), pairs.ToImmutable(), nonPartial is null);
-    }
-
-    // Diagnostics retain current source-tree identity for #pragma, #line and suppression.
-    // They travel through a separate short-lived pipeline, never through MapperModel equality.
+    // Current-tree diagnostics never enter the immutable model or its emission cache.
     internal static ImmutableArray<Diagnostic> BuildDiagnostics(
+        GeneratorAttributeSyntaxContext context, CancellationToken cancellationToken) =>
+        Analyze(context, cancellationToken).Diagnostics;
+
+    private static (MapperModel Model, ImmutableArray<Diagnostic> Diagnostics) Analyze(
         GeneratorAttributeSyntaxContext context, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var classSymbol = (INamedTypeSymbol)context.TargetSymbol;
-        if (!context.Attributes.Any(attribute => attribute.ConstructorArguments.Length == 2 &&
-            attribute.ConstructorArguments[0].Value is ITypeSymbol &&
-            attribute.ConstructorArguments[1].Value is ITypeSymbol))
-            return ImmutableArray<Diagnostic>.Empty;
-        var nonPartial = GetContainingTypes(classSymbol).FirstOrDefault(type => !IsPartial(type));
-        if (nonPartial is not null)
-            return ImmutableArray.Create(Diagnostic.Create(NestedContainerMustBePartial,
-                classSymbol.Locations.FirstOrDefault(),
-                classSymbol.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat),
-                nonPartial.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat)));
-
+        var container = (INamedTypeSymbol)context.TargetSymbol;
+        var pairs = ImmutableArray.CreateBuilder<MapPairModel>();
         var diagnostics = ImmutableArray.CreateBuilder<Diagnostic>();
-        foreach (var attribute in context.Attributes)
+        var declarations = container.GetAttributes().Where(a => a.AttributeClass?.ToDisplayString() == "Meridian.Mapping.GenerateMapperAttribute" && a.ConstructorArguments.Length == 2 &&
+            a.ConstructorArguments[0].Value is ITypeSymbol && a.ConstructorArguments[1].Value is ITypeSymbol).ToArray();
+        var containingTypes = GetContainingTypes(container).Select(CreateTypeDeclarationInfo).ToImmutableArray();
+        // One model per container, including attributes on every partial declaration.
+        var owner = declarations.FirstOrDefault()?.ApplicationSyntaxReference?.GetSyntax(cancellationToken)
+            .FirstAncestorOrSelf<ClassDeclarationSyntax>();
+        if (owner is not null && (owner.SyntaxTree != context.TargetNode.SyntaxTree || owner.Span != context.TargetNode.Span))
+            return (new MapperModel(NamespaceOf(container), containingTypes, CreateTypeDeclarationInfo(container),
+                BuildMetadataPath(container), ImmutableArray<MapPairModel>.Empty, false), ImmutableArray<Diagnostic>.Empty);
+        var nonPartial = containingTypes.FirstOrDefault(type => !type.IsPartial);
+        if (declarations.Length > 0 && nonPartial is not null)
+            diagnostics.Add(Diagnostic.Create(MapperDiagnostics.NestedContainerMustBePartial,
+                container.Locations.FirstOrDefault(), container.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat),
+                nonPartial.DisplayName));
+
+        foreach (var attribute in declarations)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (attribute.ConstructorArguments.Length != 2 ||
-                attribute.ConstructorArguments[0].Value is not ITypeSymbol ||
-                attribute.ConstructorArguments[1].Value is not ITypeSymbol destination) continue;
-            var failure = GetConstructionFailure(destination, context.SemanticModel, classSymbol,
+            var source = (ITypeSymbol)attribute.ConstructorArguments[0].Value!;
+            var destination = (ITypeSymbol)attribute.ConstructorArguments[1].Value!;
+            var options = ReadOptions(attribute);
+            var location = attribute.ApplicationSyntaxReference?.GetSyntax(cancellationToken).GetLocation();
+            var supported = true;
+            void Report(DiagnosticDescriptor descriptor, params object[] arguments)
+            {
+                if (descriptor.DefaultSeverity == DiagnosticSeverity.Error) supported = false;
+                if (nonPartial is null) diagnostics.Add(Diagnostic.Create(descriptor, location, arguments));
+            }
+
+            if (options.Mode is not (0 or 1))
+                Report(MapperDiagnostics.InvalidConfiguration, "Mode must be Legacy or Structural");
+            if (options.MaxDepth <= 0 || options.MaxCollectionItems <= 0)
+                Report(MapperDiagnostics.InvalidConfiguration, "MaxDepth and MaxCollectionItems must be positive");
+            if (options.MethodName is not null && (!SyntaxFacts.IsValidIdentifier(options.MethodName) ||
+                SyntaxFacts.GetKeywordKind(options.MethodName) != SyntaxKind.None))
+                Report(MapperDiagnostics.InvalidConfiguration, "MethodName must be a valid C# identifier");
+            if (!IsUsableType(source, context.SemanticModel.Compilation, container) ||
+                !IsUsableType(destination, context.SemanticModel.Compilation, container) ||
+                !HasAccessibleSignature(source, destination, context, cancellationToken))
+                Report(MapperDiagnostics.InvalidConfiguration, "source and destination must be accessible, closed, nameable types usable in a public mapping method");
+
+            var method = options.MethodName ?? "MapTo" + destination.Name;
+            if (method == container.Name || container.GetMembers(method).Any(member =>
+                options.MethodName is not null || member is not IMethodSymbol existing ||
+                existing.Arity == 0 && existing.Parameters.Length == 1 && existing.Parameters[0].RefKind == RefKind.None &&
+                SymbolEqualityComparer.Default.Equals(existing.Parameters[0].Type, source)))
+                Report(MapperDiagnostics.MethodCollision, method, "an existing container member uses this name or signature");
+            foreach (var other in declarations)
+            {
+                if (ReferenceEquals(attribute, other)) continue;
+                var otherSource = (ITypeSymbol)other.ConstructorArguments[0].Value!;
+                var otherDestination = (ITypeSymbol)other.ConstructorArguments[1].Value!;
+                var otherOptions = ReadOptions(other);
+                if (SymbolEqualityComparer.Default.Equals(source, otherSource) &&
+                    SymbolEqualityComparer.Default.Equals(destination, otherDestination))
+                {
+                    Report(MapperDiagnostics.MethodCollision, method, "duplicate source/destination pair");
+                    break;
+                }
+                if (method == (otherOptions.MethodName ?? "MapTo" + otherDestination.Name) &&
+                    (options.MethodName is not null || otherOptions.MethodName is not null ||
+                     SymbolEqualityComparer.Default.Equals(source, otherSource)))
+                {
+                    Report(MapperDiagnostics.MethodCollision, method, "another mapping uses this method name; choose a unique MethodName");
+                    break;
+                }
+            }
+
+            var failure = GetConstructionFailure(destination, context.SemanticModel, container,
                 ((ClassDeclarationSyntax)context.TargetNode).CloseBraceToken.SpanStart);
             if (failure is not null)
-                diagnostics.Add(Diagnostic.Create(UnsupportedConstruction,
-                    attribute.ApplicationSyntaxReference?.GetSyntax(cancellationToken).GetLocation(),
-                    destination.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat), failure));
+                Report(MapperDiagnostics.UnsupportedConstruction, destination.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat), failure);
+            if (options.GenerateResolver)
+                Report(MapperDiagnostics.UnsupportedStructural, "GenerateResolver is not implemented yet");
+            if (options.Mode == 1 && (options.MaxDepth != 64 || options.MaxCollectionItems != 10000 ||
+                options.PreserveReferences || options.AllowUndefinedEnumValues || options.AllowNullCollections || !options.AllowNullDestinationValues) &&
+                options.MaxDepth > 0 && options.MaxCollectionItems > 0)
+                Report(MapperDiagnostics.UnsupportedStructural, "non-default structural traversal, enum and null policies are not implemented yet");
+
+            var members = ImmutableArray.CreateBuilder<MemberModel>();
+            var sourceProperties = GetWritableNameLookup(source, forWriting: false);
+            var destinationProperties = GetWritableNameLookup(destination, forWriting: true);
+            if (options.Mode == 1)
+            {
+                for (var current = destination as INamedTypeSymbol; current is not null; current = current.BaseType)
+                    foreach (var member in current.GetMembers())
+                        if (member is IFieldSymbol { IsRequired: true } ||
+                            member is IPropertySymbol { IsRequired: true } required &&
+                            (!destinationProperties.TryGetValue(required.Name, out var writable) ||
+                             !SymbolEqualityComparer.Default.Equals(writable, required)))
+                            Report(MapperDiagnostics.UnsupportedStructural, "required destination member '" + member.Name + "' is not a supported public writable property");
+            }
+            foreach (var property in destinationProperties.Values)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!sourceProperties.TryGetValue(property.Name, out var sourceProperty))
+                {
+                    Report(options.Mode == 1 ? MapperDiagnostics.StructuralUnmapped : MapperDiagnostics.LegacyUnmapped,
+                        property.Name, "no public readable source property with this name");
+                    continue;
+                }
+                var identity = SymbolEqualityComparer.Default.Equals(sourceProperty.Type, property.Type);
+                if (!identity)
+                    Report(options.Mode == 1 ? MapperDiagnostics.StructuralUnmapped : MapperDiagnostics.LegacyUnmapped,
+                        property.Name, "source type '" + sourceProperty.Type.ToDisplayString() + "' differs from destination type '" + property.Type.ToDisplayString() + "'");
+                else if (options.Mode == 1 && (!SymbolEqualityComparer.IncludeNullability.Equals(sourceProperty.Type, property.Type) ||
+                    NeedsStructuralSupport(property.Type) ||
+                    declarations.Any(pair => SymbolEqualityComparer.Default.Equals(pair.ConstructorArguments[0].Value as ITypeSymbol, sourceProperty.Type) &&
+                        SymbolEqualityComparer.Default.Equals(pair.ConstructorArguments[1].Value as ITypeSymbol, property.Type))))
+                    Report(MapperDiagnostics.UnsupportedStructural, "member '" + property.Name + "' requires nullable, collection, enum or nested mapping support that is not implemented yet");
+                members.Add(new MemberModel(sourceProperty.Name, property.Name,
+                    sourceProperty.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                    property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                    new ConversionModel(identity, sourceProperty.Type.ToDisplayString(), property.Type.ToDisplayString())));
+            }
+            pairs.Add(new MapPairModel(source.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                destination.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), source.Name, destination.Name,
+                NamespaceOf(source), NamespaceOf(destination), members.ToImmutable(), new ConstructorModel(supported), options));
         }
-        return diagnostics.ToImmutable();
+        return (new MapperModel(NamespaceOf(container), containingTypes, CreateTypeDeclarationInfo(container),
+            BuildMetadataPath(container), pairs.ToImmutable(), nonPartial is null), diagnostics.ToImmutable());
+    }
+
+    private static GeneratedOptions ReadOptions(AttributeData attribute)
+    {
+        var result = new GeneratedOptions();
+        foreach (var option in attribute.NamedArguments)
+        {
+            // Invalid attribute constants already have compiler diagnostics; avoid a
+            // secondary generator crash while the user edits their configuration.
+            if (option.Value.Kind == TypedConstantKind.Error || option.Value.IsNull && option.Key != "MethodName") continue;
+            result = option.Key switch
+            {
+                "Mode" => result with { Mode = (int)option.Value.Value! },
+                "MaxDepth" => result with { MaxDepth = (int)option.Value.Value! },
+                "MaxCollectionItems" => result with { MaxCollectionItems = (int)option.Value.Value! },
+                "PreserveReferences" => result with { PreserveReferences = (bool)option.Value.Value! },
+                "AllowUndefinedEnumValues" => result with { AllowUndefinedEnumValues = (bool)option.Value.Value! },
+                "AllowNullCollections" => result with { AllowNullCollections = (bool)option.Value.Value! },
+                "AllowNullDestinationValues" => result with { AllowNullDestinationValues = (bool)option.Value.Value! },
+                "GenerateResolver" => result with { GenerateResolver = (bool)option.Value.Value! },
+                "MethodName" => result with { MethodName = (string?)option.Value.Value },
+                _ => result,
+            };
+        }
+        return result;
+    }
+
+    private static bool NeedsStructuralSupport(ITypeSymbol type)
+    {
+        if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable)
+            return NeedsStructuralSupport(nullable.TypeArguments[0]);
+        return type.TypeKind == TypeKind.Enum || type is IArrayTypeSymbol ||
+            type.SpecialType != SpecialType.System_String && type.AllInterfaces.Any(i =>
+                i.SpecialType == SpecialType.System_Collections_IEnumerable) ||
+            type.SpecialType == SpecialType.System_Collections_IEnumerable;
+    }
+
+    private static bool IsUsableType(ITypeSymbol type, Compilation compilation, INamedTypeSymbol container)
+    {
+        if (type.TypeKind is TypeKind.Error or TypeKind.Pointer or TypeKind.FunctionPointer || type.IsRefLikeType ||
+            type is INamedTypeSymbol { IsUnboundGenericType: true } or { IsStatic: true } ||
+            type.SpecialType == SpecialType.System_Void ||
+            !compilation.IsSymbolAccessibleWithin(type, container)) return false;
+        if (type is IArrayTypeSymbol array) return IsUsableType(array.ElementType, compilation, container);
+        if (type is INamedTypeSymbol named)
+            return !named.IsFileLocal && named.TypeArguments.All(argument => IsUsableType(argument, compilation, container));
+        return true;
+    }
+
+    private static bool HasAccessibleSignature(ITypeSymbol source, ITypeSymbol destination,
+        GeneratorAttributeSyntaxContext context, CancellationToken cancellationToken)
+    {
+        // Ask the compiler about effective visibility (including private/protected nested
+        // containers). This temporary tree never enters the emission value model.
+        var container = (INamedTypeSymbol)context.TargetSymbol;
+        var name = "__MeridianSignatureProbe";
+        while (container.GetMembers(name).Length != 0) name += "_";
+        var annotation = new SyntaxAnnotation();
+        var method = SyntaxFactory.ParseMemberDeclaration("public static " +
+            destination.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) + " " + name + "(" +
+            source.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) + " source) => throw null!;")!
+            .WithAdditionalAnnotations(annotation);
+        var tree = context.TargetNode.SyntaxTree;
+        var root = tree.GetRoot(cancellationToken);
+        var declaration = (ClassDeclarationSyntax)context.TargetNode;
+        var replacement = root.ReplaceNode(declaration, declaration.AddMembers(method));
+        var probeTree = tree.WithRootAndOptions(replacement, tree.Options);
+        var probe = probeTree.GetRoot(cancellationToken).GetAnnotatedNodes(annotation).Single();
+        var compilation = context.SemanticModel.Compilation.ReplaceSyntaxTree(tree, probeTree);
+        return !compilation.GetSemanticModel(probeTree).GetDiagnostics(probe.Span, cancellationToken)
+            .Any(diagnostic => diagnostic.Id is "CS0050" or "CS0051");
     }
 
     private static string? NamespaceOf(ITypeSymbol type) => type.ContainingNamespace is { IsGlobalNamespace: false } ns

@@ -1,4 +1,8 @@
 namespace Meridian.Mapping.Generators.Models;
 
-/// <summary>Legacy generation has no configurable options. Later opt-in features extend this value.</summary>
-internal sealed record GeneratedOptions;
+/// <summary>Per-pair immutable values; defaults match the generated attribute contract.</summary>
+internal sealed record GeneratedOptions(
+    int Mode = 0, int MaxDepth = 64, int MaxCollectionItems = 10000,
+    bool PreserveReferences = false, bool AllowUndefinedEnumValues = false,
+    bool AllowNullCollections = false, bool AllowNullDestinationValues = true,
+    bool GenerateResolver = false, string? MethodName = null);

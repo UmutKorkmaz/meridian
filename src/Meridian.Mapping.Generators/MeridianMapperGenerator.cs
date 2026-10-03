@@ -1,12 +1,11 @@
 using System.Linq;
 using System.Text;
+using Meridian.Mapping.Generators.Discovery;
+using Meridian.Mapping.Generators.Emission;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Text;
-
-using Meridian.Mapping.Generators.Discovery;
-using Meridian.Mapping.Generators.Emission;
 
 namespace Meridian.Mapping.Generators;
 
@@ -43,6 +42,8 @@ public sealed class MeridianMapperGenerator : IIncrementalGenerator
 #nullable enable
 namespace Meridian.Mapping
 {
+    internal enum GeneratedMappingMode { Legacy = 0, Structural = 1 }
+
     /// <summary>
     /// Marks a partial class as the target for a Meridian source-generated
     /// mapper. For each attribute on the class, the generator emits a
@@ -64,6 +65,15 @@ namespace Meridian.Mapping
 
         public System.Type SourceType { get; }
         public System.Type DestinationType { get; }
+        public GeneratedMappingMode Mode { get; set; } = GeneratedMappingMode.Legacy;
+        public int MaxDepth { get; set; } = 64;
+        public int MaxCollectionItems { get; set; } = 10000;
+        public bool PreserveReferences { get; set; } = false;
+        public bool AllowUndefinedEnumValues { get; set; } = false;
+        public bool AllowNullCollections { get; set; } = false;
+        public bool AllowNullDestinationValues { get; set; } = true;
+        public bool GenerateResolver { get; set; } = false;
+        public string? MethodName { get; set; } = null;
     }
 }
 ";

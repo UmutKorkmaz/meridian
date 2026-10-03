@@ -14,6 +14,13 @@ var inherited = Container.EnhancedMaps.MapToInitDto(new InheritedSource { Id = 4
 Check(inherited.Id == 42 && inherited.Name == "init", "inherited/init destination");
 Check(Container.RequiredMaps.MapToRequiredDto(new Source { Value = 42 }).Value == 42, "SetsRequiredMembers zero constructor");
 Console.WriteLine("CANDIDATE generated inherited=42 init=init required=42");
+Check(Container.StrictMaps.Structural(new Source { Value = 42 }).Value == 42, "explicit structural method");
+Check(Container.LegacyMismatchMaps.LegacyMismatch(new Source { Value = 42 }).Value == 0, "legacy mismatch remains informational under warnings as errors");
+var options = new GenerateMapperAttribute(typeof(Source), typeof(Dto));
+Check(options.Mode == GeneratedMappingMode.Legacy && options.MaxDepth == 64 && options.MaxCollectionItems == 10000 &&
+    !options.PreserveReferences && !options.AllowUndefinedEnumValues && !options.AllowNullCollections && options.AllowNullDestinationValues &&
+    !options.GenerateResolver && options.MethodName is null, "generated attribute defaults");
+Console.WriteLine("CANDIDATE generated structural=42 explicitName=true legacyMismatch=0 defaults=true");
 #endif
 static void Check(bool result, string name) { if (!result) throw new InvalidOperationException(name); }
 public sealed class Child { public int Value { get; set; } }
@@ -30,9 +37,15 @@ public partial class Container
     public static partial class EnhancedMaps { }
     [GenerateMapper(typeof(Source), typeof(RequiredDto))]
     public static partial class RequiredMaps { }
+    [GenerateMapper(typeof(Source), typeof(ScalarDto), Mode = GeneratedMappingMode.Structural, MethodName = "Structural")]
+    public static partial class StrictMaps { }
+    [GenerateMapper(typeof(Source), typeof(MismatchDto), MethodName = "LegacyMismatch")]
+    public static partial class LegacyMismatchMaps { }
 #endif
 }
 #if !BASELINE
+public sealed class ScalarDto { public int Value { get; set; } }
+public sealed class MismatchDto { public long Value { get; set; } }
 public class BaseSource { public int Id { get; set; } }
 public sealed class InheritedSource : BaseSource { public string Name { get; set; } = ""; }
 public class BaseDto { public int Id { get; init; } }
