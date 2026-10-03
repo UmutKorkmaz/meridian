@@ -364,6 +364,101 @@ public class GeneratorDiagnosticTests
         Assert.True(GeneratorTestHarness.InvokeStatic<bool>(result, "Maps", "Proof"));
     }
 
+    [Theory]
+    [InlineData("MapTo\u200DDto", "public static Dto MapToDto(Source source) => new();")]
+    [InlineData("A\u200C", "public static Dto A(Source source) => new();")]
+    [InlineData("Ma\u200Dps", "")]
+    public void Ignored_Format_Characters_In_MethodName_Are_Rejected(string name, string existing)
+    {
+        var result = GeneratorTestHarness.Compile(Fixture(", MethodName = \"" + name + "\"")
+            .Replace("class Maps { }", "class Maps { " + existing + " }"));
+        AssertDiagnostic(result, "MERIDIANGEN006", DiagnosticSeverity.Error);
+        AssertCompiles(result);
+    }
+
+    [Fact]
+    public void Format_Character_Alias_Does_Not_Invalidate_Another_Mapping()
+    {
+        var source = Fixture(", MethodName = \"A\u200C\"").Replace("public static partial class Maps { }", """
+            [GenerateMapper(typeof(Source), typeof(OtherDto), MethodName = "A")]
+            public static partial class Maps {
+                public static int Proof() => A(new Source { Value = 42 }).Value;
+            }
+            public class OtherDto { public int Value { get; set; } }
+            """);
+        var result = GeneratorTestHarness.Compile(source);
+        AssertDiagnostic(result, "MERIDIANGEN006", DiagnosticSeverity.Error);
+        AssertCompiles(result);
+        Assert.Equal(42, GeneratorTestHarness.InvokeStatic<int>(result, "Maps", "Proof"));
+    }
+
+    [Fact]
+    public void Escaped_Existing_Identifier_Uses_The_Same_Method_Identity()
+    {
+        var result = GeneratorTestHarness.Compile(Fixture("").Replace("class Maps { }",
+            "class Maps { public static Dto @MapToDto(Source source) => new(); }"));
+        AssertDiagnostic(result, "MERIDIANGEN004", DiagnosticSeverity.Error);
+        AssertCompiles(result);
+    }
+
+    [Theory]
+    [InlineData("object", "dynamic")]
+    [InlineData("object", "object?")]
+    [InlineData("System.Collections.Generic.List<object>", "System.Collections.Generic.List<dynamic?>")]
+    [InlineData("object[]", "dynamic[]")]
+    [InlineData("object[,]", "dynamic[,]")]
+    [InlineData("System.Collections.Generic.List<object>", "System.Collections.Generic.List<dynamic>")]
+    [InlineData("System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<object[]>>", "System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<dynamic[]>>")]
+    [InlineData("Generic<object>.Nested<int>", "Generic<dynamic>.Nested<int>")]
+    public void Dynamic_And_Object_Signatures_Cannot_Distinguish_Overloads(string sourceType, string existingType)
+    {
+        var result = GeneratorTestHarness.Compile($$"""
+            using Meridian.Mapping;
+            public class Generic<T> { public class Nested<U> { } }
+            public class Dto { }
+            [GenerateMapper(typeof({{sourceType}}), typeof(Dto))]
+            public static partial class Maps {
+                public static Dto MapToDto({{existingType}} source) => new();
+            }
+            """);
+        AssertDiagnostic(result, "MERIDIANGEN004", DiagnosticSeverity.Error);
+        AssertCompiles(result);
+    }
+
+    [Theory]
+    [InlineData("object[]", "dynamic[,]")]
+    [InlineData("System.Collections.Generic.List<object>", "System.Collections.Generic.List<string>")]
+    [InlineData("Generic<object>.Nested<int>", "Generic<string>.Nested<int>")]
+    public void Distinct_Array_And_Generic_Signatures_Remain_Valid_Overloads(string sourceType, string existingType)
+    {
+        var result = GeneratorTestHarness.Compile($$"""
+            using Meridian.Mapping;
+            public class Generic<T> { public class Nested<U> { } }
+            public class Dto { }
+            [GenerateMapper(typeof({{sourceType}}), typeof(Dto))]
+            public static partial class Maps {
+                public static Dto MapToDto({{existingType}} source) => new();
+            }
+            """);
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Id.StartsWith("MERIDIANGEN", StringComparison.Ordinal));
+        AssertCompiles(result);
+        Assert.Contains(" MapToDto(", result.GeneratedSource);
+    }
+
+    [Fact]
+    public void Dynamic_Object_Equivalent_Attributed_Pairs_Are_Diagnosed()
+    {
+        var result = GeneratorTestHarness.Compile("""
+            using Meridian.Mapping;
+            public class Dto { }
+            [GenerateMapper(typeof(System.Collections.Generic.List<object>), typeof(Dto))]
+            [GenerateMapper(typeof(System.Collections.Generic.List<dynamic>), typeof(Dto))]
+            public static partial class Maps { }
+            """);
+        Assert.Equal(2, result.Diagnostics.Count(diagnostic => diagnostic.Id == "MERIDIANGEN004"));
+        AssertCompiles(result);
+    }
+
     private static string Fixture(string options, string destinationType = "int") => $$"""
         using Meridian.Mapping;
         public class Source { public int Value { get; set; } }

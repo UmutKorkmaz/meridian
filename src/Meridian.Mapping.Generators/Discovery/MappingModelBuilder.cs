@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Globalization;
 using System.Linq;
 using System.Threading;
 using Meridian.Mapping.Generators.Diagnostics;
@@ -61,7 +62,9 @@ internal static class MappingModelBuilder
             if (options.MaxDepth <= 0 || options.MaxCollectionItems <= 0)
                 Report(MapperDiagnostics.InvalidConfiguration, "MaxDepth and MaxCollectionItems must be positive");
             if (options.MethodName is not null && (!SyntaxFacts.IsValidIdentifier(options.MethodName) ||
-                SyntaxFacts.GetKeywordKind(options.MethodName) != SyntaxKind.None))
+                SyntaxFacts.GetKeywordKind(options.MethodName) != SyntaxKind.None ||
+                Enumerable.Range(0, options.MethodName.Length).Any(index =>
+                    CharUnicodeInfo.GetUnicodeCategory(options.MethodName, index) == UnicodeCategory.Format)))
                 Report(MapperDiagnostics.InvalidConfiguration, "MethodName must be a valid C# identifier");
             if (!IsUsableType(source, context.SemanticModel.Compilation, container) ||
                 !IsUsableType(destination, context.SemanticModel.Compilation, container) ||
@@ -72,7 +75,7 @@ internal static class MappingModelBuilder
             if (method == container.Name || container.GetMembers(method).Any(member =>
                 options.MethodName is not null || member is not IMethodSymbol existing ||
                 existing.Arity == 0 && existing.Parameters.Length == 1 && existing.Parameters[0].RefKind == RefKind.None &&
-                SymbolEqualityComparer.Default.Equals(existing.Parameters[0].Type, source)))
+                HaveSameSignatureType(existing.Parameters[0].Type, source)))
                 Report(MapperDiagnostics.MethodCollision, method, "an existing container member uses this name or signature");
             foreach (var other in declarations)
             {
@@ -80,7 +83,7 @@ internal static class MappingModelBuilder
                 var otherSource = (ITypeSymbol)other.ConstructorArguments[0].Value!;
                 var otherDestination = (ITypeSymbol)other.ConstructorArguments[1].Value!;
                 var otherOptions = ReadOptions(other);
-                if (SymbolEqualityComparer.Default.Equals(source, otherSource) &&
+                if (HaveSameSignatureType(source, otherSource) &&
                     SymbolEqualityComparer.Default.Equals(destination, otherDestination))
                 {
                     Report(MapperDiagnostics.MethodCollision, method, "duplicate source/destination pair");
@@ -88,7 +91,7 @@ internal static class MappingModelBuilder
                 }
                 if (method == (otherOptions.MethodName ?? "MapTo" + otherDestination.Name) &&
                     (options.MethodName is not null || otherOptions.MethodName is not null ||
-                     SymbolEqualityComparer.Default.Equals(source, otherSource)))
+                     HaveSameSignatureType(source, otherSource)))
                 {
                     Report(MapperDiagnostics.MethodCollision, method, "another mapping uses this method name; choose a unique MethodName");
                     break;
@@ -148,6 +151,27 @@ internal static class MappingModelBuilder
         }
         return (new MapperModel(NamespaceOf(container), containingTypes, CreateTypeDeclarationInfo(container),
             BuildMetadataPath(container), pairs.ToImmutable(), nonPartial is null), diagnostics.ToImmutable());
+    }
+
+    private static bool HaveSameSignatureType(ITypeSymbol left, ITypeSymbol right)
+    {
+        if (SymbolEqualityComparer.Default.Equals(left, right)) return true;
+        // C# treats dynamic as object for overload signatures, including occurrences
+        // inside arrays, generic arguments and constructed containing types.
+        if ((left.TypeKind == TypeKind.Dynamic || left.SpecialType == SpecialType.System_Object) &&
+            (right.TypeKind == TypeKind.Dynamic || right.SpecialType == SpecialType.System_Object)) return true;
+        if (left is IArrayTypeSymbol leftArray && right is IArrayTypeSymbol rightArray)
+            return leftArray.Rank == rightArray.Rank &&
+                HaveSameSignatureType(leftArray.ElementType, rightArray.ElementType);
+        if (left is INamedTypeSymbol leftNamed && right is INamedTypeSymbol rightNamed &&
+            SymbolEqualityComparer.Default.Equals(leftNamed.OriginalDefinition, rightNamed.OriginalDefinition))
+        {
+            if (leftNamed.ContainingType is not null && rightNamed.ContainingType is not null &&
+                !HaveSameSignatureType(leftNamed.ContainingType, rightNamed.ContainingType)) return false;
+            return leftNamed.TypeArguments.Length == rightNamed.TypeArguments.Length &&
+                leftNamed.TypeArguments.Zip(rightNamed.TypeArguments, HaveSameSignatureType).All(equal => equal);
+        }
+        return false;
     }
 
     private static GeneratedOptions ReadOptions(AttributeData attribute)

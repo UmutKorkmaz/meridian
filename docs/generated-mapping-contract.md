@@ -28,7 +28,7 @@ Positive limits are required in both modes. Legacy accepts the semantic option v
 public static partial class OrderMaps { }
 ```
 
-`MethodName` must be a valid C# identifier and must be unique among mapping names and members declared in the container. Default names may overload across distinct source types. Two destination types with the same simple name and the same source need distinct explicit names. Duplicate source/destination pairs are an error even with different names. Existing container members and the container's own name cannot be replaced by a generated conflicting method. Source/destination types must be nameable, closed and accessible with visibility sufficient for the emitted public method.
+`MethodName` must be a valid non-reserved C# identifier without a verbatim (`@`) prefix or Unicode format characters (which C# ignores for identifier identity), and must be unique among mapping names and members declared in the container. Default names may overload across distinct source types. Collision checks treat `dynamic` and `object` as the same signature type, including nested generic arguments and arrays; escaped spellings of existing member names retain their compiler identity. Two destination types with the same simple name and the same source need distinct explicit names. Duplicate source/destination pairs are an error even with different names. Existing container members and the container's own name cannot be replaced by a generated conflicting method. Source/destination types must be nameable, closed and accessible with visibility sufficient for the emitted public method.
 
 ## Diagnostics
 
