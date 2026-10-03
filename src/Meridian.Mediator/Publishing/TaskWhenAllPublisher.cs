@@ -32,6 +32,7 @@ public class TaskWhenAllPublisher : INotificationPublisher
         }
 
         List<Task> tasks;
+        var exceptions = new List<Exception>();
         using var limiter = _maxDegreeOfParallelism == -1 ? null : new SemaphoreSlim(_maxDegreeOfParallelism);
 
         if (handlerExecutors is ICollection<NotificationHandlerExecutor> collection)
@@ -58,7 +59,7 @@ public class TaskWhenAllPublisher : INotificationPublisher
         {
             foreach (var handler in handlerExecutors)
             {
-                tasks.Add(RunBounded(handler, notification, cancellationToken, limiter));
+                tasks.Add(RunBounded(handler, notification, cancellationToken, limiter, exceptions));
             }
         }
 
@@ -70,11 +71,10 @@ public class TaskWhenAllPublisher : INotificationPublisher
         }
         catch
         {
-            // Task.WhenAll throws only the first exception — collect ALL faulted exceptions.
-            var exceptions = tasks
-                .Where(t => t.IsFaulted)
-                .SelectMany(t => t.Exception!.InnerExceptions)
-                .ToList();
+            // Await surfaces one fault; retain each original handler task's complete fault set.
+            if (limiter is null)
+                exceptions.AddRange(tasks.Where(t => t.IsFaulted)
+                    .SelectMany(t => t.Exception!.InnerExceptions));
 
             if (exceptions.Count <= 1)
                 throw; // preserve cancellation or the original single exception
@@ -85,24 +85,50 @@ public class TaskWhenAllPublisher : INotificationPublisher
         }
     }
 
-    private static async Task RunUnbounded(
+    private static Task RunUnbounded(
         NotificationHandlerExecutor handler,
         INotification notification,
         CancellationToken cancellationToken)
     {
-        await handler.HandlerCallback(notification, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return handler.HandlerCallback(notification, cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            return CaptureSynchronousFailure(exception);
+        }
+    }
+
+    private static async Task CaptureSynchronousFailure(Exception exception)
+    {
+        await Task.FromException(exception).ConfigureAwait(false);
     }
 
     private static async Task RunBounded(
         NotificationHandlerExecutor handler,
         INotification notification,
         CancellationToken cancellationToken,
-        SemaphoreSlim limiter)
+        SemaphoreSlim limiter,
+        List<Exception> exceptions)
     {
         await limiter.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await handler.HandlerCallback(notification, cancellationToken).ConfigureAwait(false);
+            var handlerTask = RunUnbounded(handler, notification, cancellationToken);
+            try
+            {
+                await handlerTask.ConfigureAwait(false);
+            }
+            catch
+            {
+                if (handlerTask.IsFaulted)
+                {
+                    lock (exceptions)
+                        exceptions.AddRange(handlerTask.Exception!.InnerExceptions);
+                }
+                throw;
+            }
         }
         finally
         {

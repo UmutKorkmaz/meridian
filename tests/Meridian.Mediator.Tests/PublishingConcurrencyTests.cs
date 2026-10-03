@@ -245,6 +245,137 @@ public class PublishingConcurrencyTests
         Assert.True(publication.IsCanceled);
     }
 
+    [Theory]
+    [InlineData(16)]
+    [InlineData(-1)]
+    public async Task TaskWhenAllPublisherPreservesEveryFaultFromReturnedTask(int concurrency)
+    {
+        var firstHandler = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstFailure = new InvalidOperationException("first child");
+        var secondFailure = new ArgumentException("second child");
+        var otherFailure = new FormatException("other handler");
+        var multipleFaults = Task.WhenAll(Task.FromException(firstFailure), Task.FromException(secondFailure));
+        Assert.Equal(2, multipleFaults.Exception!.InnerExceptions.Count);
+        var invoked = 0;
+        var executors = new[]
+        {
+            new NotificationHandlerExecutor(new object(), (_, _) =>
+            {
+                Interlocked.Increment(ref invoked);
+                return firstHandler.Task;
+            }),
+            new NotificationHandlerExecutor(new object(), (_, _) =>
+            {
+                Interlocked.Increment(ref invoked);
+                return multipleFaults;
+            }),
+            new NotificationHandlerExecutor(new object(), (_, _) =>
+            {
+                Interlocked.Increment(ref invoked);
+                return Task.FromException(otherFailure);
+            })
+        };
+        var publication = new TaskWhenAllPublisher(concurrency)
+            .Publish(executors, new TestNotification(), CancellationToken.None);
+        try
+        {
+            Assert.Equal(3, invoked);
+            Assert.False(publication.IsCompleted);
+            firstHandler.TrySetResult();
+            var observed = await Assert.ThrowsAsync<AggregateException>(() => publication);
+            Assert.Equal(3, observed.InnerExceptions.Count);
+            Assert.Contains(observed.InnerExceptions, failure => ReferenceEquals(firstFailure, failure));
+            Assert.Contains(observed.InnerExceptions, failure => ReferenceEquals(secondFailure, failure));
+            Assert.Contains(observed.InnerExceptions, failure => ReferenceEquals(otherFailure, failure));
+        }
+        finally
+        {
+            firstHandler.TrySetResult();
+        }
+    }
+
+    [Theory]
+    [InlineData(16)]
+    [InlineData(-1)]
+    public async Task TaskWhenAllPublisherPreservesExplicitAggregateIdentity(int concurrency)
+    {
+        var original = new AggregateException(new InvalidOperationException("nested"), new ArgumentException("nested"));
+        var otherFailure = new FormatException("other handler");
+        var executors = new[]
+        {
+            new NotificationHandlerExecutor(new object(), (_, _) => throw original),
+            new NotificationHandlerExecutor(new object(), (_, _) => Task.FromException(otherFailure))
+        };
+        var observed = await Assert.ThrowsAsync<AggregateException>(() =>
+            new TaskWhenAllPublisher(concurrency).Publish(executors, new TestNotification(), CancellationToken.None));
+        Assert.Equal(2, observed.InnerExceptions.Count);
+        Assert.Contains(observed.InnerExceptions, failure => ReferenceEquals(original, failure));
+        Assert.Contains(observed.InnerExceptions, failure => ReferenceEquals(otherFailure, failure));
+    }
+
+    [Theory]
+    [InlineData(16)]
+    [InlineData(-1)]
+    public async Task TaskWhenAllPublisherRetainsFaultedCancellationExceptionAndOmitsCanceledTask(int concurrency)
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var cancellationFailure = new OperationCanceledException("faulted callback", cancellation.Token);
+        var otherFailure = new InvalidOperationException("other fault");
+        var faultedTask = Task.FromException(cancellationFailure);
+        var canceledTask = Task.FromCanceled(cancellation.Token);
+        Assert.True(faultedTask.IsFaulted);
+        Assert.True(canceledTask.IsCanceled);
+        var executors = new[]
+        {
+            new NotificationHandlerExecutor(new object(), (_, _) => faultedTask),
+            new NotificationHandlerExecutor(new object(), (_, _) => canceledTask),
+            new NotificationHandlerExecutor(new object(), (_, _) => Task.FromException(otherFailure))
+        };
+        var observed = await Assert.ThrowsAsync<AggregateException>(() =>
+            new TaskWhenAllPublisher(concurrency).Publish(executors, new TestNotification(), CancellationToken.None));
+        Assert.Equal(2, observed.InnerExceptions.Count);
+        Assert.Contains(observed.InnerExceptions, failure => ReferenceEquals(cancellationFailure, failure));
+        Assert.Contains(observed.InnerExceptions, failure => ReferenceEquals(otherFailure, failure));
+    }
+
+    [Fact]
+    public async Task TaskWhenAllPublisherCancellationPreservesPermitBoundAndStopsQueuedWork()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var firstHandlers = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var invoked = 0;
+        var started = 0;
+        var executors = Enumerable.Range(0, 20).Select(_ =>
+            new NotificationHandlerExecutor(new object(), (_, token) =>
+            {
+                Interlocked.Increment(ref invoked);
+                Assert.Equal(cancellation.Token, token);
+                token.ThrowIfCancellationRequested();
+                Interlocked.Increment(ref started);
+                return firstHandlers.Task;
+            })).ToArray();
+        var publication = new TaskWhenAllPublisher().Publish(executors, new TestNotification(), cancellation.Token);
+        try
+        {
+            Assert.Equal(16, invoked);
+            Assert.Equal(16, started);
+            Assert.False(publication.IsCompleted);
+            cancellation.Cancel();
+            Assert.False(publication.IsCompleted);
+            firstHandlers.TrySetResult();
+            var observed = await Assert.ThrowsAnyAsync<OperationCanceledException>(() => publication);
+            Assert.Equal(cancellation.Token, observed.CancellationToken);
+            Assert.True(publication.IsCanceled);
+            Assert.Equal(16, started);
+            Assert.InRange(invoked, 16, 20);
+        }
+        finally
+        {
+            firstHandlers.TrySetResult();
+        }
+    }
+
     private static void UpdateMax(ref int target, int candidate)
     {
         while (true)
