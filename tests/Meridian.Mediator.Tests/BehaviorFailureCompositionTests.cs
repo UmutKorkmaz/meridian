@@ -247,6 +247,100 @@ public class BehaviorFailureCompositionTests
         Assert.Equal(1, calls);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Throwing_Metadata_Setter_Does_Not_Replay_Successful_Handler(bool rejectOnlyMarkerKey)
+    {
+        var failure = new MetadataFailure(rejectOnlyMarkerKey);
+        var store = new ClaimStore { CompleteFailure = failure };
+        var idempotency = new IdempotencyBehavior<Command, string>(store);
+        var calls = 0;
+        var error = await Record.ExceptionAsync(() => new RetryBehavior<Command, string>().Handle(new Command(),
+            () => idempotency.Handle(new Command(), () => { calls++; return Task.FromResult("done"); }, default), default));
+        Assert.Same(failure, error);
+        Assert.Equal(1, calls);
+        Assert.True(store.Claimed);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Throwing_Metadata_Setter_Does_Not_Replay_After_Commit_Failure(bool rejectOnlyMarkerKey)
+    {
+        var failure = new MetadataFailure(rejectOnlyMarkerKey);
+        var transaction = new TransactionBehavior<Command, string>(new Provider(new Scope { CommitFailure = failure }));
+        var calls = 0;
+        var error = await Record.ExceptionAsync(() => new RetryBehavior<Command, string>().Handle(new Command(),
+            () => transaction.Handle(new Command(), () => { calls++; return Task.FromResult("done"); }, default), default));
+        Assert.Same(failure, error);
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public void Concurrent_Transient_Checks_Preserve_Ordinary_Exception_Metadata()
+    {
+        var failure = new IOException("transient");
+        failure.Data["consumer-key"] = "consumer-value";
+        var results = new bool[256];
+        Parallel.For(0, results.Length, i => results[i] = RetryPolicy.TransientOnly(failure));
+        Assert.All(results, Assert.True);
+        Assert.Equal(1, failure.Data.Count);
+        Assert.Equal("consumer-value", failure.Data["consumer-key"]);
+    }
+
+    [Fact]
+    public async Task Concurrent_Transient_Checks_Do_Not_Clear_An_Uncertain_Outcome_Marker()
+    {
+        var failure = new IOException("commit");
+        failure.Data["consumer-key"] = "consumer-value";
+        var transaction = new TransactionBehavior<Command, string>(new Provider(new Scope { CommitFailure = failure }));
+        Assert.Same(failure, await Record.ExceptionAsync(() => transaction.Handle(new Command(), () => Task.FromResult("done"), default)));
+        var entries = failure.Data.Count;
+        var results = new bool[256];
+        Parallel.For(0, results.Length, i => results[i] = RetryPolicy.TransientOnly(failure));
+        Assert.All(results, Assert.False);
+        Assert.Equal(entries, failure.Data.Count);
+        Assert.Equal("consumer-value", failure.Data["consumer-key"]);
+    }
+
+    private sealed class MetadataFailure(bool rejectOnlyMarkerKey) : IOException
+    {
+        private readonly System.Collections.IDictionary _data = new ThrowingMetadata(rejectOnlyMarkerKey);
+        public override System.Collections.IDictionary Data => _data;
+    }
+
+    private sealed class ThrowingMetadata(bool rejectOnlyMarkerKey) : System.Collections.IDictionary
+    {
+        private readonly System.Collections.Hashtable _values = new();
+        private object? _rejectedKey;
+        public object? this[object key]
+        {
+            get => _values[key];
+            set
+            {
+                _rejectedKey ??= key;
+                if (!rejectOnlyMarkerKey || ReferenceEquals(key, _rejectedKey))
+                    throw new NotSupportedException("Metadata writes rejected.");
+                _values[key] = value;
+            }
+        }
+        public bool IsReadOnly => false;
+        public bool IsFixedSize => false;
+        public int Count => _values.Count;
+        public bool IsSynchronized => false;
+        public object SyncRoot => this;
+        public System.Collections.ICollection Keys => _values.Keys;
+        public System.Collections.ICollection Values => _values.Values;
+        public void Add(object key, object? value) => throw new NotSupportedException("Metadata writes rejected.");
+        public void Clear() => _values.Clear();
+        public bool Contains(object key) => _values.Contains(key);
+        public void Remove(object key) => _values.Remove(key);
+        public void CopyTo(Array array, int index) => _values.CopyTo(array, index);
+        public System.Collections.IDictionaryEnumerator GetEnumerator() => _values.GetEnumerator();
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
+    }
+
     private sealed record Command : IIdempotentRequest, ITransactionalRequest, IRetryableRequest
     {
         public string IdempotencyKey => "same";

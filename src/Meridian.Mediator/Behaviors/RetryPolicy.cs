@@ -53,23 +53,47 @@ public static class RetryPolicy
 // governs Meridian retries; applications and providers must resolve uncertain outcomes.
 internal static class BehaviorFailure
 {
-    private const string RetrySuppressedKey = "Meridian.Mediator.RetrySuppressed";
+    private static readonly object RetrySuppressedKey = new();
 
     internal static CancellationTokenSource CreateCleanupBudget() => new(TimeSpan.FromSeconds(5));
 
     internal static void SuppressRetry(Exception exception)
     {
-        try { exception.Data[RetrySuppressedKey] = true; }
-        catch (Exception) { /* Custom exception metadata must never hide the original failure. */ }
+        lock (exception)
+        {
+            try
+            {
+                var data = exception.Data;
+                if (!data.Contains(RetrySuppressedKey)) data[RetrySuppressedKey] = true;
+            }
+            catch (Exception)
+            {
+                // Classification probes this same key and conservatively rejects
+                // metadata that cannot retain it; never mask the original failure.
+            }
+        }
     }
 
     internal static bool IsRetrySuppressed(Exception exception)
     {
-        try
+        // Serialize our accesses when the same exception reaches concurrent calls.
+        // The lock covers only metadata operations, never recursion or awaited work.
+        lock (exception)
         {
-            if (exception.Data.IsReadOnly || exception.Data[RetrySuppressedKey] is true) return true;
+            try
+            {
+                var data = exception.Data;
+                if (data.IsReadOnly || data.Contains(RetrySuppressedKey)) return true;
+
+                // Probe the actual suppression key: a different key could be writable
+                // even when a custom dictionary rejects this one. Remove only our key.
+                data[RetrySuppressedKey] = true;
+                if (data[RetrySuppressedKey] is not true) return true;
+                data.Remove(RetrySuppressedKey);
+                if (data.Contains(RetrySuppressedKey)) return true;
+            }
+            catch (Exception) { return true; }
         }
-        catch (Exception) { return true; }
 
         if (exception is AggregateException aggregate)
             return aggregate.InnerExceptions.Any(IsRetrySuppressed);
