@@ -18,15 +18,17 @@ public static class GeneratedMediatorRegistration
             var identityLifetime = item.Category == GeneratedMediatorCategory.NotificationHandler ? (ServiceLifetime?)null : lifetime;
             if (HasGeneratedRegistration(services, item.ServiceType, item.ImplementationType, identityLifetime)) continue;
             if (services.Any(d => d.ServiceType == item.ServiceType && d.ImplementationType == item.ImplementationType && (identityLifetime == null || d.Lifetime == identityLifetime))) continue;
-            services.Add(new ServiceDescriptor(item.ServiceType, item.Factory, lifetime));
-            services.AddSingleton(new FactoryMarker(item.ServiceType, item.ImplementationType, lifetime));
+            var descriptor = new ServiceDescriptor(item.ServiceType, item.Factory, lifetime);
+            services.Add(descriptor);
+            services.AddSingleton(new FactoryMarker(item.ServiceType, item.ImplementationType, lifetime, descriptor));
         }
     }
     // Legacy scanning can see identities erased by the public ServiceDescriptor factory overload.
     // Opaque user factories are deliberately not treated as equivalent implementations.
     internal static bool HasGeneratedRegistration(IServiceCollection services, Type serviceType, Type implementationType, ServiceLifetime? lifetime = null) =>
         services.Any(d => d.ServiceType == typeof(FactoryMarker) && d.ImplementationInstance is FactoryMarker m &&
-            m.Service == serviceType && m.Implementation == implementationType && (lifetime == null || m.Lifetime == lifetime));
+            m.Service == serviceType && m.Implementation == implementationType && (lifetime == null || m.Lifetime == lifetime) &&
+            services.Any(candidate => ReferenceEquals(candidate, m.Descriptor)));
 
     internal static void RegisterRegistries(IServiceCollection services, IReadOnlyList<IGeneratedMediatorRegistry> registries, ServiceLifetime lifetime, bool strict)
     {
@@ -50,6 +52,6 @@ public static class GeneratedMediatorRegistration
             services.AddSingleton<IGeneratedMediatorRegistry>(registry);
         }
     }
-    private sealed record FactoryMarker(Type Service, Type Implementation, ServiceLifetime Lifetime);
+    private sealed record FactoryMarker(Type Service, Type Implementation, ServiceLifetime Lifetime, ServiceDescriptor Descriptor);
     private sealed record RegistryMarker(IGeneratedMediatorRegistry Registry, ServiceLifetime Lifetime, bool Strict);
 }

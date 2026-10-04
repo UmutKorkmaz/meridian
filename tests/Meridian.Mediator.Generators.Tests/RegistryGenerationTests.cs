@@ -4,6 +4,7 @@ using Meridian.Mediator.Generators;
 using Meridian.Mediator.Generated;
 using Meridian.Mediator.Extensions;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using System.Reflection;
 
 namespace Meridian.Mediator.Generators.Tests;
@@ -310,6 +311,41 @@ public class RegistryGenerationTests
             var again = provider.GetServices(contribution.ServiceType).Single(h => h!.GetType() == contribution.ImplementationType);
             if (order == "generated-first") Assert.Same(handler, again); else Assert.NotSame(handler, again);
         }
+    }
+
+    [Theory]
+    [InlineData("none", "scan", 1)]
+    [InlineData("remove", "scan", 1)]
+    [InlineData("replace", "scan", 2)]
+    [InlineData("remove", "generated", 1)]
+    [InlineData("replace", "generated", 2)]
+    public async Task Generated_Markers_Require_Their_Live_Descriptor_After_Removal_Or_Replacement(string mutation, string registration, int expectedCalls)
+    {
+        const string source = "public class N : INotification {} public class NH : INotificationHandler<N>, IDisposable { public static int Calls; public static int Disposals; public Task Handle(N n,CancellationToken c) { Calls++; return Task.CompletedTask; } public void Dispose() { Disposals++; } } [GenerateMediatorRegistry(typeof(NH))] public partial class Registry {}";
+        var registry = Load(Generate(source));
+        var contribution = ((IGeneratedMediatorContributions)registry).Contributions.Single();
+        var services = new ServiceCollection();
+        registry.RegisterServices(services, ServiceLifetime.Transient);
+        if (mutation != "none") services.RemoveAll(contribution.ServiceType);
+        ServiceDescriptor? replacement = null;
+        if (mutation == "replace")
+        {
+            replacement = ServiceDescriptor.Transient(contribution.ServiceType, _ => Activator.CreateInstance(contribution.ImplementationType)!);
+            services.Add(replacement);
+        }
+        if (registration == "scan") services.AddMeridianMediator(c => c.RegisterServicesFromAssembly(registry.GetType().Assembly));
+        else
+        {
+            registry.RegisterServices(services, ServiceLifetime.Transient);
+            registry.RegisterServices(services, ServiceLifetime.Transient);
+            services.AddMeridianMediator(_ => { });
+        }
+        if (replacement != null) Assert.Contains(replacement, services);
+        Assert.Equal(expectedCalls, services.Count(d => d.ServiceType == contribution.ServiceType));
+        using (var provider = services.BuildServiceProvider())
+            await provider.GetRequiredService<IMediator>().Publish((INotification)Activator.CreateInstance(registry.NotificationTypes.Single())!);
+        Assert.Equal(expectedCalls, (int)contribution.ImplementationType.GetField("Calls")!.GetValue(null)!);
+        Assert.Equal(expectedCalls, (int)contribution.ImplementationType.GetField("Disposals")!.GetValue(null)!);
     }
 
 }
