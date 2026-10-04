@@ -69,24 +69,6 @@ function Execute([string[]] $Arguments, [string] $Log) {
         return $output
     } finally { $process.Dispose() }
 }
-function Read-RestoredComponents($Assets, [string] $Packages) {
-    $components = @()
-    foreach ($library in $Assets.libraries.PSObject.Properties | Where-Object { $_.Value.type -eq 'package' }) {
-        $identity = $library.Name.Split('/')
-        $id = $identity[0]; $version = $identity[1]
-        $path = Join-Path $Packages "$($library.Value.path)/$($id.ToLowerInvariant()).$version.nupkg"
-        $archive = [IO.Compression.ZipFile]::OpenRead($path)
-        try {
-            $entry = @($archive.Entries | Where-Object FullName -Like '*.nuspec')
-            if ($entry.Count -ne 1) { throw "Missing restored nuspec: $id" }
-            [xml] $nuspec = Read-ArchiveText $archive $entry[0].FullName
-            $license = $nuspec.package.metadata.license
-            $licenseFileHash = if ($license -and $license.type -eq 'file') { Get-ArchiveHash $archive.GetEntry($license.InnerText) } else { $null }
-            $components += [ordered]@{ id=$id; version=$version; sha256=(Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant(); nuspecSha256=(Get-ArchiveHash $entry[0]); restoreSha512=$library.Value.sha512; licenseType=if ($license) {$license.type} else {$null}; license=if ($license) {$license.InnerText} else {$null}; licenseFileSha256=$licenseFileHash; path=$path }
-        } finally { $archive.Dispose() }
-    }
-    return $components
-}
 $results = @()
 $components = @{}
 $graphs = @()
@@ -173,20 +155,10 @@ foreach ($lane in $lanes) {
         }
     } finally { Pop-Location }
 }
-$buildTooling = @()
-# Private analyzer build inputs are recorded separately from the shipped consumer graph.
-foreach ($producer in @($inventory.packages.analyzerPaths.project | Select-Object -Unique)) {
-    $project = Resolve-RepositoryPath $repo $producer
-    $assetsPath = Join-Path (Split-Path $project) 'obj/project.assets.json'
-    if (-not (Test-Path $assetsPath)) { throw "Missing analyzer build dependency evidence: $producer" }
-    $assets = Get-Content -Raw $assetsPath | ConvertFrom-Json
-    $folders = @($assets.packageFolders.PSObject.Properties.Name)
-    if ($folders.Count -ne 1) { throw "Analyzer build evidence needs one unambiguous package folder: $producer" }
-    $evaluated = Invoke-ProjectEvaluation $dotnet $project @('TargetFramework','AssemblyName') @('PackageReference') @('-p:Configuration=Release')
-    $roots = @($evaluated.Items.PackageReference | Where-Object { $_.PrivateAssets -eq 'all' } | ForEach-Object { [ordered]@{id=$_.Identity;version=$_.Version;privateAssets=$_.PrivateAssets} })
-    $buildTooling += [ordered]@{producer=$producer;scope='private-analyzer-build';assetsSha256=(Get-FileHash $assetsPath -Algorithm SHA256).Hash.ToLowerInvariant();privateRoots=$roots;components=@(Read-RestoredComponents $assets $folders[0])}
-}
+# Pack-time producer evidence was validated by InspectOnly above; never restamp live obj inputs.
+$packageRecord = Get-Content -Raw (Join-Path $Feed "package-manifest.$CandidateVersion.json") | ConvertFrom-Json
+$buildTooling = @(Test-RecordedBuildTooling $inventory $packageRecord $CandidateVersion)
 # This is a Meridian schemaVersion1 SBOM inventory, not a claimed CycloneDX/SPDX document.
-$sbom = [ordered]@{schemaVersion=1;format='meridian-restored-package-inventory';manifestSha256=(Get-FileHash $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant();candidateVersion=$CandidateVersion;components=@($components.Values | Sort-Object id,version);consumerGraphs=$graphs;distributedPackages=(Get-Content -Raw (Join-Path $Feed "package-manifest.$CandidateVersion.json") | ConvertFrom-Json).packages;buildTooling=$buildTooling;buildToolingScope='Private build tools are recorded separately from consumer distribution graphs'}
+$sbom = [ordered]@{schemaVersion=1;format='meridian-restored-package-inventory';manifestSha256=(Get-FileHash $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant();candidateVersion=$CandidateVersion;components=@($components.Values | Sort-Object id,version);consumerGraphs=$graphs;distributedPackages=$packageRecord.packages;buildTooling=$buildTooling;buildToolingScope='Private build tools are recorded separately from consumer distribution graphs'}
 $sbom | ConvertTo-Json -Depth 20 | Set-Content (Join-Path $run 'sbom-inventory.json')
 Write-Host "PASS packaged compiler consumers: $($results.Count); evidence=$run"

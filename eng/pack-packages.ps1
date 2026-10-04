@@ -23,6 +23,7 @@ $hashFile = Join-Path $feed "package-manifest.$CandidateVersion.json"
 $recorded = if ($InspectOnly) { Get-Content -Raw $hashFile | ConvertFrom-Json } else { $null }
 if (-not $InspectOnly -and @(Get-ChildItem $feed -Filter "*.$CandidateVersion.nupkg").Count) { throw 'Candidate version already exists in output feed; choose a fresh version' }
 $evidence = @()
+$buildTooling = @{}
 $versionOverrides = @($inventory.packages.versionSource | Select-Object -Unique | ForEach-Object { "-p:${_}=$CandidateVersion" })
 foreach ($package in $inventory.packages) {
     $project = Resolve-RepositoryPath $repo $package.project
@@ -61,7 +62,18 @@ foreach ($package in $inventory.packages) {
             $hash = Get-ArchiveHash $zip.GetEntry($analyzer.packagePath)
             $producerHash = if ($InspectOnly) { @(@($recorded.packages | Where-Object id -EQ $package.id)[0].analyzers | Where-Object packagePath -EQ $analyzer.packagePath)[0].producerSha256 } else { (Get-FileHash $evaluations[$package.id].analyzers[$analyzer.packagePath] -Algorithm SHA256).Hash.ToLowerInvariant() }
             if ($hash -ne $producerHash) { throw 'Packed analyzer differs from evaluated producer TargetPath' }
-            $analyzerHashes += [ordered]@{ project=$analyzer.project; packagePath=$analyzer.packagePath; sha256=$hash; producerSha256=$producerHash }
+            $toolingHash = $null
+            if (-not $InspectOnly) {
+                if (-not $buildTooling.ContainsKey($analyzer.project)) {
+                    $outputs = @{}
+                    foreach ($entry in $inventory.packages) {
+                        foreach ($asset in @($entry.analyzerPaths | Where-Object project -EQ $analyzer.project)) { $outputs[$asset.packagePath] = $evaluations[$entry.id].analyzers[$asset.packagePath] }
+                    }
+                    $buildTooling[$analyzer.project] = New-AnalyzerBuildEvidence $repo $analyzer.project $dotnet $Configuration $CandidateVersion $outputs $versionOverrides
+                }
+                $toolingHash = $buildTooling[$analyzer.project].evidenceSha256
+            }
+            $analyzerHashes += [ordered]@{ project=$analyzer.project; packagePath=$analyzer.packagePath; sha256=$hash; producerSha256=$producerHash; toolingEvidenceSha256=$toolingHash }
         }
         $entries = @($zip.Entries | ForEach-Object FullName)
         $binaryHashes = @($zip.Entries | Where-Object { $_.FullName -match '\.(dll|pdb)$' } | ForEach-Object { [ordered]@{ path=$_.FullName;sha256=(Get-ArchiveHash $_) } })
@@ -75,13 +87,14 @@ foreach ($package in $inventory.packages) {
     } elseif (Test-Path $symbols) { $symbolsHash = (Get-FileHash $symbols -Algorithm SHA256).Hash.ToLowerInvariant() }
     $evidence += [ordered]@{ id=$package.id; kind=$package.kind; version=$CandidateVersion; assemblyName=$assembly; package=[IO.Path]::GetFileName($nupkg); sha256=(Get-FileHash $nupkg -Algorithm SHA256).Hash.ToLowerInvariant(); symbols=if ($symbolsHash) {[IO.Path]::GetFileName($symbols)} else {$null}; symbolsSha256=$symbolsHash; license=[ordered]@{ expression=$package.licenseExpression; file='LICENSE'; sha256=$licenseHash }; dependencies=$declaredDeps; assets=$entries; binaries=$binaryHashes; analyzers=$analyzerHashes; baselineVersion=$package.baselineVersion }
 }
-$result = [ordered]@{ schemaVersion=1; candidateVersion=$CandidateVersion; manifestSha256=(Get-FileHash $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant(); packages=$evidence }
+$result = [ordered]@{ schemaVersion=1; candidateVersion=$CandidateVersion; manifestSha256=(Get-FileHash $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant(); packages=$evidence; buildTooling=@($buildTooling.Values | Sort-Object producer) }
 if ($InspectOnly) {
+    $null = Test-RecordedBuildTooling $inventory $recorded $CandidateVersion
     if ($recorded.manifestSha256 -ne $result.manifestSha256) { throw 'Inventory hash changed since packing' }
     Assert-SameSet @($recorded.packages.id) @($evidence.id) 'Recorded inventory identities mismatch'
     foreach ($entry in $evidence) {
         $old = @($recorded.packages | Where-Object id -EQ $entry.id)
         if ($old.Count -ne 1 -or $old[0].sha256 -ne $entry.sha256 -or $old[0].symbolsSha256 -ne $entry.symbolsSha256) { throw "Package hash mismatch: $($entry.id)" }
     }
-} else { $result | ConvertTo-Json -Depth 14 | Set-Content $hashFile }
+} else { $null = Test-RecordedBuildTooling $inventory $result $CandidateVersion; $result | ConvertTo-Json -Depth 14 | Set-Content $hashFile }
 Write-Host "PASS package inventory, assets, dependencies and hashes: $($inventory.packages.Count) packages ($CandidateVersion)"

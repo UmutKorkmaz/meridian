@@ -89,6 +89,8 @@ function Invoke-ProjectEvaluation([string] $Dotnet, [string] $Project, [string[]
 }
 
 function Assert-SameSet([object[]] $Actual, [object[]] $Expected, [string] $Message) {
+    $Actual = @($Actual | Where-Object { $null -ne $_ })
+    $Expected = @($Expected | Where-Object { $null -ne $_ })
     if ($Actual.Count -ne $Expected.Count -or ($Actual.Count -and (Compare-Object $Actual $Expected))) { throw $Message }
 }
 
@@ -167,6 +169,111 @@ function Select-ReleasePackages($Inventory, [string] $Repo, [string] $Dotnet, [s
     $evaluated = Test-EvaluatedInventory $Inventory $Repo $Dotnet 'Release'
     $selected = @($Inventory.packages | Where-Object { $evaluated[$_.id].properties.($_.versionSource) -eq $TagVersion })
     if (-not $selected.Count) { throw "No inventory package version matches tag $TagVersion" }
-    return $selected
+    $closure = @(Get-PackageClosure $Inventory @($selected.id))
+    foreach ($dependency in $closure) {
+        $version = $evaluated[$dependency.id].properties.($dependency.versionSource)
+        if ($version -ne $TagVersion) { throw "Release dependency version mismatch: $($dependency.id) evaluated $version, tag $TagVersion" }
+        if ($dependency.id -notin $selected.id) { throw "Release dependency closure omitted: $($dependency.id)" }
+    }
+    return $closure
 }
 Export-ModuleMember -Function Select-ReleasePackages
+
+function Read-RestoredComponents($Assets, [string] $Packages) {
+    $components = @()
+    foreach ($library in $Assets.libraries.PSObject.Properties | Where-Object { $_.Value.type -eq 'package' }) {
+        $identity = $library.Name.Split('/')
+        $id = $identity[0]; $version = $identity[1]
+        $path = Join-Path $Packages "$($library.Value.path)/$($id.ToLowerInvariant()).$version.nupkg"
+        $archive = [IO.Compression.ZipFile]::OpenRead($path)
+        try {
+            $entry = @($archive.Entries | Where-Object FullName -Like '*.nuspec')
+            if ($entry.Count -ne 1) { throw "Missing restored nuspec: $id" }
+            [xml] $nuspec = Read-ArchiveText $archive $entry[0].FullName
+            if ($nuspec.package.metadata.id -ne $id -or $nuspec.package.metadata.version -ne $version) { throw "Restored nuspec identity mismatch: $id/$version" }
+            $license = $nuspec.package.metadata.license
+            $licenseFileHash = if ($license -and $license.type -eq 'file') { Get-ArchiveHash $archive.GetEntry($license.InnerText) } else { $null }
+            $components += [ordered]@{ id=$id; version=$version; sha256=(Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant(); nuspecSha256=(Get-ArchiveHash $entry[0]); restoreSha512=$library.Value.sha512; licenseType=if ($license) {$license.type} else {$null}; license=if ($license) {$license.InnerText} else {$null}; licenseFileSha256=$licenseFileHash; path=$path }
+        } finally { $archive.Dispose() }
+    }
+    return $components
+}
+
+function Get-BytesHash([byte[]] $Bytes) {
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($Bytes)).ToLowerInvariant()
+}
+
+function New-AnalyzerBuildEvidence([string] $Repo, [string] $Producer, [string] $Dotnet, [string] $Configuration, [string] $CandidateVersion, $Outputs, [string[]] $Extra) {
+    $project = Resolve-RepositoryPath $Repo $Producer
+    $assetsPath = Join-Path (Split-Path $project) 'obj/project.assets.json'
+    if (-not (Test-Path $assetsPath)) { throw "Missing analyzer build dependency evidence: $Producer" }
+    $bytes = [IO.File]::ReadAllBytes($assetsPath)
+    $assets = [Text.Encoding]::UTF8.GetString($bytes) | ConvertFrom-Json
+    $folders = @($assets.packageFolders.PSObject.Properties.Name)
+    if ($folders.Count -ne 1) { throw "Analyzer build evidence needs one unambiguous package folder: $Producer" }
+    $evaluated = Invoke-ProjectEvaluation $Dotnet $project @('TargetFramework','AssemblyName') @('PackageReference') (@("-p:Configuration=$Configuration") + $Extra)
+    $roots = @($evaluated.Items.PackageReference | Where-Object { $_.PrivateAssets -eq 'all' } | Sort-Object Identity | ForEach-Object { [ordered]@{id=$_.Identity;version=$_.Version;privateAssets=$_.PrivateAssets} })
+    # Keep portable identities/hashes, rather than the machine-specific cache path.
+    $components = @(Read-RestoredComponents $assets $folders[0] | Sort-Object id,version | ForEach-Object {
+        [ordered]@{id=$_.id;version=$_.version;sha256=$_.sha256;nuspecSha256=$_.nuspecSha256;restoreSha512=$_.restoreSha512;licenseType=$_.licenseType;license=$_.license;licenseFileSha256=$_.licenseFileSha256}
+    })
+    $projectBytes = [IO.File]::ReadAllBytes($project)
+    $outputHashes = @($Outputs.Keys | Sort-Object | ForEach-Object { [ordered]@{packagePath=$_;sha256=(Get-FileHash $Outputs[$_] -Algorithm SHA256).Hash.ToLowerInvariant()} })
+    $sdk = (& $Dotnet --version) -join ''
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot record analyzer build SDK' }
+    $payload = [ordered]@{producer=$Producer;scope='private-analyzer-build';candidateVersion=$CandidateVersion;projectSha256=(Get-BytesHash $projectBytes);projectBase64=[Convert]::ToBase64String($projectBytes);framework=$evaluated.Properties.TargetFramework;assemblyName=$evaluated.Properties.AssemblyName;sdkVersion=$sdk;assetsSha256=(Get-BytesHash $bytes);assetsBase64=[Convert]::ToBase64String($bytes);privateRoots=$roots;components=$components;outputs=$outputHashes}
+    # Hash exactly these serialized UTF-8 bytes. Inspection never reserializes to verify a digest.
+    $payloadBytes = [Text.Encoding]::UTF8.GetBytes(($payload | ConvertTo-Json -Depth 30 -Compress))
+    return [ordered]@{producer=$Producer;scope='private-analyzer-build';evidenceSha256=(Get-BytesHash $payloadBytes);evidenceBase64=[Convert]::ToBase64String($payloadBytes)}
+}
+
+function Test-RecordedBuildTooling($Inventory, $Record, [string] $CandidateVersion) {
+    $producers = @($Inventory.packages.analyzerPaths.project | Select-Object -Unique)
+    if ($producers.Count -and -not $Record.buildTooling) { throw 'Missing analyzer build provenance' }
+    Assert-SameSet @($Record.buildTooling.producer) $producers 'Analyzer build provenance producer set mismatch'
+    if ($Record.candidateVersion -ne $CandidateVersion) { throw 'Analyzer build provenance candidate mismatch' }
+    $decoded = @()
+    foreach ($snapshot in $Record.buildTooling) {
+        if (-not $snapshot.evidenceBase64) { throw 'Missing analyzer build provenance payload' }
+        $bytes = [Convert]::FromBase64String($snapshot.evidenceBase64)
+        if ((Get-BytesHash $bytes) -ne $snapshot.evidenceSha256) { throw 'Analyzer build provenance digest mismatch' }
+        $payload = [Text.Encoding]::UTF8.GetString($bytes) | ConvertFrom-Json
+        if ($payload.producer -ne $snapshot.producer -or $payload.candidateVersion -ne $CandidateVersion -or $payload.scope -ne 'private-analyzer-build' -or $snapshot.scope -ne $payload.scope -or $payload.framework -ne 'netstandard2.0' -or -not $payload.assemblyName -or -not $payload.sdkVersion) { throw 'Analyzer build provenance identity mismatch' }
+        if (-not $payload.assetsBase64 -or -not $payload.projectBase64) { throw 'Missing analyzer build provenance source inputs' }
+        $assetsBytes = [Convert]::FromBase64String($payload.assetsBase64)
+        if ((Get-BytesHash $assetsBytes) -ne $payload.assetsSha256 -or (Get-BytesHash ([Convert]::FromBase64String($payload.projectBase64))) -ne $payload.projectSha256) { throw 'Analyzer build provenance input hash mismatch' }
+        $assets = [Text.Encoding]::UTF8.GetString($assetsBytes) | ConvertFrom-Json
+        $assetProject = $assets.project.restore.projectPath.Replace('\','/')
+        if (-not $assetProject.EndsWith("/$($payload.producer)", [StringComparison]::Ordinal)) { throw 'Analyzer build provenance project binding mismatch' }
+        $libraries = @($assets.libraries.PSObject.Properties | Where-Object { $_.Value.type -eq 'package' })
+        Assert-SameSet @($payload.components | ForEach-Object { "$($_.id)/$($_.version)" }) @($libraries.Name) 'Analyzer build provenance component closure mismatch'
+        foreach ($component in $payload.components) {
+            $identity = "$($component.id)/$($component.version)"
+            if ($component.restoreSha512 -ne $assets.libraries.$identity.sha512 -or $component.sha256 -notmatch '^[0-9a-f]{64}$' -or $component.nuspecSha256 -notmatch '^[0-9a-f]{64}$' -or ($component.licenseType -and $component.licenseType -notin @('expression','file')) -or ($component.licenseType -and -not $component.license) -or ($component.licenseType -eq 'file' -and $component.licenseFileSha256 -notmatch '^[0-9a-f]{64}$')) { throw "Analyzer build provenance component metadata mismatch: $identity" }
+        }
+        $frameworks = @($assets.project.frameworks.PSObject.Properties)
+        if ($frameworks.Count -ne 1 -or $frameworks[0].Name -ne $payload.framework) { throw 'Analyzer build provenance framework mismatch' }
+        $privateIds = @($frameworks[0].Value.dependencies.PSObject.Properties | Where-Object { $_.Value.suppressParent -eq 'All' } | ForEach-Object Name)
+        Assert-SameSet @($payload.privateRoots.id) $privateIds 'Analyzer build provenance private root closure mismatch'
+        foreach ($root in $payload.privateRoots) {
+            if ($root.privateAssets -ne 'all' -or -not $root.version) { throw 'Analyzer build provenance private root metadata mismatch' }
+        }
+        $declared = @($Inventory.packages.analyzerPaths | Where-Object project -EQ $snapshot.producer)
+        Assert-SameSet @($payload.outputs.packagePath) @($declared.packagePath | Select-Object -Unique) 'Analyzer build provenance output closure mismatch'
+        foreach ($package in $Inventory.packages) {
+            $recordedPackage = @($Record.packages | Where-Object id -EQ $package.id)
+            if ($recordedPackage.Count -ne 1) { throw 'Analyzer build provenance package identity mismatch' }
+            Assert-SameSet @($recordedPackage[0].analyzers.packagePath) @($package.analyzerPaths.packagePath) 'Analyzer build provenance analyzer set mismatch'
+            foreach ($analyzer in @($package.analyzerPaths | Where-Object project -EQ $snapshot.producer)) {
+                $binding = @($recordedPackage[0].analyzers | Where-Object packagePath -EQ $analyzer.packagePath)
+                if ($binding.Count -ne 1 -or $binding[0].project -ne $analyzer.project -or $binding[0].toolingEvidenceSha256 -ne $snapshot.evidenceSha256) { throw 'Analyzer build provenance identity mismatch' }
+                $output = @($payload.outputs | Where-Object packagePath -EQ $analyzer.packagePath)
+                if ($output.Count -ne 1 -or $output[0].sha256 -notmatch '^[0-9a-f]{64}$' -or $output[0].sha256 -ne $binding[0].sha256 -or $output[0].sha256 -ne $binding[0].producerSha256 -or [IO.Path]::GetFileNameWithoutExtension($analyzer.packagePath) -ne $payload.assemblyName) { throw 'Analyzer build provenance binary binding mismatch' }
+            }
+        }
+        $payload | Add-Member evidenceSha256 $snapshot.evidenceSha256
+        $decoded += $payload
+    }
+    return $decoded
+}
+Export-ModuleMember -Function Read-RestoredComponents,Get-BytesHash,New-AnalyzerBuildEvidence,Test-RecordedBuildTooling
