@@ -87,12 +87,31 @@ if ($IncludeHttp) {
     if ($NoBuild) { $arguments += '--no-build' }
     $logPath = Join-Path $LogDirectory 'http.log'
     $start = [Diagnostics.ProcessStartInfo]::new()
-    $start.FileName = $dotnet
+    $ownershipToken = [Guid]::NewGuid().ToString('N')
+    $ownedDirectory = Join-Path $LogDirectory ".http-owned-$ownershipToken"
+    if ($IsWindows) { $null = [IO.Directory]::CreateDirectory($ownedDirectory) }
+    else {
+        $mode = [IO.UnixFileMode]::UserRead -bor [IO.UnixFileMode]::UserWrite -bor [IO.UnixFileMode]::UserExecute
+        $null = [IO.Directory]::CreateDirectory($ownedDirectory, $mode)
+    }
+    $ownershipPath = Join-Path $ownedDirectory 'ownership.json'
+    $argumentsPath = Join-Path $ownedDirectory 'arguments.json'
+    [IO.File]::WriteAllText($argumentsPath, (ConvertTo-Json -InputObject $arguments -Compress))
+    $helperAssembly = Join-Path $LogDirectory "http-owned-helper-$ownershipToken.dll"
+    Add-Type -Path (Join-Path $PSScriptRoot 'OwnedHttpProcess.cs') -OutputAssembly $helperAssembly
+    Add-Type -Path $helperAssembly
+    $helperSha256 = (Get-FileHash -LiteralPath $helperAssembly -Algorithm SHA256).Hash
+    $start.FileName = Join-Path $PSHOME $(if ($IsWindows) { 'pwsh.exe' } else { 'pwsh' })
     $start.WorkingDirectory = $repoRoot
     $start.UseShellExecute = $false
     $start.RedirectStandardOutput = $true
     $start.RedirectStandardError = $true
-    foreach ($argument in $arguments) { $start.ArgumentList.Add($argument) }
+    foreach ($argument in @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'run-owned-http.ps1'),
+            '-HelperAssembly', $helperAssembly, '-Executable', $dotnet,
+            '-RunArgumentsPath', $argumentsPath, '-WorkingDirectory', $repoRoot,
+            '-OwnershipPath', $ownershipPath, '-OwnershipToken', $ownershipToken)) {
+        $start.ArgumentList.Add($argument)
+    }
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = $start
     $timedOut = $false
@@ -100,20 +119,43 @@ if ($IncludeHttp) {
     $drainsObserved = $false
     $stdout = $null
     $stderr = $null
+    $exited = $null
+    $ownershipValidated = $false
     $failures = [Collections.Generic.List[string]]::new()
     try {
         Write-Host "RUN HTTP ($Framework), timeout=${TimeoutSeconds}s"
         $null = $process.Start()
+        $supervisorPid = $process.Id
         $stdout = $process.StandardOutput.ReadToEndAsync()
         $stderr = $process.StandardError.ReadToEndAsync()
-        $timedOut = -not $process.WaitForExit($TimeoutSeconds * 1000)
+        $exited = $process.WaitForExitAsync()
+        $completion = [Threading.Tasks.Task]::WhenAll([Threading.Tasks.Task[]] @($exited, $stdout, $stderr))
+        # One run budget covers the actual supervisor exit and both original pipe reads.
+        $timedOut = -not $completion.Wait($TimeoutSeconds * 1000)
     } catch { $failures.Add("HTTP runner error: $_") }
     finally {
-        # The runner owns this exact child tree. Join exit and both pipes before disposing it.
+        try {
+            if ([IO.File]::Exists($ownershipPath)) {
+                $ownership = Get-Content -LiteralPath $ownershipPath -Raw | ConvertFrom-Json
+                if ($ownership.pid -ne $process.Id -or $ownership.token -cne $ownershipToken -or
+                    $ownership.kind -ne $(if ($IsWindows) { 'windows-job' } else { 'unix-session' })) {
+                    throw 'Owned HTTP supervisor receipt does not match this run.'
+                }
+                $ownershipValidated = $true
+                [IO.File]::Copy($ownershipPath, (Join-Path $LogDirectory 'http-ownership.json'), $true)
+            }
+        } catch { $failures.Add("HTTP ownership receipt error: $_") }
         try {
             if ($process.Id -gt 0) {
+                if (-not $IsWindows) {
+                    # Kill the private group even after its leader exited; no PID-name search.
+                    $null = [Meridian.Tools.OwnedHttpProcess]::TerminateUnixGroup($process.Id, $ownershipValidated)
+                }
+                # Windows closes the supervisor's exclusive kill-on-close job handle on exit.
+                # Before Unix ownership setup there cannot be an inner child yet.
                 if (-not $process.HasExited) { $process.Kill($true) }
-                $process.WaitForExit()
+                if ($null -ne $exited) { $exited.GetAwaiter().GetResult() }
+                else { $process.WaitForExit() }
                 $exitObserved = $true
             }
         } catch { $failures.Add("HTTP process cleanup error: $_") }
@@ -124,14 +166,18 @@ if ($IncludeHttp) {
                 $drainsObserved = $true
             }
         } catch { $failures.Add("HTTP drain error: $_") }
+        $childExitCode = if ($exitObserved) { $process.ExitCode } else { 1 }
+        try { $process.Dispose() } catch { $failures.Add("HTTP handle cleanup error: $_") }
+        try { Remove-Item -LiteralPath $ownedDirectory -Recurse -Force }
+        catch { $failures.Add("HTTP private evidence cleanup error: $_") }
         $output = if ($null -ne $stdout -and $stdout.IsCompletedSuccessfully) { $stdout.Result } else { '[stdout unavailable]' }
         $errors = if ($null -ne $stderr -and $stderr.IsCompletedSuccessfully) { $stderr.Result } else { '[stderr unavailable]' }
         # Cleanup diagnostics accompany, rather than replace, the original timeout diagnosis.
-        $exitCode = if ($timedOut) { 124 } elseif ($failures.Count -gt 0) { 1 } else { $process.ExitCode }
-        $log = "sample=HTTP framework=$Framework exit=$exitCode timeout=$timedOut exitObserved=$exitObserved drainsObserved=$drainsObserved`n--- stdout ---`n$output`n--- stderr ---`n$errors`n--- runner ---`n$($failures -join "`n")"
-        [IO.File]::WriteAllText($logPath, $log)
+        $exitCode = if ($timedOut) { 124 } elseif ($failures.Count -gt 0) { 1 } else { $childExitCode }
+        $log = "sample=HTTP framework=$Framework exit=$exitCode timeout=$timedOut exitObserved=$exitObserved drainsObserved=$drainsObserved ownershipValidated=$ownershipValidated supervisorPid=$supervisorPid helperSha256=$helperSha256 helperAssembly=$helperAssembly`n--- stdout ---`n$output`n--- stderr ---`n$errors`n--- runner ---`n$($failures -join "`n")"
+        try { [IO.File]::WriteAllText($logPath, $log) }
+        catch { Write-Warning "HTTP log write also failed: $_" }
         Write-Host $log
-        $process.Dispose()
     }
     if ($exitCode -ne 0) { exit $exitCode }
 }
