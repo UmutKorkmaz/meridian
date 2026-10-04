@@ -64,9 +64,14 @@ internal static class StructuralBindingBuilder
         }
     }
 
-    internal static bool IsCollection(ITypeSymbol type) => type.SpecialType != SpecialType.System_String &&
-        (type is IArrayTypeSymbol || type.SpecialType == SpecialType.System_Collections_IEnumerable ||
-         type.AllInterfaces.Any(i => i.SpecialType == SpecialType.System_Collections_IEnumerable));
+    internal static bool IsCollection(ITypeSymbol type)
+    {
+        if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable)
+            return IsCollection(nullable.TypeArguments[0]);
+        return type.SpecialType != SpecialType.System_String &&
+            (type is IArrayTypeSymbol || type.SpecialType == SpecialType.System_Collections_IEnumerable ||
+             type.AllInterfaces.Any(i => i.SpecialType == SpecialType.System_Collections_IEnumerable));
+    }
 
     private static bool TryElement(ITypeSymbol type, out ITypeSymbol? element)
     {

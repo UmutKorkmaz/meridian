@@ -1,3 +1,5 @@
+using Microsoft.CodeAnalysis;
+
 namespace Meridian.Mapping.Tests;
 
 public class GeneratedCollectionTests
@@ -92,6 +94,46 @@ public class GeneratedCollectionTests
             public static bool Proof() { try { MapToDto(new Source {Values=Stream()}); return false; } catch(MeridianMappingLimitException ex) { return ex.ObservedValue==10001 && Node.Reads==10000 && disposed; } }
         }
         """);
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Nullable_Custom_Enumerable_Struct_Is_Unsupported(bool constructor)
+    {
+        var fixture = NullableBagFixture("Structural",constructor);
+        var result=GeneratorTestHarness.Compile(fixture);
+        Assert.Contains(result.Diagnostics,d=>d.Id=="MERIDIANGEN005");
+        Assert.DoesNotContain(result.Compilation.GetDiagnostics(),d=>d.Severity==DiagnosticSeverity.Error);
+        Assert.DoesNotContain("public static global::Dto MapToDto",result.GeneratedSource);
+    }
+
+    [Fact]
+    public void Legacy_Nullable_Custom_Enumerable_Struct_Preserves_Alias() => GeneratedGraphTests.Proof(
+        NullableBagFixture("Legacy",false).Replace("#nullable enable\nusing Meridian.Mapping;", "")
+            .Replace("public static partial class Maps {}", "public static partial class Maps { public static bool Proof() { var s=new Source {Values=new UnsupportedBag(new[] {42,99})}; var d=MapToDto(s); return object.ReferenceEquals(s.Values!.Value.Items,d.Values!.Value.Items); } }"));
+
+    [Fact]
+    public void Nullable_Scalar_Collection_Elements_And_Constructor_Remain_Supported() => GeneratedGraphTests.Proof("""
+        public class Source { public int?[] Values {get;set;}=new int?[] {42,null,99}; }
+        public record Dto(System.Collections.Generic.IReadOnlyList<long?> Values);
+        [GenerateMapper(typeof(Source),typeof(Dto),Mode=GeneratedMappingMode.Structural)]
+        public static partial class Maps { public static bool Proof() { var d=MapToDto(new Source()); return d.Values.Count==3 && d.Values[0]==42L && d.Values[1]==null && d.Values[2]==99L; } }
+        """);
+
+    private static string NullableBagFixture(string mode,bool constructor) => $$"""
+        #nullable enable
+        using Meridian.Mapping;
+        public readonly struct UnsupportedBag : System.Collections.Generic.IEnumerable<int> {
+            public readonly int[] Items;
+            public UnsupportedBag(int[] items) { Items=items; }
+            public System.Collections.Generic.IEnumerator<int> GetEnumerator()=>((System.Collections.Generic.IEnumerable<int>)Items).GetEnumerator();
+            System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator()=>GetEnumerator();
+        }
+        public class Source { public UnsupportedBag? Values {get;set;}=new UnsupportedBag(new int[10001]); }
+        {{(constructor ? "public record Dto(UnsupportedBag? Values);" : "public class Dto { public UnsupportedBag? Values {get;set;} }")}}
+        [GenerateMapper(typeof(Source),typeof(Dto),Mode=GeneratedMappingMode.{{mode}},MaxCollectionItems=1)]
+        public static partial class Maps {}
+        """;
 
     private static string Fixture(string mode,string options,string body) => $$"""
         public class Source { public System.Collections.Generic.IEnumerable<int>? Values {get;set;} }

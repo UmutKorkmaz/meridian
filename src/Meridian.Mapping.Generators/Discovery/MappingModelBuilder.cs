@@ -13,6 +13,7 @@ namespace Meridian.Mapping.Generators.Discovery;
 
 internal static class MappingModelBuilder
 {
+    private static readonly char[] TraversalSeparators = { ',' };
     internal static MapperModel Build(GeneratorAttributeSyntaxContext context, CancellationToken cancellationToken) =>
         Analyze(context, cancellationToken).Model;
 
@@ -71,14 +72,16 @@ internal static class MappingModelBuilder
                 !HasAccessibleSignature(source, destination, context, cancellationToken))
                 Report(MapperDiagnostics.InvalidConfiguration, "source and destination must be accessible, closed, nameable types usable in a public mapping method");
 
-            if (options.Mode == 1 && container.GetMembers().Any(m => m.Name == "GeneratedMappingContext" || m.Name.StartsWith("__MeridianMap", StringComparison.Ordinal)))
+            if (options.Mode == 1 && (container.Name == "GeneratedMappingContext" || container.Name.StartsWith("__MeridianMap", StringComparison.Ordinal) ||
+                container.GetMembers().Any(m => m.Name == "GeneratedMappingContext" || m.Name.StartsWith("__MeridianMap", StringComparison.Ordinal))))
                 Report(MapperDiagnostics.MethodCollision, "generated traversal helpers", "the container uses a reserved generated helper name");
             var method = options.MethodName ?? "MapTo" + destination.Name;
             if (declarations.Any(d => ReadOptions(d).Mode == 1) && (method == "GeneratedMappingContext" || method.StartsWith("__MeridianMap", StringComparison.Ordinal)))
                 Report(MapperDiagnostics.MethodCollision, method, "this name is reserved for generated traversal helpers");
             if (method == container.Name || container.GetMembers(method).Any(member =>
                 options.MethodName is not null || member is not IMethodSymbol existing ||
-                existing.Arity == 0 && (existing.Parameters.Length == 1 || options.Mode == 1 && existing.Parameters.Length == 2 && existing.Parameters[1].Type.ToDisplayString() == "Meridian.Mapping.GeneratedMappingOptions") && existing.Parameters[0].RefKind == RefKind.None &&
+                existing.Arity == 0 && (existing.Parameters.Length == 1 || options.Mode == 1 && existing.Parameters.Length == 2 && existing.Parameters[1].RefKind == RefKind.None && SymbolEqualityComparer.Default.Equals(existing.Parameters[1].Type,
+                    context.SemanticModel.Compilation.GetTypeByMetadataName("Meridian.Mapping.GeneratedMappingOptions"))) && existing.Parameters[0].RefKind == RefKind.None &&
                 HaveSameSignatureType(existing.Parameters[0].Type, source)))
                 Report(MapperDiagnostics.MethodCollision, method, "an existing container member uses this name or signature");
             foreach (var other in declarations)
@@ -164,7 +167,8 @@ internal static class MappingModelBuilder
             }
             pairs.Add(new MapPairModel(source.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
                 destination.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), source.Name, destination.Name,
-                NamespaceOf(source), NamespaceOf(destination), finalMembers.ToImmutable(), constructor with { IsSupported = supported && constructor.IsSupported }, options, source.IsReferenceType && destination.IsReferenceType));
+                NamespaceOf(source), NamespaceOf(destination), finalMembers.ToImmutable(), constructor with { IsSupported = supported && constructor.IsSupported }, options, source.IsReferenceType && destination.IsReferenceType,
+                source.IsReferenceType || source.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T));
         }
         ValidateTraversal(pairs, declarations, diagnostics, cancellationToken);
         return (new MapperModel(NamespaceOf(container), containingTypes, CreateTypeDeclarationInfo(container),
@@ -176,7 +180,7 @@ internal static class MappingModelBuilder
     {
         IEnumerable<MemberModel> Bindings(MapPairModel pair) => pair.Members.Concat(pair.Constructor.Arguments.IsDefault
             ? Enumerable.Empty<MemberModel>() : pair.Constructor.Arguments.Where(a => a.Binding is not null).Select(a => a.Binding!));
-        int[] Edges(MemberModel member) => member.TraversalPairs.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+        int[] Edges(MemberModel member) => member.TraversalPairs.Split(TraversalSeparators, StringSplitOptions.RemoveEmptyEntries)
             .Select(value => int.Parse(value, CultureInfo.InvariantCulture)).Distinct().ToArray();
         bool Reaches(int current, int target, HashSet<int> visited)
         {

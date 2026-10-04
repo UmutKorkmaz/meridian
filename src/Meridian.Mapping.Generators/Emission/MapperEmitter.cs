@@ -122,7 +122,7 @@ internal static class MapperEmitter
         sb.Append(indent).Append("public static ").Append(dstFull)
             .Append(' ').Append(EscapeIdentifier(methodName)).Append('(').Append(srcFull).AppendLine(" source)");
         sb.Append(indent).AppendLine("{");
-        sb.Append(indent).AppendLine("    if (source is null) return default!;");
+        if (pair.SourceCanBeNull) sb.Append(indent).AppendLine("    if (source is null) return default!;");
         ConstructionEmitter.Emit(sb, indent, pair);
         sb.Append(indent).AppendLine("    return result;");
         sb.Append(indent).AppendLine("}");

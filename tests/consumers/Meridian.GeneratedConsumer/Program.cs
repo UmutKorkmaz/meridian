@@ -47,6 +47,10 @@ try { Container.CollectionMaps.MapToCollectionDto(new CollectionSource { Values 
 using var cancelled = new CancellationTokenSource(); cancelled.Cancel();
 try { Container.GraphMaps.MapToGraphDto(graph, new GeneratedMappingOptions { CancellationToken = cancelled.Token }); throw new Exception("cancellation ignored"); } catch (OperationCanceledException) { }
 Console.WriteLine("CANDIDATE generated graph=42 cycle=true collection=2 shared=true null=empty depth=true limit=true cancel=true");
+Check(Container.ValueMaps.MapToValueDto(new ValueSource { Value = 42 }).Value == 42L, "struct source structural widening");
+Check(Container.ValueMaps.MapToValueClassDto(new ValueSource { Value = 42 }).Value == 42, "struct source reference destination");
+Check(Container.ValueMaps.MapToLegacyValueDto(new ValueSource { Value = 42 }).Value == 42, "legacy struct in structural container");
+Console.WriteLine("CANDIDATE generated valueSource=42 struct=true reference=true mixedLegacy=true typedOptions=true");
 #endif
 static void Check(bool result, string name) { if (!result) throw new InvalidOperationException(name); }
 public sealed class Child { public int Value { get; set; } }
@@ -93,9 +97,20 @@ public partial class Container
     [GenerateMapper(typeof(GraphSource), typeof(GraphDto), Mode = GeneratedMappingMode.Structural, PreserveReferences = true)]
     [GenerateMapper(typeof(CollectionSource), typeof(CollectionDto), Mode = GeneratedMappingMode.Structural)]
     public static partial class CollectionMaps { }
+    [GenerateMapper(typeof(ValueSource), typeof(ValueDto), Mode = GeneratedMappingMode.Structural)]
+    [GenerateMapper(typeof(ValueSource), typeof(ValueClassDto), Mode = GeneratedMappingMode.Structural)]
+    [GenerateMapper(typeof(ValueSource), typeof(LegacyValueDto))]
+    public static partial class ValueMaps
+    {
+        public static ValueDto MapToValueDto(ValueSource source, string options) => new() { Value = -1 };
+    }
 #endif
 }
 #if !BASELINE
+public struct ValueSource { public int Value { get; set; } }
+public struct ValueDto { public long Value { get; set; } }
+public class ValueClassDto { public int Value { get; set; } }
+public struct LegacyValueDto { public int Value { get; set; } }
 public sealed class GraphSource { public int Value { get; set; } public GraphSource? Next { get; set; } }
 public sealed class GraphDto { public long Value { get; set; } public GraphDto? Next { get; set; } }
 public sealed class CollectionSource { public IEnumerable<GraphSource>? Values { get; set; } }

@@ -131,6 +131,54 @@ public class GeneratedGraphTests
     public void Depth_And_Cycle_Identity_Match_Runtime_Supported_Intersection() => Proof(Graph(", PreserveReferences=true",
         "var s=new Source {Value=42}; s.Next=s; var configuration=new MapperConfiguration(c=>c.CreateMap<Source,Dto>().PreserveReferences()); var runtime=configuration.CreateMapper().Map<Source,Dto>(s); var generated=MapToDto(s); return runtime.Value==generated.Value && object.ReferenceEquals(runtime,runtime.Next) && object.ReferenceEquals(generated,generated.Next);"));
 
+    [Theory]
+    [InlineData("struct", "Structural", false)]
+    [InlineData("class", "Structural", false)]
+    [InlineData("struct", "Legacy", true)]
+    public void Value_Source_Kinds_Compile_Strictly(string destinationKind, string mode, bool mixed)
+    {
+        var fixture = "public struct Source { public int Value {get;set;} } public " + destinationKind +
+            " Dto { public int Value {get;set;} } [GenerateMapper(typeof(Source),typeof(Dto),Mode=GeneratedMappingMode."+mode+")] ";
+        if (mixed) fixture += "[GenerateMapper(typeof(Other),typeof(OtherDto),Mode=GeneratedMappingMode.Structural)] ";
+        fixture += "public static partial class Maps { public static bool Proof() => MapToDto(new Source {Value=42}).Value==42; } public class Other {} public class OtherDto {}";
+        Proof(fixture);
+    }
+
+    [Fact]
+    public void Nullable_Options_Existing_Signature_Is_Diagnosed()
+    {
+        var result=GeneratorTestHarness.Compile("""
+            #nullable enable
+            using Meridian.Mapping;
+            public class Source {} public class Dto {}
+            [GenerateMapper(typeof(Source),typeof(Dto),Mode=GeneratedMappingMode.Structural)]
+            public static partial class Maps { public static Dto MapToDto(Source source, GeneratedMappingOptions? options) => new(); }
+            """);
+        Assert.Contains(result.Diagnostics,d=>d.Id=="MERIDIANGEN004");
+        Assert.DoesNotContain(result.Compilation.GetDiagnostics(),d=>d.Severity==DiagnosticSeverity.Error);
+    }
+
+    [Fact]
+    public void One_Argument_Wrapper_Resolves_Typed_Options_Overload() => Proof("""
+        public class Source { public int Value {get;set;} }
+        public class Dto { public int Value {get;set;} }
+        [GenerateMapper(typeof(Source),typeof(Dto),Mode=GeneratedMappingMode.Structural)]
+        public static partial class Maps {
+            public static Dto MapToDto(Source source, string options) => new() {Value=-1};
+            public static bool Proof() => MapToDto(new Source {Value=42}).Value==42;
+        }
+        """);
+
+    [Theory]
+    [InlineData("GeneratedMappingContext")]
+    [InlineData("__MeridianMap0")]
+    public void Container_Name_Colliding_With_Traversal_Helper_Is_Diagnosed(string name)
+    {
+        var result=GeneratorTestHarness.Compile("using Meridian.Mapping; public class Source {} public class Dto {} [GenerateMapper(typeof(Source),typeof(Dto),Mode=GeneratedMappingMode.Structural)] public static partial class "+name+" {}");
+        Assert.Contains(result.Diagnostics,d=>d.Id=="MERIDIANGEN004");
+        Assert.DoesNotContain(result.Compilation.GetDiagnostics(),d=>d.Severity==DiagnosticSeverity.Error);
+    }
+
     internal static string Graph(string options,string body) => $$"""
         public class Source { public int Value {get;set;} public Source? Next {get;set;} }
         public class Dto { public int Value {get;set;} public Dto? Next {get;set;} }

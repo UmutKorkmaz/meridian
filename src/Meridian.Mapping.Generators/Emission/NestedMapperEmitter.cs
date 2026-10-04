@@ -14,7 +14,7 @@ internal static class NestedMapperEmitter
         var destination = pair.DestinationIdentity;
         if (pair.Options.Mode == 1)
         {
-            builder.AppendLine($"{indent}public static {destination} {method}({source} source) => {method}(source, null);");
+            builder.AppendLine($"{indent}public static {destination} {method}({source} source) => {method}(source, default(global::Meridian.Mapping.GeneratedMappingOptions));");
             builder.AppendLine($"{indent}public static {destination} {method}({source} source, global::Meridian.Mapping.GeneratedMappingOptions? options)");
             builder.AppendLine(indent + "{");
             builder.AppendLine($"{indent}    var context = new GeneratedMappingContext(options, {pair.Options.MaxDepth}, {pair.Options.MaxCollectionItems});");
@@ -24,7 +24,7 @@ internal static class NestedMapperEmitter
         builder.AppendLine($"{indent}private static {destination} __MeridianMap{index}({source} source, GeneratedMappingContext context)");
         builder.AppendLine(indent + "{");
         builder.AppendLine(indent + "    context.CancellationToken.ThrowIfCancellationRequested();");
-        builder.AppendLine(indent + "    if (context.Depth >= context.MaxDepth || source is null) return default!;");
+        builder.AppendLine(indent + "    if (context.Depth >= context.MaxDepth" + (pair.SourceCanBeNull ? " || source is null" : "") + ") return default!;");
         if (pair.Options.Mode == 0)
             builder.AppendLine($"{indent}    return {method}(source);");
         else
