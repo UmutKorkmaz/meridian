@@ -224,6 +224,7 @@ public static class GeneratedMediatorRegistration
             .GroupBy(c => (c.Item.ServiceType, c.Item.ImplementationType)).Select(g => g.First()).ToArray();
         var pairs = contributions.Where(c => c.Item.Category == GeneratedMediatorCategory.StreamHandler)
             .Select(c => c.Item.ServiceType.GenericTypeArguments).Select(a => (Request: a[0], Response: a[1])).Distinct().ToArray();
+        var advertised = registries.SelectMany(r => r.Registry.StreamTypes).Distinct().ToArray();
         var capabilities = registries.SelectMany(r => r.Registry is IGeneratedMediatorBehaviorCapabilities metadata
             ? metadata.BehaviorCapabilities : Array.Empty<GeneratedMediatorBehaviorCapability>()).ToArray();
         var closed = configurations.SelectMany(c => c.Closed).Distinct().ToArray();
@@ -243,7 +244,12 @@ public static class GeneratedMediatorRegistration
                 plan.Add((null, typeof(IStreamPipelineBehavior<,>), definition, ServiceLifetime.Transient, GeneratedMediatorPhase.OpenStream));
                 continue;
             }
-            var matches = behaviors.Where(b => b.Item.DefinitionType == definition).ToArray();
+            var openMatches = behaviors.Where(b => b.Item.DefinitionType == definition).ToArray();
+            // An explicitly closed factory (DefinitionType == null, closed phase) is a finite root for its own pair when its
+            // closed implementation is a construction of the configured definition. This is exact predeclared identity;
+            // nothing is constructed at runtime, and the contribution keeps its closed-stream phase.
+            var matches = openMatches.Concat(behaviors.Where(b => b.Item.DefinitionType == null && b.Item.Phase == GeneratedMediatorPhase.ClosedStream &&
+                b.Item.ImplementationType.IsConstructedGenericType && b.Item.ImplementationType.GetGenericTypeDefinition() == definition)).ToArray();
             if (pairs.Length == 0 && matches.Length == 0)
                 throw new InvalidOperationException($"Stream behavior {definition} has no generated finite stream pairs; declare it in StreamBehaviorTypes.");
             foreach (var pair in pairs)
@@ -253,7 +259,16 @@ public static class GeneratedMediatorRegistration
                 if (evidence.Length == 0 && !rooted || evidence.Any(c => c.Applies) && !rooted || evidence.Any(c => !c.Applies) && rooted)
                     throw new InvalidOperationException($"Stream behavior {definition} has no consistent generated closure for {pair.Request} / {pair.Response}; declare this finite pair.");
             }
-            foreach (var match in matches)
+            // Every advertised stream slot needs finite evidence, including slots of manual base registries that
+            // supply no handler contributions. Missing evidence is an actionable rejection, never silent inapplicability.
+            foreach (var slot in advertised.Where(a => !pairs.Any(p => p.Request == a)))
+            {
+                var evidence = capabilities.Where(c => c.RequestType == slot && c.DefinitionType == definition && c.Category == GeneratedMediatorCategory.StreamBehavior).ToArray();
+                var rooted = matches.Any(m => m.Item.ServiceType.GenericTypeArguments[0] == slot);
+                if (evidence.Length == 0 && !rooted || evidence.Any(c => c.Applies) && !rooted || evidence.Any(c => !c.Applies) && rooted)
+                    throw new InvalidOperationException($"Stream behavior {definition} has no finite generated closure evidence for stream {slot}, which is advertised without handler contribution metadata; declare this finite pair in a generated registry or supply capability metadata.");
+            }
+            foreach (var match in openMatches)
                 plan.Add((match.Item, match.Item.ServiceType, match.Item.ImplementationType, ServiceLifetime.Transient, GeneratedMediatorPhase.OpenStream));
         }
         foreach (var behavior in behaviors)
