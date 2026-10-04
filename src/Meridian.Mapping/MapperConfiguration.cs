@@ -713,6 +713,14 @@ public class MapperConfiguration : IConfigurationProvider, IGeneratedMappingConf
             }
         }
 
+        foreach (var member in baseMap.ProjectionOnlyMemberMaps)
+        {
+            if (derivedMap.DestinationType.GetProperty(member.DestinationProperty.Name) is { CanWrite: false } &&
+                !derivedMap.ProjectionOnlyMemberMaps.Any(p => string.Equals(p.DestinationProperty.Name,
+                    member.DestinationProperty.Name, StringComparison.OrdinalIgnoreCase)))
+                derivedMap.ProjectionOnlyMemberMaps.Add(member);
+        }
+
         // Inherit BeforeMap/AfterMap actions
         foreach (var beforeAction in baseMap.BeforeMapActions)
         {
@@ -876,6 +884,7 @@ public class MapperConfiguration : IConfigurationProvider, IGeneratedMappingConf
 
         // Member configs
         var memberConfigs = expr.GetMemberConfigs();
+        CaptureProjectionOnlyMembers(typeMap, sourceType, destType, memberConfigs);
         CopyIgnoredSourceMembers(typeMap, expr.GetSourceMemberConfigs());
         var hasForAllMembers = expr.GetHasForAllMembers();
         var forAllMembersAction = expr.GetForAllMembersAction();
@@ -1146,6 +1155,7 @@ public class MapperConfiguration : IConfigurationProvider, IGeneratedMappingConf
 
         var memberConfigsProp = exprType.GetProperty("MemberConfigs", BindingFlags.NonPublic | BindingFlags.Instance);
         var memberConfigs = memberConfigsProp?.GetValue(mappingExpression) as System.Collections.IDictionary;
+        CaptureProjectionOnlyMembers(typeMap, sourceType, destType, memberConfigs);
         var sourceMemberConfigsProp = exprType.GetProperty("SourceMemberConfigs", BindingFlags.NonPublic | BindingFlags.Instance);
         if (sourceMemberConfigsProp?.GetValue(mappingExpression) is System.Collections.IDictionary sourceMemberConfigs)
         {
@@ -1396,6 +1406,21 @@ public class MapperConfiguration : IConfigurationProvider, IGeneratedMappingConf
         propMap.ExplicitExpansion = config.GetExplicitExpansion();
         propMap.UseDestinationValue = config.GetUseDestinationValue();
         propMap.AllowNull = config.GetAllowNull();
+    }
+
+    private static void CaptureProjectionOnlyMembers(TypeMap map, Type sourceType, Type destinationType,
+        System.Collections.IDictionary? configurations)
+    {
+        if (configurations == null || configurations.Count == 0) return;
+        foreach (var property in destinationType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                     .Where(p => !p.CanWrite && p.GetMethod is { IsPublic: true } && p.GetIndexParameters().Length == 0))
+        {
+            if (configurations[property.Name] is not { } configuration) continue;
+            var member = new PropertyMap(property);
+            ApplyMemberConfig(member, configuration, sourceType);
+            // Retain expression/configuration only: Compile() would try to create a setter.
+            map.ProjectionOnlyMemberMaps.Add(member);
+        }
     }
 
     private static void ApplyMemberConfig(PropertyMap propMap, object memberConfig, Type sourceType)

@@ -74,6 +74,7 @@ public static class ExpressionBuilder
 
         var expanded = GetExpandedMemberNames(membersToExpand);
         var omittedRequired = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var incompatibleArguments = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var candidates = new List<(NewExpression Expression, HashSet<string> Consumed)>();
         foreach (var constructor in destinationType.GetConstructors().OrderByDescending(c => c.GetParameters().Length))
         {
@@ -83,7 +84,7 @@ public static class ExpressionBuilder
             foreach (var parameter in parameters)
             {
                 Expression? value = null;
-                var destinationMember = map.PropertyMaps.FirstOrDefault(p =>
+                var destinationMember = map.PropertyMaps.Concat(map.ProjectionOnlyMemberMaps).FirstOrDefault(p =>
                     string.Equals(p.DestinationProperty.Name, parameter.Name, StringComparison.OrdinalIgnoreCase));
                 var omitted = destinationMember != null && (destinationMember.Ignored ||
                     (destinationMember.ExplicitExpansion && !IsExpanded(expanded, destinationMember.DestinationProperty.Name)));
@@ -98,32 +99,50 @@ public static class ExpressionBuilder
                         ? Expression.Default(parameter.ParameterType)
                         : Expression.Constant(parameter.DefaultValue, parameter.ParameterType);
                 }
-                else if (map.CtorParamMappings != null && map.CtorParamMappings.TryGetValue(parameter.Name!, out var configured))
-                {
-                    value = ReplaceParameter(configured.Body, configured.Parameters[0], source);
-                    consumedParameters.Add(parameter.Name!);
-                }
                 else
                 {
-                    var property = sourceType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-                        .FirstOrDefault(p => p.GetMethod is { IsPublic: true } && p.GetIndexParameters().Length == 0 &&
-                            string.Equals(p.Name, parameter.Name, StringComparison.OrdinalIgnoreCase) &&
-                            (parameter.ParameterType.IsAssignableFrom(p.PropertyType) ||
-                             Nullable.GetUnderlyingType(parameter.ParameterType) == p.PropertyType));
-                    if (property != null)
+                    if (destinationMember != null)
+                        EnsureProjectionSupported(destinationMember, $"{destinationType.Name}.{destinationMember.DestinationProperty.Name}");
+                    if (map.CtorParamMappings != null && map.CtorParamMappings.TryGetValue(parameter.Name!, out var configured))
                     {
-                        value = Expression.Property(source, property);
+                        value = ReplaceParameter(configured.Body, configured.Parameters[0], source);
                         consumedParameters.Add(parameter.Name!);
                     }
-                    else if (parameter.HasDefaultValue)
-                        value = parameter.DefaultValue == null
-                            ? Expression.Default(parameter.ParameterType)
-                            : Expression.Constant(parameter.DefaultValue, parameter.ParameterType);
+                    else if (destinationMember is { DestinationProperty.CanWrite: false, CustomMapExpression: not null })
+                    {
+                        var expression = destinationMember.CustomMapExpression;
+                        value = ReplaceParameter(expression.Body, expression.Parameters[0], source);
+                        consumedParameters.Add(parameter.Name!);
+                    }
+                    else
+                    {
+                        var property = sourceType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                            .FirstOrDefault(p => p.GetMethod is { IsPublic: true } && p.GetIndexParameters().Length == 0 &&
+                                string.Equals(p.Name, parameter.Name, StringComparison.OrdinalIgnoreCase) &&
+                                (parameter.ParameterType.IsAssignableFrom(p.PropertyType) ||
+                                 Nullable.GetUnderlyingType(parameter.ParameterType) == p.PropertyType));
+                        if (property != null)
+                        {
+                            value = Expression.Property(source, property);
+                            consumedParameters.Add(parameter.Name!);
+                        }
+                        else if (parameter.HasDefaultValue)
+                            value = parameter.DefaultValue == null
+                                ? Expression.Default(parameter.ParameterType)
+                                : Expression.Constant(parameter.DefaultValue, parameter.ParameterType);
+                    }
                 }
-
                 if (value == null) break;
                 if (value.Type != parameter.ParameterType)
-                    value = Expression.Convert(value, parameter.ParameterType);
+                {
+                    try { value = Expression.Convert(value, parameter.ParameterType); }
+                    catch (InvalidOperationException)
+                    {
+                        // An unsupported conversion makes only this overload nonviable.
+                        incompatibleArguments.Add(parameter.Name!);
+                        break;
+                    }
+                }
                 arguments.Add(value);
             }
             if (arguments.Count == parameters.Length)
@@ -132,6 +151,8 @@ public static class ExpressionBuilder
 
         if (candidates.Count == 0 && omittedRequired.Count > 0)
             throw new InvalidOperationException($"Projection for '{destinationType.Name}' has required constructor arguments for omitted members: {string.Join(", ", omittedRequired)}. Request explicit expansion, remove Ignore, or provide an optional constructor default.");
+        if (candidates.Count == 0 && incompatibleArguments.Count > 0)
+            throw new InvalidOperationException($"No compatible projection constructor on '{destinationType.Name}' can bind arguments: {string.Join(", ", incompatibleArguments)}. Use ForCtorParam expressions with compatible argument types.");
         if (candidates.Count == 0)
             throw new InvalidOperationException($"No public constructor on '{destinationType.Name}' has all required projection arguments mapped. Use ForCtorParam expressions to supply missing arguments.");
         if (candidates.Count > 1 && candidates[0].Expression.Arguments.Count == candidates[1].Expression.Arguments.Count)

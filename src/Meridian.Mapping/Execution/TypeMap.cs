@@ -28,6 +28,10 @@ public class TypeMap
     /// </summary>
     public List<PropertyMap> PropertyMaps { get; } = new();
 
+    // Getter-only member configuration is needed by constructor projections, but must never
+    // participate in runtime setter compilation or member assignments.
+    internal List<PropertyMap> ProjectionOnlyMemberMaps { get; } = new();
+
     /// <summary>
     /// Gets or sets the custom converter function (ConvertUsing with Func).
     /// Compiled into an object-based wrapper at configuration time.

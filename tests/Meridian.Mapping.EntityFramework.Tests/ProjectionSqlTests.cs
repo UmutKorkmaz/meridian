@@ -2,6 +2,7 @@ using System.Data.Common;
 using System.Reflection;
 using System.Security.Cryptography;
 using Meridian.Mapping.Converters;
+using Meridian.Mapping.Configuration;
 using Meridian.Mapping.Execution;
 
 using Meridian.Mapping.Queryable;
@@ -288,6 +289,161 @@ public abstract class ProjectionSqlTests(ProjectionFixture fixture, ITestOutputH
         output.WriteLine($"Rejected before execution: {error.Message}; commands=0");
     }
 
+    private IConfigurationProvider GetterConfig<T>(bool reflection, Action<IMappingExpression<Person, T>> configure)
+    {
+        IMappingExpression<Person, T>? expression = null;
+        var config = new MapperConfiguration(c => { expression = c.CreateMap<Person, T>(); configure(expression); });
+        var map = config.FindTypeMap(typeof(Person), typeof(T))!;
+        if (reflection)
+            map = (TypeMap)typeof(MapperConfiguration).GetMethod("CompileTypeMapReflection", BindingFlags.NonPublic | BindingFlags.Instance)!
+                .Invoke(config, [typeof(Person), typeof(T), expression, new TypeMap(typeof(Person), typeof(T))])!;
+        Assert.Empty(map.PropertyMaps); // Getter-only projection metadata must never become runtime assignments.
+        return new ProjectionTestProvider(config, map);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void Getter_Required_Omission_Rejects_Explicit_Constructor(bool reflection, bool ignored)
+    {
+        var config = GetterConfig<RequiredGetter>(reflection, m => m
+            .ForCtorParam("name", o => o.MapFrom(p => p.Name + "!"))
+            .ForMember(d => d.Name, o => { if (ignored) o.Ignore(); else o.ExplicitExpansion(); }));
+        var error = Assert.ThrowsAny<Exception>(() => People.ProjectTo<RequiredGetter>(config)).GetBaseException();
+        Assert.Contains("omitted", error.Message);
+        Assert.Empty(fixture.Commands.Sql);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void Getter_Optional_Omission_Uses_Default_Without_Name_Column(bool reflection, bool ignored)
+    {
+        var config = GetterConfig<OptionalGetter>(reflection, m => m
+            .ForCtorParam("name", o => o.MapFrom(p => p.Name + "!"))
+            .ForMember(d => d.Name, o => { if (ignored) o.Ignore(); else o.ExplicitExpansion(); }));
+        // This metadata is projection-only: existing constructor-based runtime mapping is unchanged.
+        Assert.Equal("Ada!", config.CreateMapper().Map<Person, OptionalGetter>(new Person { Name = "Ada" }).Name);
+        var query = People.ProjectTo<OptionalGetter>(config);
+        Assert.DoesNotContain("Name", query.ToQueryString());
+        Assert.All(Execute(query, nameof(Getter_Optional_Omission_Uses_Default_Without_Name_Column)), d => Assert.Equal("default", d.Name));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Getter_Requested_Expansion_Preserves_Constructor_Expression(bool reflection)
+    {
+        var config = GetterConfig<RequiredGetter>(reflection, m => m
+            .ForCtorParam("name", o => o.MapFrom(p => p.Name + "!"))
+            .ForMember(d => d.Name, o => o.ExplicitExpansion()));
+        Assert.Equal(new[] { "Ada!", "Bob!" }, Execute(People.ProjectTo<RequiredGetter>(config, d => d.Name), nameof(Getter_Requested_Expansion_Preserves_Constructor_Expression), "Name").Select(d => d.Name));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Getter_Runtime_Condition_Rejects_Before_Execution(bool reflection)
+    {
+        var calls = 0;
+        var config = GetterConfig<RequiredGetter>(reflection, m => m.ForMember(d => d.Name, o => o.Condition(p => { calls++; return true; })));
+        var error = Assert.ThrowsAny<Exception>(() => People.ProjectTo<RequiredGetter>(config)).GetBaseException();
+        Assert.Contains("runtime conditions", error.Message);
+        Assert.Equal(0, calls);
+        Assert.Empty(fixture.Commands.Sql);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Getter_Configured_Member_Expression_Is_Used(bool reflection)
+    {
+        var config = GetterConfig<RequiredGetter>(reflection, m => m.ForMember(d => d.Name, o => o.MapFrom(p => p.Name + " member")));
+        Assert.Equal(new[] { "Ada member", "Bob member" }, Execute(People.ProjectTo<RequiredGetter>(config), nameof(Getter_Configured_Member_Expression_Is_Used), "Name").Select(d => d.Name));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Getter_Inherited_Omission_And_Derived_Override(bool overridden)
+    {
+        var config = new MapperConfiguration(c =>
+        {
+            c.CreateMap<Person, BaseGetter>().ForMember(d => d.Name, o => o.Ignore());
+            var derived = c.CreateMap<Person, DerivedGetter>().IncludeBase<Person, BaseGetter>();
+            if (overridden) derived.ForMember(d => d.Name, o => o.MapFrom(p => p.Name + " derived"));
+        });
+        var query = People.ProjectTo<DerivedGetter>(config);
+        if (!overridden) Assert.DoesNotContain("Name", query.ToQueryString());
+        Assert.Equal(overridden ? new[] { "Ada derived", "Bob derived" } : new[] { "default", "default" },
+            Execute(query, nameof(Getter_Inherited_Omission_And_Derived_Override)).Select(d => d.Name));
+    }
+
+    [Fact]
+    public void Constructor_Valid_Widest_Ignores_Incompatible_Smaller()
+    {
+        var config = new MapperConfiguration(c => c.CreateMap<Person, ValidWidest>().ForCtorParam("id", o => o.MapFrom(p => p.Id)));
+        var rows = Execute(People.ProjectTo<ValidWidest>(config), nameof(Constructor_Valid_Widest_Ignores_Incompatible_Smaller), "Id", "Name");
+        Assert.Equal(new[] { (1, "Ada"), (2, "Bob") }, rows.Select(d => (d.Id, d.Name)));
+    }
+
+    [Fact]
+    public void Constructor_Invalid_Widest_Uses_Compatible_Smaller()
+    {
+        var config = new MapperConfiguration(c => c.CreateMap<Person, ValidSmaller>().ForCtorParam("id", o => o.MapFrom(p => p.Id)));
+        var rows = Execute(People.ProjectTo<ValidSmaller>(config), nameof(Constructor_Invalid_Widest_Uses_Compatible_Smaller), "Id");
+        Assert.Equal(new[] { 1, 2 }, rows.Select(d => d.Id));
+        Assert.All(rows, d => Assert.Equal("smaller", d.Path));
+    }
+
+    [Fact]
+    public void Constructor_All_Incompatible_Has_Argument_Guidance()
+    {
+        var config = new MapperConfiguration(c => c.CreateMap<Person, IncompatibleCtor>().ForCtorParam("id", o => o.MapFrom(p => p.Id)));
+        var error = Assert.ThrowsAny<Exception>(() => People.ProjectTo<IncompatibleCtor>(config)).GetBaseException();
+        Assert.Contains(nameof(IncompatibleCtor), error.Message);
+        Assert.Contains("id", error.Message);
+        Assert.Contains("ForCtorParam", error.Message);
+        Assert.Empty(fixture.Commands.Sql);
+    }
+
+    [Fact]
+    public void Constructor_Explicit_Numeric_Conversion_Remains_Supported()
+    {
+        var config = new MapperConfiguration(c => c.CreateMap<Person, LongCtor>().ForCtorParam("id", o => o.MapFrom(p => p.Id)));
+        Assert.Equal(new long[] { 1, 2 }, Execute(People.ProjectTo<LongCtor>(config), nameof(Constructor_Explicit_Numeric_Conversion_Remains_Supported), "Id").Select(d => d.Id));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Fixture_Setup_Failure_Preserves_Error_And_Closes_Connection(bool afterSchema)
+    {
+        var failure = new SetupFailureInterceptor(afterSchema);
+        try
+        {
+            var error = Assert.Throws<InvalidOperationException>(() =>
+            {
+                using var broken = fixture is SqliteFixture
+                    ? (ProjectionFixture)new SqliteFixture(failure)
+                    : new PostgreSqlFixture(failure);
+            });
+            Assert.Same(failure.Primary, error);
+            Assert.NotNull(failure.Connection);
+            Assert.Equal(System.Data.ConnectionState.Closed, failure.Connection.State);
+        }
+        finally
+        {
+            // The injected cleanup failure intentionally leaves this owned test schema behind.
+            if (failure.Schema != null)
+                fixture.Context.Database.ExecuteSqlRaw($"DROP SCHEMA IF EXISTS {failure.Schema} CASCADE");
+        }
+    }
+
     public void Dispose() { fixture.Dispose(); GC.SuppressFinalize(this); }
 }
 
@@ -304,7 +460,7 @@ public abstract class ProjectionFixture : IDisposable
         Context.ChangeTracker.Clear();
         Commands.Sql.Clear();
     }
-    public virtual void Dispose() { Context.Dispose(); GC.SuppressFinalize(this); }
+    public virtual void Dispose() { Context?.Dispose(); GC.SuppressFinalize(this); }
 }
 
 public sealed class CommandCapture : DbCommandInterceptor
@@ -371,3 +527,59 @@ public sealed record RecordDto(int Id, string Name);
 public sealed class NullableCtor(int? age, int? score = 5) { public int? Age { get; } = age; public int? Score { get; } = score; }
 
 public sealed record OptionalRecord(int Id, int Age = 7);
+
+public sealed class RequiredGetter(string name) { public string Name { get; } = name; }
+public sealed class OptionalGetter(string name = "default") { public string Name { get; } = name; }
+public class BaseGetter(string name = "default") { public string Name { get; } = name; }
+public sealed class DerivedGetter(string name = "default") : BaseGetter(name);
+public sealed class ValidWidest
+{
+    public ValidWidest(int id, string name) { Id = id; Name = name; }
+    public ValidWidest(Guid id) { Name = "wrong"; }
+    public int Id { get; }
+    public string Name { get; }
+}
+public sealed class ValidSmaller
+{
+    public ValidSmaller(Guid id, string name) { Path = "wrong"; }
+    public ValidSmaller(int id) { Id = id; Path = "smaller"; }
+    public int Id { get; }
+    public string Path { get; }
+}
+public sealed class IncompatibleCtor(Guid id) { public Guid Id { get; } = id; }
+public sealed class LongCtor(long id) { public long Id { get; } = id; }
+internal sealed class ProjectionTestProvider(IConfigurationProvider inner, TypeMap map) : IConfigurationProvider
+{
+    public TypeMap? FindTypeMap(Type sourceType, Type destinationType) => sourceType == map.SourceType && destinationType == map.DestinationType ? map : inner.FindTypeMap(sourceType, destinationType);
+    public IMapper CreateMapper() => inner.CreateMapper();
+    public IMapper CreateMapper(IServiceProvider services) => inner.CreateMapper(services);
+    public void AssertConfigurationIsValid() => inner.AssertConfigurationIsValid();
+    public IReadOnlyCollection<TypeMap> GetAllTypeMaps() => [map];
+    public bool AllowNullCollections => inner.AllowNullCollections;
+    public bool AllowNullDestinationValues => inner.AllowNullDestinationValues;
+    public int DefaultMaxDepth => inner.DefaultMaxDepth;
+    public int DefaultMaxCollectionItems => inner.DefaultMaxCollectionItems;
+    public string GetMappingPlan<TSource, TDestination>() => inner.GetMappingPlan<TSource, TDestination>();
+    public string GetMappingPlan(Type sourceType, Type destinationType) => inner.GetMappingPlan(sourceType, destinationType);
+}
+
+internal sealed class SetupFailureInterceptor(bool afterSchema) : DbCommandInterceptor
+{
+    public InvalidOperationException Primary { get; } = new("primary setup failure");
+    public DbConnection? Connection { get; private set; }
+    public string? Schema { get; private set; }
+    public override InterceptionResult<int> NonQueryExecuting(DbCommand command, CommandEventData eventData, InterceptionResult<int> result)
+    {
+        if (command.CommandText.StartsWith("CREATE SCHEMA ", StringComparison.Ordinal))
+            Schema = command.CommandText["CREATE SCHEMA ".Length..];
+        if (command.CommandText.StartsWith("DROP SCHEMA", StringComparison.Ordinal))
+            throw new InvalidOperationException("secondary cleanup failure");
+        if ((!afterSchema && command.CommandText.StartsWith("CREATE SCHEMA", StringComparison.Ordinal)) ||
+            command.CommandText.Contains("CREATE TABLE", StringComparison.Ordinal))
+        {
+            Connection = command.Connection;
+            throw Primary;
+        }
+        return result;
+    }
+}
