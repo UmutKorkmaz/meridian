@@ -64,7 +64,7 @@ public sealed class ApiFixture(string environment = "Development", Action<IServi
     }
     public async Task<(int Orders, int Events)> Rows()
     {
-        await using var db = new OrdersDbContext(new DbContextOptionsBuilder<OrdersDbContext>().UseSqlite("Data Source=" + DatabasePath).Options);
+        await using var db = new OrdersDbContext(new DbContextOptionsBuilder<OrdersDbContext>().UseSqlite(new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder { DataSource = DatabasePath, Pooling = false }.ToString()).Options);
         return (await db.Orders.CountAsync(), await db.Events.CountAsync());
     }
     public override async ValueTask DisposeAsync()

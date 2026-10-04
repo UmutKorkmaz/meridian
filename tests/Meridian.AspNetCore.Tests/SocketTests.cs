@@ -162,7 +162,7 @@ public sealed class SocketHost : IAsyncDisposable
     public async Task<JsonElement> Counts() { using var client = Client(); return (await client.GetFromJsonAsync<JsonElement>("/probe/counts")).Clone(); }
     public async Task Until(Func<JsonElement, bool> predicate)
     { using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10)); while (!predicate(await Counts())) await Task.Delay(20, deadline.Token); }
-    public OrdersDbContext Database() => new(new Microsoft.EntityFrameworkCore.DbContextOptionsBuilder<OrdersDbContext>().UseSqlite("Data Source=" + Path.Combine(_directory, "orders.db")).Options);
+    public OrdersDbContext Database() => new(new Microsoft.EntityFrameworkCore.DbContextOptionsBuilder<OrdersDbContext>().UseSqlite(new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder { DataSource = Path.Combine(_directory, "orders.db"), Pooling = false }.ToString()).Options);
     public async ValueTask DisposeAsync()
     {
         try
