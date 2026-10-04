@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using Meridian.Mediator.Publishing;
 using Meridian.Mediator.Streaming;
 using Meridian.Mediator.Wrappers;
@@ -222,19 +224,33 @@ public class Mediator : IMediator
 
     private Task PublishNotification(INotification notification, CancellationToken cancellationToken)
     {
-        var notificationType = notification.GetType();
-        var handler = _generated.FindNotificationHandler(notificationType);
-        if (handler == null && _generated.RequireGeneratedDispatch)
+        var handler = FindNotificationHandler(notification.GetType());
+
+        return handler.Handle(notification, _serviceProvider, _publisher, cancellationToken);
+    }
+
+    private NotificationHandlerWrapperBase FindNotificationHandler(Type notificationType)
+    {
+        var generated = _generated.FindNotificationHandler(notificationType);
+        if (generated != null) return generated;
+        if (_generated.RequireGeneratedDispatch)
             throw new InvalidOperationException($"No generated notification dispatch for {notificationType}. Declare its closed handler and register the matching generated registry.");
-        handler ??= _notificationHandlers.GetOrAdd(notificationType,
+        // Native AOT cannot instantiate the legacy wrapper at run time. The constant guard lets the compiler drop
+        // the reflective branch; dynamic-code runtimes keep the unchanged non-strict fallback below.
+        if (!RuntimeFeature.IsDynamicCodeSupported)
+            throw new InvalidOperationException($"No generated notification dispatch for {notificationType}. This runtime cannot create handler wrappers at run time (Native AOT): declare its closed handler in a generated registry and register it with AddGeneratedRegistry.");
+        return LegacyNotificationHandler(notificationType);
+    }
+
+    [RequiresUnreferencedCode("Legacy notification dispatch creates generic handler wrappers by reflection. Use a generated registry.")]
+    [RequiresDynamicCode("Legacy notification dispatch creates generic handler wrappers by reflection. Use a generated registry.")]
+    private static NotificationHandlerWrapperBase LegacyNotificationHandler(Type notificationType) =>
+        _notificationHandlers.GetOrAdd(notificationType,
             static t =>
             {
                 var wrapperType = typeof(NotificationHandlerWrapperImpl<>).MakeGenericType(t);
                 return (NotificationHandlerWrapperBase)Activator.CreateInstance(wrapperType)!;
             });
-
-        return handler.Handle(notification, _serviceProvider, _publisher, cancellationToken);
-    }
 
     private StreamRequestHandlerBase FindStreamHandler(Type requestType)
     {
@@ -242,8 +258,15 @@ public class Mediator : IMediator
         if (generated != null) return generated;
         if (_generated.RequireGeneratedDispatch)
             throw new InvalidOperationException($"No generated stream dispatch for {requestType}. Declare its closed handler and register the matching generated registry.");
-        return _streamRequestHandlers.GetOrAdd(requestType, static t => CreateStreamHandler(t));
+        if (!RuntimeFeature.IsDynamicCodeSupported)
+            throw new InvalidOperationException($"No generated stream dispatch for {requestType}. This runtime cannot create handler wrappers at run time (Native AOT): declare its closed handler in a generated registry and register it with AddGeneratedRegistry.");
+        return LegacyStreamHandler(requestType);
     }
+
+    [RequiresUnreferencedCode("Legacy stream dispatch creates generic handler wrappers by reflection. Use a generated registry.")]
+    [RequiresDynamicCode("Legacy stream dispatch creates generic handler wrappers by reflection. Use a generated registry.")]
+    private static StreamRequestHandlerBase LegacyStreamHandler(Type requestType) =>
+        _streamRequestHandlers.GetOrAdd(requestType, static t => CreateStreamHandler(t));
 
     private RequestHandlerBase FindRequestHandler(Type requestType)
     {
@@ -251,8 +274,15 @@ public class Mediator : IMediator
         if (generated != null) return generated;
         if (_generated.RequireGeneratedDispatch)
             throw new InvalidOperationException($"No generated request dispatch for {requestType}. Declare its closed handler and register the matching generated registry.");
-        return _requestHandlers.GetOrAdd(requestType, static t => CreateRequestHandler(t, typeof(RequestHandlerWrapperImpl<,>)));
+        if (!RuntimeFeature.IsDynamicCodeSupported)
+            throw new InvalidOperationException($"No generated request dispatch for {requestType}. This runtime cannot create handler wrappers at run time (Native AOT): declare its closed handler in a generated registry and register it with AddGeneratedRegistry.");
+        return LegacyRequestHandler(requestType);
     }
+
+    [RequiresUnreferencedCode("Legacy request dispatch creates generic handler wrappers by reflection. Use a generated registry.")]
+    [RequiresDynamicCode("Legacy request dispatch creates generic handler wrappers by reflection. Use a generated registry.")]
+    private static RequestHandlerBase LegacyRequestHandler(Type requestType) =>
+        _requestHandlers.GetOrAdd(requestType, static t => CreateRequestHandler(t, typeof(RequestHandlerWrapperImpl<,>)));
 
     private static RequestHandlerBase CreateRequestHandler(Type requestType, Type wrapperGenericType)
     {

@@ -3,6 +3,7 @@ using Meridian.Mediator.Extensions;
 using Meridian.Mediator.Pipeline;
 using Meridian.Mediator.Streaming;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using System.Runtime.CompilerServices;
 namespace Meridian.Mediator.Generated;
 /// <summary>Registration support called by generated consumer code.</summary>
 public static class GeneratedMediatorRegistration
@@ -296,6 +297,8 @@ public static class GeneratedMediatorRegistration
 
     internal static void RegisterStreamBehavior(IServiceCollection services, Type service, Type implementation)
     {
+        if (!RuntimeFeature.IsDynamicCodeSupported)
+            throw DynamicRegistrationGuard.Unsupported("Registering a stream behavior outside a generated registry");
         var descriptor = ServiceDescriptor.Transient(service, implementation);
         services.TryAddEnumerable(descriptor);
         if (services.Any(d => ReferenceEquals(d, descriptor))) services.AddSingleton(new StreamDescriptorMarker(descriptor));
