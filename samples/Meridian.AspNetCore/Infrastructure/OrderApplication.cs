@@ -56,19 +56,35 @@ public static class OrderApplication
         }));
         configure?.Invoke(builder);
         var app = builder.Build();
-        await using (var startup = app.Services.CreateAsyncScope())
+        var failures = new List<Exception>();
+        try
         {
-            _ = startup.ServiceProvider.GetRequiredService<LocalAuthSettings>();
-            await startup.ServiceProvider.GetRequiredService<OrdersDbContext>().Database.EnsureCreatedAsync();
-            await startup.ServiceProvider.GetRequiredService<IConnectionMultiplexer>().GetDatabase().PingAsync();
+            var startup = app.Services.CreateAsyncScope();
+            try
+            {
+                _ = startup.ServiceProvider.GetRequiredService<LocalAuthSettings>();
+                await startup.ServiceProvider.GetRequiredService<OrdersDbContext>().Database.EnsureCreatedAsync();
+                await startup.ServiceProvider.GetRequiredService<IConnectionMultiplexer>().GetDatabase().PingAsync();
+            }
+            catch (Exception error) { failures.Add(error); }
+            try { await startup.DisposeAsync(); }
+            catch (Exception error) { failures.Add(error); }
+            if (failures.Count == 0)
+            {
+                app.UseMiddleware<OrderCorrelationMiddleware>();
+                app.UseExceptionHandler();
+                app.UseStatusCodePages(context => OrderHttp.WriteProblem(context.HttpContext, context.HttpContext.Response.StatusCode));
+                app.UseAuthentication();
+                app.UseAuthorization();
+                app.MapOrderEndpoints();
+                app.MapOpenApi();
+                return app; // Only a successful return transfers root ownership to the caller.
+            }
         }
-        app.UseMiddleware<OrderCorrelationMiddleware>();
-        app.UseExceptionHandler();
-        app.UseStatusCodePages(context => OrderHttp.WriteProblem(context.HttpContext, context.HttpContext.Response.StatusCode));
-        app.UseAuthentication();
-        app.UseAuthorization();
-        app.MapOrderEndpoints();
-        app.MapOpenApi();
-        return app;
+        catch (Exception error) { failures.Add(error); }
+        try { await app.DisposeAsync(); }
+        catch (Exception error) { failures.Add(error); }
+        if (failures.Count == 1) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        throw new AggregateException("Application startup and owned cleanup failed.", failures);
     }
 }

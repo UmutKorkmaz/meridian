@@ -85,8 +85,55 @@ if ($IncludeHttp) {
     if (-not $env:MERIDIAN_TEST_REDIS) { throw 'HTTP smoke requires an explicitly isolated MERIDIAN_TEST_REDIS.' }
     $arguments = @('test', (Join-Path $repoRoot 'tests/Meridian.AspNetCore.Tests/Meridian.AspNetCore.Tests.csproj'), '-c', 'Release', '--filter', 'FullyQualifiedName~SocketTests', '--logger', 'trx;LogFileName=http-socket.trx', '--results-directory', (Join-Path $LogDirectory 'http'))
     if ($NoBuild) { $arguments += '--no-build' }
-    & $dotnet @arguments
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    $logPath = Join-Path $LogDirectory 'http.log'
+    $start = [Diagnostics.ProcessStartInfo]::new()
+    $start.FileName = $dotnet
+    $start.WorkingDirectory = $repoRoot
+    $start.UseShellExecute = $false
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    foreach ($argument in $arguments) { $start.ArgumentList.Add($argument) }
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = $start
+    $timedOut = $false
+    $exitObserved = $false
+    $drainsObserved = $false
+    $stdout = $null
+    $stderr = $null
+    $failures = [Collections.Generic.List[string]]::new()
+    try {
+        Write-Host "RUN HTTP ($Framework), timeout=${TimeoutSeconds}s"
+        $null = $process.Start()
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        $timedOut = -not $process.WaitForExit($TimeoutSeconds * 1000)
+    } catch { $failures.Add("HTTP runner error: $_") }
+    finally {
+        # The runner owns this exact child tree. Join exit and both pipes before disposing it.
+        try {
+            if ($process.Id -gt 0) {
+                if (-not $process.HasExited) { $process.Kill($true) }
+                $process.WaitForExit()
+                $exitObserved = $true
+            }
+        } catch { $failures.Add("HTTP process cleanup error: $_") }
+        try {
+            if ($null -ne $stdout -and $null -ne $stderr) {
+                $streams = [Threading.Tasks.Task]::WhenAll([Threading.Tasks.Task[]] @($stdout, $stderr))
+                $streams.GetAwaiter().GetResult()
+                $drainsObserved = $true
+            }
+        } catch { $failures.Add("HTTP drain error: $_") }
+        $output = if ($null -ne $stdout -and $stdout.IsCompletedSuccessfully) { $stdout.Result } else { '[stdout unavailable]' }
+        $errors = if ($null -ne $stderr -and $stderr.IsCompletedSuccessfully) { $stderr.Result } else { '[stderr unavailable]' }
+        # Cleanup diagnostics accompany, rather than replace, the original timeout diagnosis.
+        $exitCode = if ($timedOut) { 124 } elseif ($failures.Count -gt 0) { 1 } else { $process.ExitCode }
+        $log = "sample=HTTP framework=$Framework exit=$exitCode timeout=$timedOut exitObserved=$exitObserved drainsObserved=$drainsObserved`n--- stdout ---`n$output`n--- stderr ---`n$errors`n--- runner ---`n$($failures -join "`n")"
+        [IO.File]::WriteAllText($logPath, $log)
+        Write-Host $log
+        $process.Dispose()
+    }
+    if ($exitCode -ne 0) { exit $exitCode }
 }
 Write-Host "PASS samples: $passed/$($samples.Count) ($Framework)"
 exit 0

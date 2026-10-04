@@ -15,7 +15,7 @@ public static class SocketLauncher
     public static async Task Main(string[] args)
     {
         var state = new Signals();
-        var app = await OrderApplication.BuildAsync(args, builder =>
+        await using var app = await OrderApplication.BuildAsync(args, builder =>
         {
             builder.WebHost.UseUrls("http://127.0.0.1:0");
             ApiFixture.ConfigureObservers(builder.Services, state);
@@ -69,6 +69,20 @@ public static class SocketLauncher
             return Results.NoContent();
 #pragma warning restore CS0162
         });
+        var activeStalls = 0; var cancelledStalls = 0; var joinedStalls = 0;
+        app.MapGet("/probe/stall/{shape}", async (string shape, HttpContext context) =>
+        {
+            Interlocked.Increment(ref activeStalls);
+            try
+            {
+                context.Response.ContentType = "application/x-ndjson";
+                await context.Response.WriteAsync(shape == "partial" ? "{\"ready\":" : "{\"ready\":true}\n", context.RequestAborted);
+                await context.Response.Body.FlushAsync(context.RequestAborted);
+                await Task.Delay(Timeout.InfiniteTimeSpan, context.RequestAborted);
+            }
+            catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested) { Interlocked.Increment(ref cancelledStalls); }
+            finally { Interlocked.Decrement(ref activeStalls); Interlocked.Increment(ref joinedStalls); }
+        });
         app.MapPost("/probe/stop", (IHostApplicationLifetime lifetime) =>
         {
             state.Release.TrySetResult(); state.CleanupRelease.TrySetResult(); lifetime.StopApplication(); return Results.NoContent();
@@ -76,6 +90,7 @@ public static class SocketLauncher
         await app.StartAsync();
         Console.WriteLine("C6_URL=" + app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
         await app.WaitForShutdownAsync();
-        await app.DisposeAsync();
+        await File.WriteAllTextAsync(Path.Combine(Path.GetDirectoryName(app.Configuration["Orders:DatabasePath"])!, "stall-lifecycle.json"),
+            System.Text.Json.JsonSerializer.Serialize(new { active = activeStalls, cancelled = cancelledStalls, joined = joinedStalls }));
     }
 }
