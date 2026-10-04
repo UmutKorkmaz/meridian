@@ -365,8 +365,12 @@ jobs:
   native-aot-pack:
     name: native AOT candidate packages
     runs-on: ubuntu-latest
+    # The candidate version is derived exactly once, here, and handed to every lane as a job output. A lane re-run
+    # ("Re-run failed jobs") keeps the first attempt's feed and therefore the first attempt's version; recomputing it
+    # from github.run_attempt in each lane would look for a package-manifest that was never packed.
+    outputs:
+      candidate: ${{ steps.version.outputs.candidate }}
     env:
-      CANDIDATE_VERSION: 2.1.4-d4.${{ github.run_id }}.${{ github.run_attempt }}
       DOTNET_ROLL_FORWARD: LatestPatch
       DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
     steps:
@@ -374,10 +378,16 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 10.0.300
+      - name: Derive the candidate version once
+        id: version
+        shell: bash
+        run: echo "candidate=2.1.4-d4.${{ github.run_id }}.${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
       # One packaging job from one frozen source snapshot. Both native lanes download and inspect this exact feed;
       # independent repacks would be different archives and are never merged into one exact-artifact claim.
       - name: Pack every inventory archive once
         shell: pwsh
+        env:
+          CANDIDATE_VERSION: ${{ steps.version.outputs.candidate }}
         run: ./eng/pack-packages.ps1 -OutputDirectory artifacts/native-feed -CandidateVersion $env:CANDIDATE_VERSION
       - name: Retain the immutable candidate feed
         uses: actions/upload-artifact@v4
@@ -388,8 +398,10 @@ jobs:
           if-no-files-found: error
 
   # Publishes the packaged consumer with PublishAot/trimming and EXECUTES the native binary on a matching real runner
-  # (linux-x64 on an x64 runner, osx-arm64 on an Apple-silicon runner). The runner refuses emulated, translated or
-  # mismatched hosts, so cross-publication can never pass. Existing runtime, sample, package and provider jobs are unchanged.
+  # (linux-x64 on an x64 runner, osx-arm64 on an Apple-silicon runner). The runner refuses a mismatching OS or
+  # architecture, macOS Rosetta translation and Linux qemu-user/Rosetta/box64/FEX emulation it can see in procfs; those
+  # probes are best effort, so the rows are only claimed from the provisioned real runners named below.
+  # Existing runtime, sample, package and provider jobs are unchanged.
   native-aot:
     name: native AOT ${{ matrix.rid }} (${{ matrix.host.framework }})
     needs: native-aot-pack
@@ -406,7 +418,7 @@ jobs:
           - { rid: linux-x64, runner: ubuntu-24.04 }
           - { rid: osx-arm64, runner: macos-14 }
     env:
-      CANDIDATE_VERSION: 2.1.4-d4.${{ github.run_id }}.${{ github.run_attempt }}
+      CANDIDATE_VERSION: ${{ needs.native-aot-pack.outputs.candidate }}
       DOTNET_ROLL_FORWARD: LatestPatch
       DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
     steps:

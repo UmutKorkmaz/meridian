@@ -25,16 +25,60 @@ function Get-HostOs {
     return 'other'
 }
 
-function Test-ProcessTranslated {
-    # Rosetta 2 reports 1 for translated processes; the key does not exist elsewhere.
-    if (-not $IsMacOS) { return $false }
-    $value = (& sysctl -in sysctl.proc_translated 2>$null)
-    return ($LASTEXITCODE -eq 0 -and "$value".Trim() -eq '1')
+# Emulation markers of an x64 process on a Linux kernel. qemu-user (docker --platform linux/amd64 on Apple silicon or
+# aarch64 hosts), Rosetta for Linux and similar translators keep the guest uname/OSArchitecture at x64, so the
+# architecture comparison alone cannot see them. Every signal below is read from procfs; ProcRoot exists so the
+# probes can be exercised against recorded process trees.
+function Get-LinuxEmulationSignals([string] $ProcRoot = '/proc') {
+    $signals = @()
+    $emulator = '(?i)qemu-(x86_64|i386|i486)|qemu-user|\brosetta\b|box64|fex-emu|fexinterpreter'
+    # 1. binfmt_misc registrations that are enabled and handle x86 ELF binaries. A disabled entry or a handler for
+    #    another guest architecture does not translate this process.
+    $binfmt = Join-Path $ProcRoot 'sys/fs/binfmt_misc'
+    if (Test-Path -LiteralPath $binfmt -PathType Container) {
+        foreach ($entry in Get-ChildItem -LiteralPath $binfmt -File -ErrorAction SilentlyContinue) {
+            if ($entry.Name -in @('register', 'status')) { continue }
+            $body = Get-Content -Raw -LiteralPath $entry.FullName -ErrorAction SilentlyContinue
+            if (-not $body -or $body -notmatch '(?m)^enabled\s*$') { continue }
+            $interpreter = [regex]::Match($body, '(?m)^interpreter\s+(\S+)').Groups[1].Value
+            if ("$($entry.Name) $interpreter" -match $emulator) {
+                $signals += "binfmt_misc entry '$($entry.Name)' is enabled with interpreter '$interpreter'"
+            }
+        }
+    }
+    # 2. Translator images mapped into the process.
+    $maps = Join-Path $ProcRoot 'self/maps'
+    if (Test-Path -LiteralPath $maps -PathType Leaf) {
+        $hit = Get-Content -LiteralPath $maps -ErrorAction SilentlyContinue | Where-Object { $_ -match $emulator } | Select-Object -First 1
+        if ($hit) { $signals += "emulator image mapped into the process: $($hit.Trim())" }
+    }
+    # 3. The CPU the process sees: a virtual Apple/QEMU CPU, or a non-x86 cpuinfo layout under an x64 process.
+    $cpu = Join-Path $ProcRoot 'cpuinfo'
+    if (Test-Path -LiteralPath $cpu -PathType Leaf) {
+        $text = Get-Content -Raw -LiteralPath $cpu -ErrorAction SilentlyContinue
+        if ($text) {
+            if ($text -match '(?im)^(vendor_id|model name)\s*:\s*.*(VirtualApple|QEMU)') { $signals += 'cpuinfo reports a virtual (VirtualApple/QEMU) CPU' }
+            elseif ($text -notmatch '(?im)^flags\s*:' -and $text -match '(?im)^(CPU implementer|Features)\s*:') { $signals += 'cpuinfo has a non-x86 layout (CPU implementer/Features) although the process reports x64' }
+        }
+    }
+    return @($signals)
 }
 
-# A native proof is only meaningful on the matching real OS and process architecture. Emulation, translation and
-# cross-publication never count: the check uses both the machine and the process architecture.
-function Test-NativeAotHost([string] $Rid, [string] $Os, [string] $Arch, [Nullable[bool]] $Translated) {
+function Test-ProcessTranslated([string] $Os, [string] $ProcRoot = '/proc') {
+    if (-not $Os) { $Os = Get-HostOs }
+    if ($Os -eq 'osx') {
+        # Rosetta 2 reports 1 for translated processes; the key does not exist elsewhere.
+        $value = (& sysctl -in sysctl.proc_translated 2>$null)
+        return ($LASTEXITCODE -eq 0 -and "$value".Trim() -eq '1')
+    }
+    if ($Os -eq 'linux') { return (@(Get-LinuxEmulationSignals $ProcRoot).Count -gt 0) }
+    return $false
+}
+
+# A native proof is only meaningful on the matching real OS and process architecture. Mismatching OS/architecture,
+# macOS Rosetta, and Linux qemu-user/Rosetta/box64/FEX translation (procfs probes above) are refused. These probes are
+# best effort: the guarantee that a row came from a real x64 machine is the provisioned runner (ubuntu-24.04 in CI).
+function Test-NativeAotHost([string] $Rid, [string] $Os, [string] $Arch, [Nullable[bool]] $Translated, [string] $ProcRoot = '/proc') {
     $target = ConvertFrom-NativeRid $Rid
     if (-not $Os) { $Os = Get-HostOs }
     if (-not $Arch) {
@@ -42,7 +86,11 @@ function Test-NativeAotHost([string] $Rid, [string] $Os, [string] $Arch, [Nullab
         $process = [Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString().ToLowerInvariant()
         if ($machine -ne $process) { $Arch = "$process-on-$machine" } else { $Arch = $machine }
     }
-    if ($null -eq $Translated) { $Translated = Test-ProcessTranslated }
+    $signals = @()
+    if ($null -eq $Translated) {
+        if ($Os -eq 'linux') { $signals = @(Get-LinuxEmulationSignals $ProcRoot) }
+        $Translated = if ($Os -eq 'linux') { $signals.Count -gt 0 } else { Test-ProcessTranslated $Os $ProcRoot }
+    }
     $ok = $true
     $reason = "host $Os/$Arch matches $Rid"
     if ($Os -ne $target.os -or $Arch -ne $target.arch) {
@@ -50,9 +98,10 @@ function Test-NativeAotHost([string] $Rid, [string] $Os, [string] $Arch, [Nullab
         $reason = "$Rid needs a matching native runner (os=$($target.os) arch=$($target.arch)); this host is os=$Os arch=$Arch. Cross-publication and emulation do not count as native proof."
     } elseif ($Translated) {
         $ok = $false
-        $reason = "$Rid needs a matching native runner; this process is translated (emulated) on a different architecture."
+        $detail = if ($signals.Count) { ' Signals: ' + ($signals -join '; ') + '.' } else { '' }
+        $reason = "$Rid needs a matching native runner; this process is translated (emulated) on a different architecture.$detail"
     }
-    return [pscustomobject]@{ ok = $ok; reason = $reason; os = $Os; arch = $Arch; translated = [bool]$Translated }
+    return [pscustomobject]@{ ok = $ok; reason = $reason; os = $Os; arch = $Arch; translated = [bool]$Translated; signals = @($signals) }
 }
 
 # Read the executable header; never trust the file name or an external tool for the format.
@@ -163,7 +212,8 @@ function Get-NativeToolchainReceipt {
         processArchitecture = [Runtime.InteropServices.RuntimeInformation]::ProcessArchitecture.ToString()
         osArchitecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
         translated = Test-ProcessTranslated
+        emulationSignals = $(if ((Get-HostOs) -eq 'linux') { @(Get-LinuxEmulationSignals) } else { @() })
     }
 }
 
-Export-ModuleMember -Function Get-NativeAotExpectedCases, Test-NativeAotHost, Get-NativeBinaryFormat, Find-NativeAotWarnings, Test-NativeAotCaseOutput, Assert-NativeAotParity, Get-NativeToolchainReceipt
+Export-ModuleMember -Function Get-NativeAotExpectedCases, Get-LinuxEmulationSignals, Test-NativeAotHost, Get-NativeBinaryFormat, Find-NativeAotWarnings, Test-NativeAotCaseOutput, Assert-NativeAotParity, Get-NativeToolchainReceipt

@@ -157,6 +157,63 @@ class NativeAotRunnerTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertIn("translated", result["reason"])
 
+    # --- Linux emulation probes (fix round 1) ---------------------------------------------------------------
+
+    CLEAN_CPUINFO = "processor\t: 0\nvendor_id\t: GenuineIntel\nmodel name\t: Intel(R) Xeon(R) Platinum 8272CL CPU @ 2.60GHz\nflags\t\t: fpu vme sse2 avx2\n"
+    ROSETTA_CPUINFO = "processor\t: 0\nvendor_id\t: VirtualApple\nmodel name\t: VirtualApple @ 2.50GHz\nflags\t\t: fpu sse2\n"
+    HOST_ARM_CPUINFO = "processor\t: 0\nBogoMIPS\t: 48.00\nFeatures\t: fp asimd evtstrm\nCPU implementer\t: 0x00\n"
+    CLEAN_MAPS = "00400000-00500000 r-xp 00000000 08:01 1 /home/runner/work/Meridian/native/consumer\n7ffd0000-7ffd1000 rw-p 00000000 00:00 0 [stack]\n"
+
+    def fake_proc(self, name, *, cpuinfo=None, maps=None, binfmt=None):
+        root = ROOT / "artifacts/D4-fix1/fake-proc" / name
+        if root.exists():
+            shutil.rmtree(root)
+        (root / "self").mkdir(parents=True)
+        (root / "sys/fs/binfmt_misc").mkdir(parents=True)
+        (root / "cpuinfo").write_text(self.CLEAN_CPUINFO if cpuinfo is None else cpuinfo)
+        (root / "self/maps").write_text(self.CLEAN_MAPS if maps is None else maps)
+        (root / "sys/fs/binfmt_misc/status").write_text("enabled\n")
+        for entry, body in (binfmt or {}).items():
+            (root / "sys/fs/binfmt_misc" / entry).write_text(body)
+        return root
+
+    def linux_host(self, proc):
+        return self.json(
+            f"ConvertTo-Json -InputObject (Test-NativeAotHost 'linux-x64' -Os 'linux' -Arch 'x64' -ProcRoot '{proc}') -Compress"
+        )
+
+    def test_native_linux_x64_proc_tree_is_accepted(self):
+        result = self.linux_host(self.fake_proc("native"))
+        self.assertTrue(result["ok"], result)
+        self.assertFalse(result["translated"])
+
+    def test_linux_emulation_is_detected_so_it_cannot_record_a_native_pass(self):
+        qemu_binfmt = "enabled\ninterpreter /usr/bin/qemu-x86_64-static\nflags: OCF\noffset 0\nmagic 7f454c46\n"
+        scenarios = {
+            # docker --platform linux/amd64 on Apple silicon through qemu-user (guest sees an x86 uname)
+            "qemu-maps": dict(maps=self.CLEAN_MAPS + "7f0000000000-7f0000100000 r-xp 0 08:01 9 /usr/bin/qemu-x86_64-static\n"),
+            # Rosetta for Linux virtual machines report a VirtualApple CPU
+            "rosetta-cpuinfo": dict(cpuinfo=self.ROSETTA_CPUINFO),
+            "rosetta-maps": dict(maps=self.CLEAN_MAPS + "7f0000000000-7f0000100000 r-xp 0 00:2a 9 /run/rosetta/rosetta\n"),
+            # an aarch64 /proc/cpuinfo seen from an x64-looking process
+            "foreign-cpuinfo": dict(cpuinfo=self.HOST_ARM_CPUINFO),
+            "binfmt-qemu": dict(binfmt={"qemu-x86_64": qemu_binfmt}),
+            "binfmt-rosetta": dict(binfmt={"rosetta": "enabled\ninterpreter /run/rosetta/rosetta\nflags: F\n"}),
+        }
+        for name, parts in scenarios.items():
+            with self.subTest(name):
+                result = self.linux_host(self.fake_proc(name, **parts))
+                self.assertFalse(result["ok"], result)
+                self.assertTrue(result["translated"])
+                self.assertIn("emulat", result["reason"])
+                self.assertTrue(result["signals"])
+
+    def test_disabled_or_foreign_arch_binfmt_registrations_are_not_emulation(self):
+        disabled = "disabled\ninterpreter /usr/bin/qemu-x86_64-static\nflags: OCF\n"
+        other_arch = "enabled\ninterpreter /usr/bin/qemu-aarch64-static\nflags: OCF\n"
+        result = self.linux_host(self.fake_proc("benign", binfmt={"qemu-x86_64": disabled, "qemu-aarch64": other_arch}))
+        self.assertTrue(result["ok"], result)
+
     def test_native_binary_format_is_read_from_headers(self):
         macho_arm64 = bytes.fromhex("cffaedfe0c000001") + bytes(24)
         macho_x64 = bytes.fromhex("cffaedfe07000001") + bytes(24)
@@ -306,7 +363,8 @@ class NativeAotWorkflowTests(unittest.TestCase):
         runners = {i["rid"]: i["runner"] for i in matrix["include"]}
         self.assertTrue(runners["linux-x64"].startswith("ubuntu"))
         self.assertTrue(runners["osx-arm64"].startswith("macos"))
-        self.assertEqual(pack["env"]["CANDIDATE_VERSION"], lane["env"]["CANDIDATE_VERSION"])
+        # The version is derived once by the pack job and published as a job output (see the re-run test below).
+        self.assertEqual(lane["env"]["CANDIDATE_VERSION"], "${{ needs.native-aot-pack.outputs.candidate }}")
         pack_text = json.dumps(pack)
         self.assertEqual(pack_text.count("pack-packages.ps1"), 1)
         self.assertIn("native-aot-feed", pack_text)
@@ -317,6 +375,23 @@ class NativeAotWorkflowTests(unittest.TestCase):
         self.assertNotIn("pack-packages.ps1 -OutputDirectory", run)  # lanes inspect, never repack
         uploads = [s for s in lane["steps"] if str(s.get("uses", "")).startswith("actions/upload-artifact")]
         self.assertTrue(uploads and uploads[-1].get("if") == "always()")
+
+    def test_candidate_version_is_derived_once_and_survives_failed_lane_reruns(self):
+        # "Re-run failed jobs" reruns only failed lanes with a larger run_attempt while the uploaded feed keeps the
+        # first attempt's package-manifest.<version>.json. A lane that rebuilds the version from run_attempt would
+        # then inspect a manifest that does not exist and fail falsely.
+        jobs = self.workflow["jobs"]
+        pack, lane = jobs["native-aot-pack"], jobs["native-aot"]
+        self.assertIn("candidate", pack.get("outputs", {}), "pack job must publish the candidate version as an output")
+        self.assertIn("steps.", pack["outputs"]["candidate"])
+        for name, job in (("native-aot-pack", pack), ("native-aot", lane)):
+            self.assertNotIn("run_attempt", json.dumps(job.get("env", {})), f"{name} env must not embed run_attempt")
+        for step in lane["steps"]:
+            self.assertNotIn("run_attempt", json.dumps(step), "lane steps must not recompute the version from run_attempt")
+        self.assertEqual(lane["env"]["CANDIDATE_VERSION"], "${{ needs.native-aot-pack.outputs.candidate }}")
+        # The pack step consumes the same single derivation.
+        pack_steps = json.dumps(pack["steps"])
+        self.assertIn("steps.version.outputs.candidate", pack_steps)
 
     def test_existing_required_jobs_are_preserved(self):
         for name in ("build", "projection-postgresql", "caching-redis", "package-compatibility", "redis-package-compatibility", "ef-transactions", "http-integration"):
