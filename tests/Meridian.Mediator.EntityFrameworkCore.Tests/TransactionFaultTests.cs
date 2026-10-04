@@ -108,9 +108,11 @@ public sealed class TransactionFaultTests
         db.Context.Faults.DisposeGate = async () => { entered.SetResult(); await release.Task; };
         var failure = new IOException("dispose"); db.Context.Faults.Dispose = failure;
         var operation = Provider(db).ExecuteAsync(ct => Task.FromResult(1), default);
-        try { await entered.Task.WaitAsync(TimeSpan.FromSeconds(5)); Assert.False(operation.IsCompleted); }
-        finally { release.TrySetResult(); }
-        Assert.Same(failure, await Record.ExceptionAsync(() => operation));
+        Assert.Same(failure, await ObserveOperationAsync(operation, async () =>
+        {
+            await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            Assert.False(operation.IsCompleted);
+        }, () => release.TrySetResult()));
     }
 
     [Fact, Trait("Provider", "PostgreSQL")]
@@ -276,9 +278,8 @@ public sealed class TransactionFaultTests
         else db.Context.Faults.CommitGate = Block;
         var calls = 0;
         var operation = Provider(db).ExecuteAsync(async ct => { calls++; await db.WriteAsync("canceled", ct); return 1; }, cancellation.Token);
-        try { await entered.Task.WaitAsync(TimeSpan.FromSeconds(5)); }
-        finally { cancellation.Cancel(); }
-        var failure = await Record.ExceptionAsync(() => operation);
+        var failure = await ObserveOperationAsync(operation,
+            () => entered.Task.WaitAsync(TimeSpan.FromSeconds(5)), cancellation.Cancel);
         Assert.NotNull(original); Assert.Same(original, failure);
         Assert.Equal(boundary == "begin" ? 0 : 1, calls);
         if (boundary == "commit") { Assert.NotEqual(cancellation.Token, db.Context.Faults.RollbackToken); Assert.True(db.Context.Faults.RollbackToken.CanBeCanceled); }
@@ -308,6 +309,152 @@ public sealed class TransactionFaultTests
             return 1;
         }, default));
         Assert.Empty(await db.ReadIndependentAsync());
+    }
+
+    [Fact]
+    public async Task Caught_Manual_Begin_PostSavepoint_Failure_Rolls_Back_Owner_And_Blocks_Reuse()
+    {
+        var fault = new AcquisitionFault();
+        await using var db = await DatabaseFixture.CreateAsync(false, fault);
+        var provider = Provider(db); var calls = 0;
+        var transaction = new TransactionBehavior<Command, int>(provider);
+        var request = new Command();
+        var error = await Record.ExceptionAsync(() => new RetryBehavior<Command, int>().Handle(request,
+            () => transaction.Handle(request, async () =>
+            {
+                calls++; await db.WriteAsync("outer");
+                fault.FailSavepoint = true;
+                Assert.Same(fault.Failure, await Record.ExceptionAsync(() => provider.BeginAsync(default)));
+                return 42;
+            }, default), default));
+        Assert.Same(fault.Failure, error);
+        Assert.Equal(1, calls); Assert.Equal(1, fault.CreatedSavepoints);
+        Assert.Empty(await db.ReadIndependentAsync());
+        await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ExecuteAsync(ct => { calls++; return Task.FromResult(1); }, default));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => provider.BeginAsync(default));
+        Assert.Equal(1, calls);
+    }
+
+    [Fact]
+    public async Task Manual_Begin_PostSavepoint_Failure_Preserves_Caller_Ownership_And_Blocks_Reuse()
+    {
+        var fault = new AcquisitionFault();
+        await using var db = await DatabaseFixture.CreateAsync(false, fault);
+        await using var ambient = await db.Context.Database.BeginTransactionAsync();
+        await db.WriteAsync("outer");
+        var provider = Provider(db); fault.FailSavepoint = true;
+        Assert.Same(fault.Failure, await Record.ExceptionAsync(() => provider.BeginAsync(default)));
+        Assert.Same(ambient, db.Context.Database.CurrentTransaction);
+        var calls = 0;
+        await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ExecuteAsync(ct => { calls++; return Task.FromResult(1); }, default));
+        Assert.Equal(0, calls); Assert.Equal(1, await db.Context.Rows.CountAsync());
+        await ambient.RollbackAsync(); Assert.Empty(await db.ReadIndependentAsync());
+    }
+
+    [Fact]
+    public async Task Manual_Owned_Begin_PostAcquisition_Failure_Blocks_Later_Handler()
+    {
+        var fault = new AcquisitionFault();
+        await using var db = await DatabaseFixture.CreateAsync(false, fault);
+        var provider = Provider(db); fault.FailTransaction = true;
+        try
+        {
+            Assert.Same(fault.Failure, await Record.ExceptionAsync(() => provider.BeginAsync(default)));
+            Assert.NotNull(fault.AcquiredTransaction);
+            fault.FailTransaction = false;
+            // The interceptor retains the underlying acquired transaction solely for fixture cleanup.
+            // The adapter must not adopt an unreturned transaction or allow subsequent handler entry.
+            await fault.AcquiredTransaction!.RollbackAsync();
+            await fault.AcquiredTransaction.DisposeAsync(); fault.AcquiredTransaction = null;
+            var calls = 0;
+            await Assert.ThrowsAsync<InvalidOperationException>(() => provider.ExecuteAsync(ct => { calls++; return Task.FromResult(1); }, default));
+            Assert.Equal(0, calls);
+        }
+        finally
+        {
+            if (fault.AcquiredTransaction is not null) await fault.AcquiredTransaction.DisposeAsync();
+        }
+    }
+
+    [Fact]
+    public async Task Known_Manual_Begin_Preflight_Rejection_Does_Not_Poison_Context()
+    {
+        await using var db = await DatabaseFixture.CreateFaultAsync(false);
+        db.Context.Faults.NoSavepoints = true;
+        await using var ambient = await db.Context.Database.BeginTransactionAsync();
+        var provider = Provider(db);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => provider.BeginAsync(default));
+        db.Context.Faults.NoSavepoints = false;
+        await using var scope = await provider.BeginAsync(default);
+        await scope.CommitAsync(default);
+        Assert.Same(ambient, db.Context.Database.CurrentTransaction);
+        await ambient.RollbackAsync();
+    }
+
+    [Theory]
+    [InlineData("dispose")]
+    [InlineData("begin")]
+    [InlineData("commit")]
+    public async Task Forced_Watchdog_Timeout_Joins_Actual_Operation_And_Preserves_Both_Failures(string boundary)
+    {
+        var connectionGate = new ConnectionGate();
+        await using var db = await DatabaseFixture.CreateFaultAsync(false, false, connectionGate);
+        using var cancellation = new CancellationTokenSource();
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var disposal = new IOException("forced disposal failure");
+        Exception? operationFailure = null; TimeoutException? watchdogFailure = null;
+        var gateExited = false;
+        async Task CancelGate(CancellationToken ct)
+        {
+            try { await Task.Delay(Timeout.InfiniteTimeSpan, ct); }
+            catch (OperationCanceledException error) { operationFailure = error; throw; }
+            finally { gateExited = true; }
+        }
+        if (boundary == "dispose")
+        {
+            db.Context.Faults.DisposeGate = async () => { await release.Task; gateExited = true; };
+            db.Context.Faults.Dispose = disposal; operationFailure = disposal;
+        }
+        else if (boundary == "begin") connectionGate.Operation = CancelGate;
+        else db.Context.Faults.CommitGate = CancelGate;
+        var operation = Provider(db).ExecuteAsync(ct => Task.FromResult(1), cancellation.Token);
+        async Task ForceActualTimeout()
+        {
+            try { await new TaskCompletionSource().Task.WaitAsync(TimeSpan.Zero); }
+            catch (TimeoutException error) { watchdogFailure = error; throw; }
+        }
+        try
+        {
+            var error = await Assert.ThrowsAsync<AggregateException>(() => ObserveOperationAsync(operation, ForceActualTimeout,
+                () => { release.TrySetResult(); cancellation.Cancel(); }));
+            Assert.Same(watchdogFailure, error.InnerExceptions[0]);
+            Assert.Same(operationFailure, error.InnerExceptions[1]);
+            Assert.Equal(2, error.InnerExceptions.Count);
+            Assert.True(operation.IsCompleted); Assert.True(gateExited);
+            if (boundary != "begin") Assert.Equal(1, db.Context.Faults.Disposals);
+            connectionGate.Operation = null;
+            Assert.Empty(await db.ReadIndependentAsync());
+        }
+        finally
+        {
+            release.TrySetResult(); cancellation.Cancel();
+            await Record.ExceptionAsync(() => operation);
+        }
+    }
+
+    private static async Task<Exception?> ObserveOperationAsync(Task operation, Func<Task> waitAndAssert, Action release)
+    {
+        var failures = new List<Exception>();
+        try { await waitAndAssert(); }
+        catch (Exception error) { failures.Add(error); }
+        try { release(); }
+        catch (Exception error) { failures.Add(error); }
+        // Join the actual operation before any fixture teardown, including failed watchdog/assertion paths.
+        var operationFailure = await Record.ExceptionAsync(() => operation);
+        if (failures.Count == 0) return operationFailure;
+        if (operationFailure is not null) failures.Add(operationFailure);
+        if (failures.Count == 1) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        throw new AggregateException("Watchdog/assertion and observed transaction operation failures.", failures);
     }
 
     private static EfTransactionScopeProvider<TestContext> Provider(DatabaseFixture db) => new(db.Context, new() { UseExecutionStrategy = true });
@@ -365,4 +512,16 @@ internal sealed class ConnectionGate : DbConnectionInterceptor
     internal Func<CancellationToken, Task>? Operation;
     public override async ValueTask<InterceptionResult> ConnectionOpeningAsync(DbConnection connection, ConnectionEventData eventData, InterceptionResult result, CancellationToken cancellationToken = default)
     { if (Operation is not null) await Operation(cancellationToken); return result; }
+}
+
+internal sealed class AcquisitionFault : DbTransactionInterceptor
+{
+    internal readonly IOException Failure = new("post-acquisition uncertainty");
+    internal bool FailSavepoint, FailTransaction;
+    internal int CreatedSavepoints;
+    internal DbTransaction? AcquiredTransaction;
+    public override Task CreatedSavepointAsync(DbTransaction transaction, TransactionEventData eventData, CancellationToken cancellationToken = default)
+    { if (FailSavepoint) { CreatedSavepoints++; throw Failure; } return Task.CompletedTask; }
+    public override ValueTask<DbTransaction> TransactionStartedAsync(DbConnection connection, TransactionEndEventData eventData, DbTransaction result, CancellationToken cancellationToken = default)
+    { if (FailTransaction) { AcquiredTransaction = result; throw Failure; } return ValueTask.FromResult(result); }
 }

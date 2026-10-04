@@ -43,15 +43,25 @@ public sealed class EfTransactionScopeProvider<TContext> : ITransactionScopeProv
         CheckAvailable(cancellationToken);
         var transaction = _context.Database.CurrentTransaction;
         if (transaction is null)
-            return new EfTransactionScope(await _context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false), true, null, Poison);
+        {
+            try
+            {
+                return new EfTransactionScope(await _context.Database.BeginTransactionAsync(cancellationToken).ConfigureAwait(false), true, null, Poison);
+            }
+            catch (Exception error) { Poison(error); throw; }
+        }
         if (!transaction.SupportsSavepoints)
         {
             if (!_joinWithoutSavepoint) throw new InvalidOperationException("The current transaction does not support savepoints; explicit JoinWithoutSavepoint is required.");
             return new EfTransactionScope(transaction, false, null, Poison);
         }
         var name = "meridian_" + Guid.NewGuid().ToString("N");
-        await transaction.CreateSavepointAsync(name, cancellationToken).ConfigureAwait(false);
-        return new EfTransactionScope(transaction, false, name, Poison);
+        try
+        {
+            await transaction.CreateSavepointAsync(name, cancellationToken).ConfigureAwait(false);
+            return new EfTransactionScope(transaction, false, name, Poison);
+        }
+        catch (Exception error) { Poison(error); throw; }
     }
 
     /// <inheritdoc/>
