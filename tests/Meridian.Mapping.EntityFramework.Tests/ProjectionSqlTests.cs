@@ -383,6 +383,191 @@ public abstract class ProjectionSqlTests(ProjectionFixture fixture, ITestOutputH
             Execute(query, nameof(Getter_Inherited_Omission_And_Derived_Override)).Select(d => d.Name));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Getter_Named_Source_Selects_Configured_Column(bool reflection)
+    {
+        var config = GetterConfig<RequiredGetter>(reflection, m => m.ForMember(d => d.Name, o => o.MapFrom(nameof(Person.Alias))));
+        var query = People.ProjectTo<RequiredGetter>(config);
+        Assert.DoesNotContain("\"Name\"", query.ToQueryString());
+        Assert.Equal(new string?[] { "public-Ada", null }, Execute(query, nameof(Getter_Named_Source_Selects_Configured_Column), "Alias").Select(d => d.Name));
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public void Getter_Constant_Precedes_Expression_And_Substitution(bool reflection, bool nullConstant)
+    {
+        void Configure(IMemberConfigurationExpression<Person, RequiredGetter> o)
+        { o.MapFrom(p => p.Name); o.NullSubstitute("fallback"); o.UseValue(nullConstant ? null! : "fixed"); }
+        var config = GetterConfig<RequiredGetter>(reflection, m => m.ForMember(d => d.Name, Configure));
+        var query = People.ProjectTo<RequiredGetter>(config);
+        Assert.DoesNotContain("\"Name\"", query.ToQueryString());
+        Assert.DoesNotContain("COALESCE", query.ToQueryString());
+        Assert.All(Execute(query, nameof(Getter_Constant_Precedes_Expression_And_Substitution)), d => Assert.Equal(nullConstant ? null : "fixed", d.Name));
+        var mutable = new MapperConfiguration(c => c.CreateMap<Person, Summary>().ForMember(d => d.Name,
+            o => { o.MapFrom(p => p.Name); o.NullSubstitute("fallback"); o.UseValue(nullConstant ? null! : "fixed"); }));
+        fixture.Commands.Sql.Clear();
+        Assert.All(Execute(People.ProjectTo<Summary>(mutable), "Writable_Constant_Precedence_Control"), d => Assert.Equal(nullConstant ? null : "fixed", d.Name));
+    }
+
+    [Theory]
+    [InlineData(false, "expression")]
+    [InlineData(true, "expression")]
+    [InlineData(false, "named")]
+    [InlineData(true, "named")]
+    [InlineData(false, "constructor")]
+    [InlineData(true, "constructor")]
+    public void Getter_Source_Substitution_Is_Server_Translated(bool reflection, string source)
+    {
+        var config = GetterConfig<RequiredGetter>(reflection, m =>
+        {
+            m.ForMember(d => d.Name, o =>
+            {
+                if (source == "expression") o.MapFrom(p => p.Alias);
+                else o.MapFrom(nameof(Person.Alias));
+                o.NullSubstitute("fallback");
+            });
+            if (source == "constructor") m.ForCtorParam("name", o => o.MapFrom(p => p.Alias == null ? null : p.Alias + " ctor"));
+        });
+        var query = People.ProjectTo<RequiredGetter>(config);
+        Assert.Contains("COALESCE", query.ToQueryString());
+        Assert.DoesNotContain("\"Name\"", query.ToQueryString());
+        Assert.Equal(new[] { source == "constructor" ? "public-Ada ctor" : "public-Ada", "fallback" },
+            Execute(query, nameof(Getter_Source_Substitution_Is_Server_Translated), "Alias").Select(d => d.Name));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Getter_Convention_Substitution_Is_Server_Translated(bool reflection)
+    {
+        var config = GetterConfig<AliasGetter>(reflection, m => m.ForMember(d => d.Alias, o => o.NullSubstitute("fallback")));
+        var query = People.ProjectTo<AliasGetter>(config);
+        Assert.Contains("COALESCE", query.ToQueryString());
+        Assert.Equal(new[] { "public-Ada", "fallback" }, Execute(query, nameof(Getter_Convention_Substitution_Is_Server_Translated), "Alias").Select(d => d.Alias));
+    }
+
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(true, false, false)]
+    [InlineData(false, false, true)]
+    [InlineData(true, false, true)]
+    [InlineData(false, true, false)]
+    [InlineData(true, true, false)]
+    public void Getter_Substitution_Respects_Omission_And_Expansion(bool reflection, bool ignored, bool expand)
+    {
+        var config = GetterConfig<OptionalGetter>(reflection, m => m.ForMember(d => d.Name, o =>
+        { o.MapFrom(nameof(Person.Alias)); o.NullSubstitute("fallback"); if (ignored) o.Ignore(); else o.ExplicitExpansion(); }));
+        var query = expand ? People.ProjectTo<OptionalGetter>(config, d => d.Name) : People.ProjectTo<OptionalGetter>(config);
+        if (!expand) { Assert.DoesNotContain("Alias", query.ToQueryString()); Assert.DoesNotContain("COALESCE", query.ToQueryString()); }
+        Assert.Equal(expand ? new[] { "public-Ada", "fallback" } : new[] { "default", "default" },
+            Execute(query, nameof(Getter_Substitution_Respects_Omission_And_Expansion)).Select(d => d.Name));
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public void Getter_Constant_Respects_Expansion_And_Constructor_Override(bool reflection, bool expand)
+    {
+        var config = GetterConfig<OptionalGetter>(reflection, m => m
+            .ForMember(d => d.Name, o => { o.UseValue("fixed"); o.NullSubstitute("fallback"); o.ExplicitExpansion(); })
+            .ForCtorParam("name", o => o.MapFrom(p => p.Alias)));
+        var query = expand ? People.ProjectTo<OptionalGetter>(config, d => d.Name) : People.ProjectTo<OptionalGetter>(config);
+        Assert.DoesNotContain("\"Name\"", query.ToQueryString());
+        if (!expand) Assert.DoesNotContain("Alias", query.ToQueryString());
+        Assert.Equal(expand ? new[] { "public-Ada", "fallback" } : new[] { "default", "default" },
+            Execute(query, nameof(Getter_Constant_Respects_Expansion_And_Constructor_Override)).Select(d => d.Name));
+    }
+
+    [Theory]
+    [InlineData(false, false, false)]
+    [InlineData(true, false, false)]
+    [InlineData(false, false, true)]
+    [InlineData(true, false, true)]
+    [InlineData(false, true, true)]
+    [InlineData(true, true, true)]
+    public void Getter_Constant_Respects_Omission_Without_Constructor_Override(bool reflection, bool ignored, bool expand)
+    {
+        var config = GetterConfig<OptionalGetter>(reflection, m => m.ForMember(d => d.Name,
+            o => { o.UseValue("fixed"); o.ExplicitExpansion(); if (ignored) o.Ignore(); }));
+        var query = expand ? People.ProjectTo<OptionalGetter>(config, d => d.Name) : People.ProjectTo<OptionalGetter>(config);
+        Assert.DoesNotContain("\"Name\"", query.ToQueryString());
+        Assert.All(Execute(query, nameof(Getter_Constant_Respects_Omission_Without_Constructor_Override)),
+            d => Assert.Equal(expand && !ignored ? "fixed" : "default", d.Name));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Getter_Constant_Runtime_Condition_Still_Rejects(bool reflection)
+    {
+        var calls = 0;
+        var config = GetterConfig<RequiredGetter>(reflection, m => m.ForMember(d => d.Name,
+            o => { o.UseValue("fixed"); o.Condition(p => { calls++; return true; }); }));
+        var error = Assert.ThrowsAny<Exception>(() => People.ProjectTo<RequiredGetter>(config)).GetBaseException();
+        Assert.Contains("runtime conditions", error.Message);
+        Assert.Equal(0, calls);
+        Assert.Empty(fixture.Commands.Sql);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Getter_Nullable_Constant_Uses_Typed_Value(bool reflection)
+    {
+        var config = GetterConfig<NullableCtor>(reflection, m => m.ForMember(d => d.Age, o => o.UseValue(42)));
+        var query = People.ProjectTo<NullableCtor>(config);
+        Assert.DoesNotContain("Age", query.ToQueryString());
+        Assert.All(Execute(query, nameof(Getter_Nullable_Constant_Uses_Typed_Value)), d => { Assert.Equal(42, d.Age); Assert.Equal(5, d.Score); });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Getter_Nullable_Source_Substitution_And_Null_Constant(bool reflection)
+    {
+        var config = GetterConfig<NullableCtor>(reflection, m => m.ForMember(d => d.Age,
+            o => { o.MapFrom(nameof(Person.AddressId)); o.NullSubstitute(9); }));
+        var query = People.ProjectTo<NullableCtor>(config);
+        Assert.Contains("COALESCE", query.ToQueryString());
+        Assert.DoesNotContain("\"Age\"", query.ToQueryString());
+        Assert.Equal(new int?[] { 1, 9 }, Execute(query, nameof(Getter_Nullable_Source_Substitution_And_Null_Constant), "AddressId").Select(d => d.Age));
+        fixture.Commands.Sql.Clear();
+        var constant = GetterConfig<NullableCtor>(reflection, m => m.ForMember(d => d.Age,
+            o => { o.UseValue(null!); o.NullSubstitute(9); }));
+        var constantQuery = People.ProjectTo<NullableCtor>(constant);
+        Assert.DoesNotContain("Age", constantQuery.ToQueryString());
+        Assert.All(Execute(constantQuery, "Nullable_Null_Constant_Control"), d => Assert.Null(d.Age));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Getter_Invalid_Constant_Has_Member_Guidance(bool reflection)
+    {
+        var config = GetterConfig<RequiredGetter>(reflection, m => m.ForMember(d => d.Name, o => o.UseValue(42)));
+        var error = Assert.ThrowsAny<Exception>(() => People.ProjectTo<RequiredGetter>(config)).GetBaseException();
+        Assert.Contains("RequiredGetter.Name", error.Message);
+        Assert.Contains("constant", error.Message);
+        Assert.Empty(fixture.Commands.Sql);
+    }
+
+    [Fact]
+    public void Getter_Invalid_Named_Source_Has_Configuration_Guidance()
+    {
+        var error = Assert.Throws<InvalidOperationException>(() => new MapperConfiguration(c => c.CreateMap<Person, RequiredGetter>()
+            .ForMember(d => d.Name, o => o.MapFrom("Unavailable"))));
+        Assert.Contains("Unavailable", error.Message);
+        Assert.Contains("Name", error.Message);
+        Assert.Empty(fixture.Commands.Sql);
+    }
+
     [Fact]
     public void Constructor_Valid_Widest_Ignores_Incompatible_Smaller()
     {
@@ -454,7 +639,7 @@ public abstract class ProjectionFixture : IDisposable
     protected void Seed()
     {
         Context.People.AddRange(
-            new Person { Id = 1, Name = "Ada", Age = 37, SecretPayload = "must-never-select", Address = new Address { Id = 1, City = "Ankara" }, Items = [new Item { Id = 1, Label = "book" }] },
+            new Person { Id = 1, Name = "Ada", Alias = "public-Ada", Age = 37, SecretPayload = "must-never-select", Address = new Address { Id = 1, City = "Ankara" }, Items = [new Item { Id = 1, Label = "book" }] },
             new Person { Id = 2, Name = "Bob", Age = 19, SecretPayload = "must-never-select" });
         Context.SaveChanges();
         Context.ChangeTracker.Clear();
@@ -486,6 +671,7 @@ public sealed class Person
     public int Id { get; set; }
     public string Name { get; set; } = "";
     public int Age { get; set; }
+    public string? Alias { get; set; }
     public string SecretPayload { get; set; } = "";
     public int? AddressId { get; set; }
     public Address? Address { get; set; }
@@ -528,6 +714,7 @@ public sealed class NullableCtor(int? age, int? score = 5) { public int? Age { g
 
 public sealed record OptionalRecord(int Id, int Age = 7);
 
+public sealed class AliasGetter(string? alias) { public string? Alias { get; } = alias; }
 public sealed class RequiredGetter(string name) { public string Name { get; } = name; }
 public sealed class OptionalGetter(string name = "default") { public string Name { get; } = name; }
 public class BaseGetter(string name = "default") { public string Name { get; } = name; }

@@ -1418,6 +1418,25 @@ public class MapperConfiguration : IConfigurationProvider, IGeneratedMappingConf
             if (configurations[property.Name] is not { } configuration) continue;
             var member = new PropertyMap(property);
             ApplyMemberConfig(member, configuration, sourceType);
+            if (member.HasConstantValue)
+            {
+                // Runtime constants intentionally short-circuit member options. Constructor projections
+                // still need omission/guard metadata, and substitution if ForCtorParam overrides the constant.
+                var configType = configuration.GetType();
+                object? Read(string name) => configType.GetProperty(name, BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(configuration);
+                member.ExplicitExpansion = Read("ExplicitExpansionEnabled") is true;
+                member.Condition = Read("ConditionFunc") as Delegate;
+                member.Condition3Arg = Read("Condition3ArgFunc") as Delegate;
+                member.PreCondition = Read("PreConditionFunc") as Delegate;
+                member.ValueResolverType = Read("ValueResolverType") as Type;
+                member.MemberValueResolverType = Read("MemberValueResolverType") as Type;
+                member.MemberConverterFunc = Read("MemberConverterFunc") as Delegate;
+                member.MemberConverterInstance = Read("MemberConverterInstance");
+                member.CustomMapFunc = Read("MapFromFunc") as Delegate;
+                member.CustomMapExpression = Read("MapFromExpression") as LambdaExpression;
+                member.HasNullSubstitute = Read("HasNullSubstitute") is true;
+                member.NullSubstitute = Read("NullSubstituteValue");
+            }
             // Retain expression/configuration only: Compile() would try to create a setter.
             map.ProjectionOnlyMemberMaps.Add(member);
         }

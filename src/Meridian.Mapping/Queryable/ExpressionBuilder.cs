@@ -84,6 +84,7 @@ public static class ExpressionBuilder
             foreach (var parameter in parameters)
             {
                 Expression? value = null;
+                var applySubstitution = false;
                 var destinationMember = map.PropertyMaps.Concat(map.ProjectionOnlyMemberMaps).FirstOrDefault(p =>
                     string.Equals(p.DestinationProperty.Name, parameter.Name, StringComparison.OrdinalIgnoreCase));
                 var omitted = destinationMember != null && (destinationMember.Ignored ||
@@ -107,12 +108,13 @@ public static class ExpressionBuilder
                     {
                         value = ReplaceParameter(configured.Body, configured.Parameters[0], source);
                         consumedParameters.Add(parameter.Name!);
+                        applySubstitution = true;
                     }
-                    else if (destinationMember is { DestinationProperty.CanWrite: false, CustomMapExpression: not null })
+                    else if (destinationMember is { DestinationProperty.CanWrite: false } &&
+                             TryBuildGetterValue(destinationMember, source, destinationType, out value))
                     {
-                        var expression = destinationMember.CustomMapExpression;
-                        value = ReplaceParameter(expression.Body, expression.Parameters[0], source);
                         consumedParameters.Add(parameter.Name!);
+                        applySubstitution = !destinationMember.HasConstantValue;
                     }
                     else
                     {
@@ -125,6 +127,7 @@ public static class ExpressionBuilder
                         {
                             value = Expression.Property(source, property);
                             consumedParameters.Add(parameter.Name!);
+                            applySubstitution = true;
                         }
                         else if (parameter.HasDefaultValue)
                             value = parameter.DefaultValue == null
@@ -133,6 +136,8 @@ public static class ExpressionBuilder
                     }
                 }
                 if (value == null) break;
+                if (applySubstitution && destinationMember is { DestinationProperty.CanWrite: false, HasNullSubstitute: true })
+                    value = ApplyNullSubstitute(value, destinationMember);
                 if (value.Type != parameter.ParameterType)
                 {
                     try { value = Expression.Convert(value, parameter.ParameterType); }
@@ -159,6 +164,33 @@ public static class ExpressionBuilder
             throw new InvalidOperationException($"Projection constructor selection for '{destinationType.Name}' is ambiguous. Use a DTO with a single fully resolved constructor of greatest arity.");
         consumed = candidates[0].Consumed;
         return candidates[0].Expression;
+    }
+
+    private static bool TryBuildGetterValue(PropertyMap member, Expression source, Type destinationType, out Expression? value)
+    {
+        // Match writable member source precedence. Constants bypass null substitution.
+        if (member.HasConstantValue)
+        {
+            var type = member.DestinationProperty.PropertyType;
+            var constant = member.ConstantValue;
+            if (constant == null ? type.IsValueType && Nullable.GetUnderlyingType(type) == null
+                : !type.IsInstanceOfType(constant) && !(Nullable.GetUnderlyingType(type)?.IsInstanceOfType(constant) ?? false))
+                throw new InvalidOperationException($"Projection for '{destinationType.Name}.{member.DestinationProperty.Name}' has an incompatible constant value. Use a value compatible with '{type.Name}' or an expression mapping.");
+            value = Expression.Constant(constant, type);
+        }
+        else if (member.CustomMapExpression is { } expression)
+            value = ReplaceParameter(expression.Body, expression.Parameters[0], source);
+        else if (member.SourcePropertyChain is { Length: > 0 } chain)
+            value = BuildChainAccess(source, chain);
+        else if (member.SourceProperty is { } property)
+        {
+            if (property.GetMethod is not { IsPublic: true } || property.GetIndexParameters().Length != 0)
+                throw new InvalidOperationException($"Projection for '{destinationType.Name}.{member.DestinationProperty.Name}' requires a public readable source property. Use an expression mapping.");
+            value = Expression.Property(source, property);
+        }
+        else
+            value = null;
+        return value != null;
     }
 
     private static List<MemberBinding> BuildMemberBindings(
