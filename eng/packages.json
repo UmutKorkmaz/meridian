@@ -364,6 +364,25 @@
         "legacy"
       ],
       "baselineComparison": false
+    },
+    {
+      "id": "Meridian.NativeAotConsumer",
+      "project": "tests/consumers/Meridian.NativeAotConsumer/Meridian.NativeAotConsumer.csproj",
+      "sourceFiles": [
+        "tests/consumers/Meridian.NativeAotConsumer/Meridian.NativeAotConsumer.csproj",
+        "tests/consumers/Meridian.NativeAotConsumer/Program.cs",
+        "tests/consumers/Meridian.NativeAotConsumer/Registry.cs",
+        "tests/consumers/Meridian.NativeAotConsumer/Mapping.cs"
+      ],
+      "packageIds": [
+        "Meridian.Mapping",
+        "Meridian.Mediator",
+        "Meridian.Mediator.Generators"
+      ],
+      "variants": [
+        "legacy"
+      ],
+      "baselineComparison": false
     }
   ]
 }

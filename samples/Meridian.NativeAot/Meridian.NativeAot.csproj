@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Readable Native AOT example of the closed, generated configuration. It uses source references so it can be built
+    and run from this repository. Source references are never package evidence: the packaged equivalent is
+    tests/consumers/Meridian.NativeAotConsumer, published and executed by eng/run-aot-smoke.ps1 -Combined.
+    Program.cs, Registry.cs and Mapping.cs are byte-identical to that consumer (checked by eng/tests/test_native_aot.py).
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>$(MeridianSampleTargetFrameworks)</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Meridian.NativeAot</RootNamespace>
+  </PropertyGroup>
+
+  <!-- dotnet publish -r <rid> -f <tfm> -p:NativeAotSmoke=true publishes a native executable with trimming. -->
+  <PropertyGroup Condition="'$(NativeAotSmoke)' == 'true'">
+    <PublishAot>true</PublishAot>
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimmerSingleWarn>false</TrimmerSingleWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.9" />
+    <ProjectReference Include="../../src/Meridian.Mapping/Meridian.Mapping.csproj" />
+    <ProjectReference Include="../../src/Meridian.Mediator/Meridian.Mediator.csproj" />
+    <ProjectReference Include="../../src/Meridian.Mapping.Generators/Meridian.Mapping.Generators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../../src/Meridian.Mediator.Generators/Meridian.Mediator.Generators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>

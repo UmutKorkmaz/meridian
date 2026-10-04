@@ -361,3 +361,92 @@ jobs:
             artifacts/http-results/**
             artifacts/C6/socket/**
             artifacts/sample-results/**
+
+  native-aot-pack:
+    name: native AOT candidate packages
+    runs-on: ubuntu-latest
+    env:
+      CANDIDATE_VERSION: 2.1.4-d4.${{ github.run_id }}.${{ github.run_attempt }}
+      DOTNET_ROLL_FORWARD: LatestPatch
+      DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.300
+      # One packaging job from one frozen source snapshot. Both native lanes download and inspect this exact feed;
+      # independent repacks would be different archives and are never merged into one exact-artifact claim.
+      - name: Pack every inventory archive once
+        shell: pwsh
+        run: ./eng/pack-packages.ps1 -OutputDirectory artifacts/native-feed -CandidateVersion $env:CANDIDATE_VERSION
+      - name: Retain the immutable candidate feed
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-aot-feed
+          path: artifacts/native-feed/**
+          retention-days: 14
+          if-no-files-found: error
+
+  # Publishes the packaged consumer with PublishAot/trimming and EXECUTES the native binary on a matching real runner
+  # (linux-x64 on an x64 runner, osx-arm64 on an Apple-silicon runner). The runner refuses emulated, translated or
+  # mismatched hosts, so cross-publication can never pass. Existing runtime, sample, package and provider jobs are unchanged.
+  native-aot:
+    name: native AOT ${{ matrix.rid }} (${{ matrix.host.framework }})
+    needs: native-aot-pack
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        rid: [linux-x64, osx-arm64]
+        host:
+          - { framework: net8.0, sdk: 8.0.421 }
+          - { framework: net9.0, sdk: 9.0.318 }
+          - { framework: net10.0, sdk: 10.0.300 }
+        include:
+          - { rid: linux-x64, runner: ubuntu-24.04 }
+          - { rid: osx-arm64, runner: macos-14 }
+    env:
+      CANDIDATE_VERSION: 2.1.4-d4.${{ github.run_id }}.${{ github.run_attempt }}
+      DOTNET_ROLL_FORWARD: LatestPatch
+      DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: |
+            10.0.300
+            ${{ matrix.host.sdk }}
+      - name: Install Linux native toolchain
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang zlib1g-dev
+      - name: Record host and native toolchain
+        shell: bash
+        run: |
+          uname -a
+          clang --version
+          if [ "$RUNNER_OS" = "macOS" ]; then xcode-select -p; sw_vers; fi
+      - uses: actions/download-artifact@v4
+        with:
+          name: native-aot-feed
+          path: artifacts/native-feed
+      - name: Publish and execute the combined mediator and mapping consumer
+        shell: pwsh
+        run: ./eng/run-aot-smoke.ps1 -Combined -Feed artifacts/native-feed -CandidateVersion $env:CANDIDATE_VERSION -Framework '${{ matrix.host.framework }}' -SdkVersion '${{ matrix.host.sdk }}' -Rid '${{ matrix.rid }}' -OutputDirectory artifacts/native-aot
+      - name: Publish and execute the unchanged mapping-only consumer
+        shell: pwsh
+        run: ./eng/run-aot-smoke.ps1 -MappingOnly -Feed artifacts/native-feed -CandidateVersion $env:CANDIDATE_VERSION -Framework '${{ matrix.host.framework }}' -SdkVersion '${{ matrix.host.sdk }}' -RuntimeIdentifier '${{ matrix.rid }}' -OutputDirectory artifacts/native-aot-mapping
+      - name: Run the readable sample with the same assertions (managed)
+        run: dotnet run --project samples/Meridian.NativeAot/Meridian.NativeAot.csproj -c Release -f '${{ matrix.host.framework }}'
+      - name: Retain native publish, warning, case and binary evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-aot-${{ matrix.rid }}-${{ matrix.host.framework }}
+          path: |
+            artifacts/native-aot/**
+            artifacts/native-aot-mapping/**
+            !artifacts/native-aot/**/packages/**
+            !artifacts/native-aot-mapping/**/packages/**
+          retention-days: 14
