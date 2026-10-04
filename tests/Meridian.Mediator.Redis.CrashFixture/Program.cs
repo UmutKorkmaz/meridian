@@ -5,6 +5,7 @@ using Meridian.Mediator.Redis;
 using StackExchange.Redis;
 
 var endpoint = args[0]; var prefix = args[1]; var mode = args[2]; var marker = args[3]; var leaseMs = int.Parse(args[4], System.Globalization.CultureInfo.InvariantCulture);
+if (mode == "exit-hang") { Console.WriteLine("exit-hang-ready"); await Task.Delay(Timeout.Infinite, CancellationToken.None); return; }
 using var connection = await ConnectionMultiplexer.ConnectAsync(endpoint);
 var registry = new CacheContractRegistry().RegisterContract("text", 1, TextContext.Default.String);
 var store = new RedisLeasedIdempotencyStore(connection, registry, new JsonCacheValueSerializer(registry), new() { ApplicationKeyPrefix = prefix, LeaseDuration = TimeSpan.FromMilliseconds(leaseMs), CompletedRetention = TimeSpan.FromMinutes(10) });

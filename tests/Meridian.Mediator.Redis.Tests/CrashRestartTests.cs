@@ -52,14 +52,36 @@ public sealed class CrashRestartTests(ITestOutputHelper output)
         }
         finally { File.Delete(marker); }
     }
-    private Process Start(string prefix, string mode, string marker, int leaseMs)
+    [Fact]
+    public void Crash_Fixture_Is_Bound_To_Actual_Test_Configuration()
+    {
+        var configuration = new DirectoryInfo(AppContext.BaseDirectory).Parent!.Name;
+        Assert.Equal(configuration, new FileInfo(FixturePath()).Directory!.Parent!.Name);
+    }
+    [Fact]
+    public async Task Exit_Timeout_Kills_And_Joins_Only_The_Recorded_Child()
+    {
+        using var child = Start("unused", "exit-hang", "unused", 3000);
+        try
+        {
+            await Signal(child, "exit-hang-ready");
+            await Assert.ThrowsAsync<TimeoutException>(() => Exit(child, TimeSpan.FromMilliseconds(30)));
+            Assert.True(child.HasExited, "Exit timeout left the recorded child alive.");
+        }
+        finally { if (!child.HasExited) Kill(child); }
+    }
+    private static string FixturePath()
     {
         var root = new DirectoryInfo(AppContext.BaseDirectory).Parent!.Parent!.Parent!.Parent!.Parent!.FullName;
         var tfm = new DirectoryInfo(AppContext.BaseDirectory).Name;
-        var fixture = Path.Combine(root, "tests", "Meridian.Mediator.Redis.CrashFixture", "bin", "Release", tfm, "Meridian.Mediator.Redis.CrashFixture.dll");
+        return Path.Combine(root, "tests", "Meridian.Mediator.Redis.CrashFixture", "bin", new DirectoryInfo(AppContext.BaseDirectory).Parent!.Name, tfm, "Meridian.Mediator.Redis.CrashFixture.dll");
+    }
+    private Process Start(string prefix, string mode, string marker, int leaseMs)
+    {
+        var fixture = FixturePath();
         var host = Environment.GetEnvironmentVariable("DOTNET_HOST_PATH") ?? "dotnet";
         var start = new ProcessStartInfo(host) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-        foreach (var arg in new[] { fixture, Environment.GetEnvironmentVariable("MERIDIAN_TEST_REDIS")!, prefix, mode, marker, leaseMs.ToString(CultureInfo.InvariantCulture) }) start.ArgumentList.Add(arg);
+        foreach (var arg in new[] { fixture, Environment.GetEnvironmentVariable("MERIDIAN_TEST_REDIS") ?? "unused", prefix, mode, marker, leaseMs.ToString(CultureInfo.InvariantCulture) }) start.ArgumentList.Add(arg);
         var digest = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(fixture)));
         var child = Process.Start(start)!;
         output.WriteLine(JsonSerializer.Serialize(new { child.Id, fixture, sha256 = digest, mode, host }));
@@ -74,13 +96,27 @@ public sealed class CrashRestartTests(ITestOutputHelper output)
             { output.WriteLine($"pid={child.Id} {line}"); if (line == expected) return; }
             throw new InvalidOperationException("Child exited without expected barrier: " + await child.StandardError.ReadToEndAsync(timeout.Token));
         }
-        catch { if (!child.HasExited) Kill(child); throw; }
+        catch (Exception primary)
+        {
+            try { if (!child.HasExited) Kill(child); }
+            catch (Exception cleanup) { throw new AggregateException("Child signal and owned cleanup failed.", primary, cleanup); }
+            throw;
+        }
     }
     private void Kill(Process child)
     {
         var pid = child.Id; child.Kill(entireProcessTree: true); Assert.True(child.WaitForExit(10000)); output.WriteLine($"killed recorded pid={pid} exit={child.ExitCode}");
     }
-    private static async Task Exit(Process child) { await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10)); Assert.Equal(0, child.ExitCode); }
+    private async Task Exit(Process child, TimeSpan? timeout = null)
+    {
+        try { await child.WaitForExitAsync().WaitAsync(timeout ?? TimeSpan.FromSeconds(10)); Assert.Equal(0, child.ExitCode); }
+        catch (Exception primary)
+        {
+            try { if (!child.HasExited) Kill(child); }
+            catch (Exception cleanup) { throw new AggregateException("Child exit and owned cleanup failed.", primary, cleanup); }
+            throw;
+        }
+    }
     private static int Count(string marker) => File.Exists(marker) ? File.ReadAllLines(marker).Length : 0;
     internal static async Task WaitExpired(IDatabase database, string key)
     {

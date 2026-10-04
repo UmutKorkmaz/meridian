@@ -49,6 +49,7 @@ public class IdempotencyBehavior<TRequest, TResponse> : IPipelineBehavior<TReque
     where TRequest : IIdempotentRequest
 {
     private readonly IIdempotencyStore _idempotencyStore;
+    internal TimeProvider LeaseTimeProvider { get; init; } = TimeProvider.System;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="IdempotencyBehavior{TRequest, TResponse}"/> class.
@@ -82,7 +83,7 @@ public class IdempotencyBehavior<TRequest, TResponse> : IPipelineBehavior<TReque
 
         return response;
     }
-    private static async Task<TResponse> HandleLeased(
+    private async Task<TResponse> HandleLeased(
         ILeasedIdempotencyStore store, string key, RequestHandlerDelegate<TResponse> next, CancellationToken requestToken)
     {
         try
@@ -103,7 +104,7 @@ public class IdempotencyBehavior<TRequest, TResponse> : IPipelineBehavior<TReque
             if (lease is null || string.IsNullOrWhiteSpace(lease.Key) || string.IsNullOrWhiteSpace(lease.OwnerToken)
                 || string.IsNullOrWhiteSpace(lease.ResponseContractId))
                 throw new InvalidOperationException("Invalid idempotency lease.");
-            var intervalMs = Math.Floor((lease.ExpiresAt - TimeProvider.System.GetUtcNow()).TotalMilliseconds / 3);
+            var intervalMs = Math.Floor((lease.ExpiresAt - LeaseTimeProvider.GetUtcNow()).TotalMilliseconds / 3);
             if (intervalMs < 1 || intervalMs > uint.MaxValue - 1)
                 throw new IdempotencyOutcomeUnknownException();
             var interval = TimeSpan.FromMilliseconds(intervalMs);
@@ -114,12 +115,12 @@ public class IdempotencyBehavior<TRequest, TResponse> : IPipelineBehavior<TReque
             var failures = new List<Exception>();
             try { response = await next().ConfigureAwait(false); }
             catch (Exception error) { failures.Add(error); }
-            using (var cleanup = BehaviorFailure.CreateCleanupBudget())
+            using (var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(5), LeaseTimeProvider))
             {
                 // Cancellation is cooperative: never abandon a provider that still owns scoped work.
                 try { stop.Cancel(); }
                 catch (Exception error) { failures.Add(error); }
-                var budgetExpired = Task.Delay(Timeout.InfiniteTimeSpan, cleanup.Token);
+                var budgetExpired = Task.Delay(Timeout.InfiniteTimeSpan, LeaseTimeProvider, cleanup.Token);
                 var first = await Task.WhenAny(renewal, budgetExpired).ConfigureAwait(false);
                 // A noncooperative provider is still joined to protect scoped lifetime.
                 var renewalFailure = await renewal.ConfigureAwait(false);
@@ -130,7 +131,7 @@ public class IdempotencyBehavior<TRequest, TResponse> : IPipelineBehavior<TReque
             }
             if (failures.Count == 1) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failures[0]).Throw();
             if (failures.Count > 1) throw new AggregateException("Idempotent execution and lease maintenance failed.", failures);
-            using var completion = BehaviorFailure.CreateCleanupBudget();
+            using var completion = new CancellationTokenSource(TimeSpan.FromSeconds(5), LeaseTimeProvider);
             await store.CompleteAsync(lease, response, completion.Token).ConfigureAwait(false);
             return response;
         }
@@ -142,14 +143,14 @@ public class IdempotencyBehavior<TRequest, TResponse> : IPipelineBehavior<TReque
         }
     }
 
-    private static async Task<Exception?> RenewUntilStopped(
+    private async Task<Exception?> RenewUntilStopped(
         ILeasedIdempotencyStore store, IdempotencyLease lease, TimeSpan interval, CancellationToken lifetime)
     {
         while (true)
         {
-            try { await Task.Delay(interval, lifetime).ConfigureAwait(false); }
+            try { await Task.Delay(interval, LeaseTimeProvider, lifetime).ConfigureAwait(false); }
             catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { return null; }
-            using var deadline = new CancellationTokenSource(interval);
+            using var deadline = new CancellationTokenSource(interval, LeaseTimeProvider);
             using var call = CancellationTokenSource.CreateLinkedTokenSource(lifetime, deadline.Token);
             try
             {
