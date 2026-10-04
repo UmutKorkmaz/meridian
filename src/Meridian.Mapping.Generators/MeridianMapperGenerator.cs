@@ -14,16 +14,13 @@ namespace Meridian.Mapping.Generators;
 /// with <c>[GenerateMapper(typeof(TSrc), typeof(TDst))]</c>, emits a
 /// <c>partial</c> class body containing a typed
 /// <c>public static TDst MapTo{TDst}(TSrc source)</c> method whose body
-/// is a direct property-assignment block.
+/// uses statically bound construction and member assignments.
 /// </summary>
 /// <remarks>
 /// <para>
-/// This generator covers the "simple ForMember+MapFrom" subset only —
-/// same-name or explicit-attribute property mapping. Anything more
-/// complex (resolvers, converters, conditions, recursive graphs) should
-/// stay on the runtime <see cref="IMapper"/> path. The goal is to offer
-/// an AOT-safe, zero-reflection fast path for the hot types without
-/// trying to subsume the whole runtime API.
+/// Supports legacy shallow member mapping and opt-in structural DTO construction,
+/// plus explicit member renames, ignores and static methods. Runtime resolvers,
+/// expression configuration and recursive graphs remain outside this subset.
 /// </para>
 /// <para>
 /// Output is deterministic — property assignments are emitted in the
@@ -43,6 +40,36 @@ public sealed class MeridianMapperGenerator : IIncrementalGenerator
 namespace Meridian.Mapping
 {
     internal enum GeneratedMappingMode { Legacy = 0, Structural = 1 }
+    [System.AttributeUsage(System.AttributeTargets.Class, AllowMultiple = true, Inherited = false)]
+    internal sealed class MapMemberAttribute : System.Attribute
+    {
+        public MapMemberAttribute(string destinationMember, string sourceMember) { DestinationMember = destinationMember; SourceMember = sourceMember; }
+        public string DestinationMember { get; }
+        public string SourceMember { get; }
+        public System.Type? SourceType { get; set; }
+        public System.Type? DestinationType { get; set; }
+    }
+
+    [System.AttributeUsage(System.AttributeTargets.Class, AllowMultiple = true, Inherited = false)]
+    internal sealed class IgnoreMapMemberAttribute : System.Attribute
+    {
+        public IgnoreMapMemberAttribute(string destinationMember) { DestinationMember = destinationMember; }
+        public string DestinationMember { get; }
+        public System.Type? SourceType { get; set; }
+        public System.Type? DestinationType { get; set; }
+    }
+
+    [System.AttributeUsage(System.AttributeTargets.Class, AllowMultiple = true, Inherited = false)]
+    internal sealed class MapWithAttribute : System.Attribute
+    {
+        public MapWithAttribute(string destinationMember, System.Type converterType, string methodName) { DestinationMember = destinationMember; ConverterType = converterType; MethodName = methodName; }
+        public string DestinationMember { get; }
+        public System.Type ConverterType { get; }
+        public string MethodName { get; }
+        public System.Type? SourceType { get; set; }
+        public System.Type? DestinationType { get; set; }
+    }
+
 
     /// <summary>
     /// Marks a partial class as the target for a Meridian source-generated
@@ -50,9 +77,9 @@ namespace Meridian.Mapping
     /// typed <c>MapTo{TDestination}(TSource)</c> method inside the class.
     /// </summary>
     /// <remarks>
-    /// Only the simple property-to-property mapping subset is supported
-    /// at the source-gen level today. Types that need resolvers,
-    /// converters, or conditions must use the runtime <c>IMapper</c> API.
+    /// Supports shallow members, explicit static methods and opt-in structural
+    /// constructor binding. Runtime resolvers and expression configuration
+    /// remain on the runtime <c>IMapper</c> API.
     /// </remarks>
     [System.AttributeUsage(System.AttributeTargets.Class, AllowMultiple = true, Inherited = false)]
     internal sealed class GenerateMapperAttribute : System.Attribute

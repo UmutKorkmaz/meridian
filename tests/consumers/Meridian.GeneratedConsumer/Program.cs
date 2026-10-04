@@ -21,6 +21,11 @@ Check(options.Mode == GeneratedMappingMode.Legacy && options.MaxDepth == 64 && o
     !options.PreserveReferences && !options.AllowUndefinedEnumValues && !options.AllowNullCollections && options.AllowNullDestinationValues &&
     !options.GenerateResolver && options.MethodName is null, "generated attribute defaults");
 Console.WriteLine("CANDIDATE generated structural=42 explicitName=true legacyMismatch=0 defaults=true");
+var immutable = Container.ImmutableMaps.MapToImmutableDto(new MemberSource { Original = "Ada", Age = 37 });
+Check(immutable.Name == "Ada" && immutable.Age == 37 && immutable.Score == 3 && immutable.Note == "kept" && immutable.Seed == 73, "structural immutable, optional, required and static member configuration");
+var explicitLegacy = Container.ExplicitLegacyMaps.MapToExplicitDto(new MemberSource { Original = "Ada", Age = 37 });
+Check(explicitLegacy.Name == "Ada" && explicitLegacy.Score == 3 && explicitLegacy.Note == "kept", "legacy explicit member configuration");
+Console.WriteLine("CANDIDATE generated immutable=Ada:37 seed=73 converter=3 ignore=kept explicitLegacy=true");
 #endif
 static void Check(bool result, string name) { if (!result) throw new InvalidOperationException(name); }
 public sealed class Child { public int Value { get; set; } }
@@ -41,9 +46,34 @@ public partial class Container
     public static partial class StrictMaps { }
     [GenerateMapper(typeof(Source), typeof(MismatchDto), MethodName = "LegacyMismatch")]
     public static partial class LegacyMismatchMaps { }
+    [GenerateMapper(typeof(MemberSource), typeof(ImmutableDto), Mode = GeneratedMappingMode.Structural)]
+    [MapMember("Name", "Original")]
+    [MapMember("Score", "Original")]
+    [MapWith("Score", typeof(MemberConverters), "Length")]
+    [IgnoreMapMember("Note")]
+    public static partial class ImmutableMaps { }
+    [GenerateMapper(typeof(MemberSource), typeof(ExplicitDto))]
+    [MapMember("Name", "Original", SourceType = typeof(MemberSource), DestinationType = typeof(ExplicitDto))]
+    [MapMember("Score", "Original")]
+    [MapWith("Score", typeof(MemberConverters), "Length")]
+    [IgnoreMapMember("Note")]
+    public static partial class ExplicitLegacyMaps { }
 #endif
 }
 #if !BASELINE
+public sealed class MemberSource { public string Original { get; set; } = ""; public int Age { get; set; } }
+public sealed record ImmutableDto(string Name, int Age, int Seed = 73)
+{
+    public required int Score { get; init; }
+    public string Note { get; init; } = "kept";
+}
+public sealed class ExplicitDto
+{
+    public string Name { get; init; } = "";
+    public int Score { get; init; }
+    public string Note { get; init; } = "kept";
+}
+public static class MemberConverters { public static int Length(string value) => value.Length; }
 public sealed class ScalarDto { public int Value { get; set; } }
 public sealed class MismatchDto { public long Value { get; set; } }
 public class BaseSource { public int Id { get; set; } }

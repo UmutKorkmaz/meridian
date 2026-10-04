@@ -17,7 +17,7 @@ internal static class MapperDiagnostics
         Category, DiagnosticSeverity.Error, true);
     internal static readonly DiagnosticDescriptor UnsupportedConstruction = new(
         "MERIDIANGEN003", "Destination construction is not supported",
-        "Meridian cannot generate a mapper for destination '{0}': {1}. Use a concrete destination with an accessible constructor callable without arguments that satisfies required members, or use runtime IMapper for constructor mapping.",
+        "Meridian cannot generate a mapper for destination '{0}': {1}. Use a concrete destination with a supported constructor and satisfy its required members. Structural mode supports public constructor parameter mapping; runtime IMapper supports runtime-only construction configuration.",
         Category, DiagnosticSeverity.Error, true);
     internal static readonly DiagnosticDescriptor MethodCollision = new(
         "MERIDIANGEN004", "Generated mapping method collision", "Meridian mapping method '{0}' conflicts: {1}",

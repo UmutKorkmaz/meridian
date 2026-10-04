@@ -119,31 +119,7 @@ internal static class MapperEmitter
             .Append(' ').Append(EscapeIdentifier(methodName)).Append('(').Append(srcFull).AppendLine(" source)");
         sb.Append(indent).AppendLine("{");
         sb.Append(indent).AppendLine("    if (source is null) return default!;");
-        sb.Append(indent).Append("    var result = new ").Append(dstFull).AppendLine("()");
-        sb.Append(indent).AppendLine("    {");
-
-        var matched = 0;
-        foreach (var member in pair.Members)
-        {
-            if (!member.Conversion.IsIdentity)
-            {
-                sb.Append(indent).Append("    // Skipped: ").Append(member.DestinationName)
-                    .Append(" — source is ").Append(member.Conversion.SourceDisplayName)
-                    .Append(", destination is ").Append(member.Conversion.DestinationDisplayName)
-                    .AppendLine(". Use runtime IMapper for type conversion.");
-                continue;
-            }
-            sb.Append(indent).Append("        ").Append(EscapeIdentifier(member.DestinationName))
-                .Append(" = source.").Append(EscapeIdentifier(member.SourceName)).AppendLine(",");
-            matched++;
-        }
-
-        if (matched == 0)
-        {
-            sb.Append(indent).AppendLine("    // No matching properties between source and destination.");
-        }
-
-        sb.Append(indent).AppendLine("    };");
+        ConstructionEmitter.Emit(sb, indent, pair);
         sb.Append(indent).AppendLine("    return result;");
         sb.Append(indent).AppendLine("}");
     }

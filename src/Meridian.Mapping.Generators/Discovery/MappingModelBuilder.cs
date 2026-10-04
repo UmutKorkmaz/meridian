@@ -98,7 +98,7 @@ internal static class MappingModelBuilder
                 }
             }
 
-            var failure = GetConstructionFailure(destination, context.SemanticModel, container,
+            var failure = options.Mode == 1 ? null : GetConstructionFailure(destination, context.SemanticModel, container,
                 ((ClassDeclarationSyntax)context.TargetNode).CloseBraceToken.SpanStart);
             if (failure is not null)
                 Report(MapperDiagnostics.UnsupportedConstruction, destination.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat), failure);
@@ -109,9 +109,19 @@ internal static class MappingModelBuilder
                 options.MaxDepth > 0 && options.MaxCollectionItems > 0)
                 Report(MapperDiagnostics.UnsupportedStructural, "non-default structural traversal, enum and null policies are not implemented yet");
 
-            var members = ImmutableArray.CreateBuilder<MemberModel>();
-            var sourceProperties = GetWritableNameLookup(source, forWriting: false);
-            var destinationProperties = GetWritableNameLookup(destination, forWriting: true);
+            var members = MemberConfigurationBuilder.Build(container, source, destination,
+                context.SemanticModel.Compilation, options.Mode == 1, declarations, Report);
+            var constructor = options.Mode == 1
+                ? destination is INamedTypeSymbol namedDestination
+                    ? ConstructorModelBuilder.Select(namedDestination, members)
+                    : new ConstructorModel(false, Failure: "the destination is not a concrete class or struct")
+                : new ConstructorModel(true, SetsRequiredMembers: failure is null);
+            if (!constructor.IsSupported)
+                Report(MapperDiagnostics.UnsupportedConstruction, destination.ToDisplayString(), constructor.Failure!);
+            if (!constructor.Arguments.IsDefault && constructor.Arguments.Any(argument => argument.RequiresStructuralSupport))
+                Report(MapperDiagnostics.UnsupportedStructural, "constructor parameters require nullable, collection, enum or nested mapping support that is not implemented yet");
+            var finalMembers = ImmutableArray.CreateBuilder<MemberModel>();
+            var destinationProperties = GetWritableNameLookup(destination, true);
             if (options.Mode == 1)
             {
                 for (var current = destination as INamedTypeSymbol; current is not null; current = current.BaseType)
@@ -122,32 +132,28 @@ internal static class MappingModelBuilder
                              !SymbolEqualityComparer.Default.Equals(writable, required)))
                             Report(MapperDiagnostics.UnsupportedStructural, "required destination member '" + member.Name + "' is not a supported public writable property");
             }
-            foreach (var property in destinationProperties.Values)
+            foreach (var member in members)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (!sourceProperties.TryGetValue(property.Name, out var sourceProperty))
+                if (!member.IsInitializer) continue;
+                var consumed = !constructor.Arguments.IsDefault && constructor.Arguments.Any(a =>
+                    string.Equals(a.DestinationMember, member.DestinationName, StringComparison.OrdinalIgnoreCase));
+                if (consumed && (!member.IsRequired || constructor.SetsRequiredMembers)) continue;
+                if (member.IsIgnored)
                 {
-                    Report(options.Mode == 1 ? MapperDiagnostics.StructuralUnmapped : MapperDiagnostics.LegacyUnmapped,
-                        property.Name, "no public readable source property with this name");
+                    if (member.IsRequired && !constructor.SetsRequiredMembers)
+                        Report(MapperDiagnostics.UnsupportedConstruction, destination.ToDisplayString(), "ignored required member '" + member.DestinationName + "' is not satisfied by the constructor");
                     continue;
                 }
-                var identity = SymbolEqualityComparer.Default.Equals(sourceProperty.Type, property.Type);
-                if (!identity)
+                if (member.Failure is not null)
                     Report(options.Mode == 1 ? MapperDiagnostics.StructuralUnmapped : MapperDiagnostics.LegacyUnmapped,
-                        property.Name, "source type '" + sourceProperty.Type.ToDisplayString() + "' differs from destination type '" + property.Type.ToDisplayString() + "'");
-                else if (options.Mode == 1 && (!SymbolEqualityComparer.IncludeNullability.Equals(sourceProperty.Type, property.Type) ||
-                    NeedsStructuralSupport(property.Type) ||
-                    declarations.Any(pair => SymbolEqualityComparer.Default.Equals(pair.ConstructorArguments[0].Value as ITypeSymbol, sourceProperty.Type) &&
-                        SymbolEqualityComparer.Default.Equals(pair.ConstructorArguments[1].Value as ITypeSymbol, property.Type))))
-                    Report(MapperDiagnostics.UnsupportedStructural, "member '" + property.Name + "' requires nullable, collection, enum or nested mapping support that is not implemented yet");
-                members.Add(new MemberModel(sourceProperty.Name, property.Name,
-                    sourceProperty.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-                    property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-                    new ConversionModel(identity, sourceProperty.Type.ToDisplayString(), property.Type.ToDisplayString())));
+                        member.DestinationName, member.Failure);
+                else if (member.RequiresStructuralSupport)
+                    Report(MapperDiagnostics.UnsupportedStructural, "member '" + member.DestinationName + "' requires nullable, collection, enum or nested mapping support that is not implemented yet");
+                finalMembers.Add(member);
             }
             pairs.Add(new MapPairModel(source.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
                 destination.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), source.Name, destination.Name,
-                NamespaceOf(source), NamespaceOf(destination), members.ToImmutable(), new ConstructorModel(supported), options));
+                NamespaceOf(source), NamespaceOf(destination), finalMembers.ToImmutable(), constructor with { IsSupported = supported && constructor.IsSupported }, options));
         }
         return (new MapperModel(NamespaceOf(container), containingTypes, CreateTypeDeclarationInfo(container),
             BuildMetadataPath(container), pairs.ToImmutable(), nonPartial is null), diagnostics.ToImmutable());
@@ -199,16 +205,6 @@ internal static class MappingModelBuilder
         return result;
     }
 
-    private static bool NeedsStructuralSupport(ITypeSymbol type)
-    {
-        if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable)
-            return NeedsStructuralSupport(nullable.TypeArguments[0]);
-        return type.TypeKind == TypeKind.Enum || type is IArrayTypeSymbol ||
-            type.SpecialType != SpecialType.System_String && type.AllInterfaces.Any(i =>
-                i.SpecialType == SpecialType.System_Collections_IEnumerable) ||
-            type.SpecialType == SpecialType.System_Collections_IEnumerable;
-    }
-
     private static bool IsUsableType(ITypeSymbol type, Compilation compilation, INamedTypeSymbol container)
     {
         if (type.TypeKind is TypeKind.Error or TypeKind.Pointer or TypeKind.FunctionPointer || type.IsRefLikeType ||
@@ -248,7 +244,7 @@ internal static class MappingModelBuilder
     private static string? NamespaceOf(ITypeSymbol type) => type.ContainingNamespace is { IsGlobalNamespace: false } ns
         ? ns.ToDisplayString() : null;
 
-    private static Dictionary<string, IPropertySymbol> GetWritableNameLookup(ITypeSymbol type, bool forWriting)
+    internal static Dictionary<string, IPropertySymbol> GetWritableNameLookup(ITypeSymbol type, bool forWriting)
     {
         var result = new Dictionary<string, IPropertySymbol>(StringComparer.Ordinal);
         var seenNames = new HashSet<string>(StringComparer.Ordinal);
