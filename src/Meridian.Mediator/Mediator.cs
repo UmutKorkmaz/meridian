@@ -28,6 +28,7 @@ public class Mediator : IMediator
 
     internal static readonly ActivitySource ActivitySourceInstance = new("Meridian.Mediator", ActivitySourceVersion);
 
+    private readonly Generated.GeneratedMediatorComposition _generated;
     private readonly IServiceProvider _serviceProvider;
     private readonly INotificationPublisher _publisher;
     private readonly MediatorTelemetryOptions _telemetryOptions;
@@ -62,7 +63,15 @@ public class Mediator : IMediator
         IServiceProvider serviceProvider,
         INotificationPublisher publisher,
         MediatorTelemetryOptions telemetryOptions)
+        : this(serviceProvider, publisher, telemetryOptions, Generated.GeneratedMediatorComposition.Empty)
     {
+    }
+
+    /// <summary>Creates a mediator using an immutable provider-owned generated registry composition.</summary>
+    public Mediator(IServiceProvider serviceProvider, INotificationPublisher publisher,
+        MediatorTelemetryOptions telemetryOptions, Generated.GeneratedMediatorComposition generated)
+    {
+        _generated = generated ?? throw new ArgumentNullException(nameof(generated));
         _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
         _publisher = publisher ?? throw new ArgumentNullException(nameof(publisher));
         _telemetryOptions = telemetryOptions ?? throw new ArgumentNullException(nameof(telemetryOptions));
@@ -74,8 +83,7 @@ public class Mediator : IMediator
         ArgumentNullException.ThrowIfNull(request);
 
         var requestType = request.GetType();
-        var handler = (RequestHandlerWrapper<TResponse>)_requestHandlers.GetOrAdd(requestType,
-            static t => CreateRequestHandler(t, typeof(RequestHandlerWrapperImpl<,>)));
+        var handler = (RequestHandlerWrapper<TResponse>)FindRequestHandler(requestType);
 
         if (!ActivitySourceInstance.HasListeners())
         {
@@ -96,8 +104,7 @@ public class Mediator : IMediator
         ArgumentNullException.ThrowIfNull(request);
 
         var requestType = request.GetType();
-        var handler = (RequestHandlerWrapper<Unit>)_requestHandlers.GetOrAdd(requestType,
-            static t => CreateRequestHandler(t, typeof(UnitRequestHandlerWrapperImpl<>)));
+        var handler = (RequestHandlerWrapper<Unit>)FindRequestHandler(requestType);
 
         if (!ActivitySourceInstance.HasListeners())
         {
@@ -117,8 +124,7 @@ public class Mediator : IMediator
         ArgumentNullException.ThrowIfNull(request);
 
         var requestType = request.GetType();
-        var handler = _requestHandlers.GetOrAdd(requestType,
-            static t => CreateRequestHandler(t, typeof(RequestHandlerWrapperImpl<,>)));
+        var handler = FindRequestHandler(requestType);
 
         if (!ActivitySourceInstance.HasListeners())
         {
@@ -178,6 +184,7 @@ public class Mediator : IMediator
         ArgumentNullException.ThrowIfNull(request);
 
         var requestType = request.GetType();
+        if (_generated.RequireGeneratedDispatch) throw new NotSupportedException("Generated stream dispatch requires the stream capability (D3).");
         var handler = (StreamRequestHandlerWrapper<TResponse>)_streamRequestHandlers.GetOrAdd(requestType,
             static t => CreateStreamHandler(t));
 
@@ -200,6 +207,7 @@ public class Mediator : IMediator
         ArgumentNullException.ThrowIfNull(request);
 
         var requestType = request.GetType();
+        if (_generated.RequireGeneratedDispatch) throw new NotSupportedException("Generated stream dispatch requires the stream capability (D3).");
         var handler = _streamRequestHandlers.GetOrAdd(requestType, static t => CreateStreamHandler(t));
 
         if (!ActivitySourceInstance.HasListeners())
@@ -217,6 +225,7 @@ public class Mediator : IMediator
 
     private Task PublishNotification(INotification notification, CancellationToken cancellationToken)
     {
+        if (_generated.RequireGeneratedDispatch) throw new NotSupportedException("Generated notification dispatch requires the notification capability (D3).");
         var notificationType = notification.GetType();
         var handler = _notificationHandlers.GetOrAdd(notificationType,
             static t =>
@@ -226,6 +235,15 @@ public class Mediator : IMediator
             });
 
         return handler.Handle(notification, _serviceProvider, _publisher, cancellationToken);
+    }
+
+    private RequestHandlerBase FindRequestHandler(Type requestType)
+    {
+        var generated = _generated.FindRequestHandler(requestType);
+        if (generated != null) return generated;
+        if (_generated.RequireGeneratedDispatch)
+            throw new InvalidOperationException($"No generated request dispatch for {requestType}. Declare its closed handler and register the matching generated registry.");
+        return _requestHandlers.GetOrAdd(requestType, static t => CreateRequestHandler(t, typeof(RequestHandlerWrapperImpl<,>)));
     }
 
     private static RequestHandlerBase CreateRequestHandler(Type requestType, Type wrapperGenericType)

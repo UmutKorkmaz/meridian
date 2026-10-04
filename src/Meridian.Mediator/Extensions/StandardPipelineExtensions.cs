@@ -15,14 +15,19 @@ namespace Meridian.Mediator.Extensions;
 /// </summary>
 public static class StandardPipelineExtensions
 {
-    /// <summary>Reserved generated standard pipeline entry point. Requires the generated pipeline capability.</summary>
+    /// <summary>Registers a finite generated standard pipeline without scanning assemblies.</summary>
     public static IServiceCollection AddMeridianStandard<TRegistry>(this IServiceCollection services, Action<MeridianMediatorConfiguration>? configure = null)
         where TRegistry : class, Generated.IGeneratedMediatorRegistry, new()
     {
         ArgumentNullException.ThrowIfNull(services);
         if (new TRegistry() is not Generated.IGeneratedMediatorContributions)
             throw new NotSupportedException("Generated standard registration requires IGeneratedMediatorContributions metadata; assembly scanning is not a fallback.");
-        throw new NotSupportedException("Generated standard pipeline activation requires generated pipeline dispatch support.");
+        return services.AddMeridianMediator(c =>
+        {
+            c.AddGeneratedRegistry<TRegistry>();
+            c.ActivateGeneratedStandardPipeline = true;
+            configure?.Invoke(c);
+        });
     }
 
     /// <summary>

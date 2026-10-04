@@ -48,6 +48,7 @@ public sealed class MeridianMediatorGenerator : IIncrementalGenerator
         var expectations = new List<(INamedTypeSymbol Type, Location Location)>();
         var classified = true;
         var includesStandard = false;
+        var pipelineOptions = new Dictionary<string, List<INamedTypeSymbol>>();
         var handlerArray = attribute.ConstructorArguments.Length == 1 ? attribute.ConstructorArguments[0] : default;
         if (handlerArray.IsNull || handlerArray.Kind != TypedConstantKind.Array)
         { classified = false; Error(MediatorDiagnostics.Invalid, syntax.GetLocation(), "handlerTypes", "a non-null explicit type array is required"); }
@@ -64,7 +65,15 @@ public sealed class MeridianMediatorGenerator : IIncrementalGenerator
             if (option.Key != "ExpectedRequestTypes")
             {
                 if (option.Value.IsNull) Error(MediatorDiagnostics.Invalid, arg?.GetLocation() ?? syntax.GetLocation(), option.Key, "array must not be null");
-                else if (option.Value.Kind != TypedConstantKind.Array || !option.Value.Values.IsEmpty) Error(MediatorDiagnostics.Unsupported, arg?.GetLocation() ?? syntax.GetLocation(), option.Key, "pipeline generation is a later dispatch capability; D1 supports explicit closed handlers only");
+                else if (option.Value.Kind != TypedConstantKind.Array) Error(MediatorDiagnostics.Invalid, arg?.GetLocation() ?? syntax.GetLocation(), option.Key, "array is required");
+                else
+                {
+                    var list = new List<INamedTypeSymbol>();
+                    foreach (var value in option.Value.Values)
+                        if (value.Value is INamedTypeSymbol type && type.TypeKind != TypeKind.Error) { if (!list.Any(t => SymbolEqualityComparer.Default.Equals(t,type))) list.Add(type); }
+                        else Error(MediatorDiagnostics.Invalid,arg?.GetLocation() ?? syntax.GetLocation(),option.Key,"each entry must resolve to a type");
+                    pipelineOptions.Add(option.Key,list);
+                }
                 continue;
             }
             if (option.Value.IsNull || option.Value.Kind != TypedConstantKind.Array) { Error(MediatorDiagnostics.Invalid, arg?.GetLocation() ?? syntax.GetLocation(), option.Key, "array must not be null"); continue; }
@@ -103,14 +112,16 @@ public sealed class MeridianMediatorGenerator : IIncrementalGenerator
             if (!entries.Any(e => e.Category == "RequestHandler" && SymbolEqualityComparer.Default.Equals(e.Contract.TypeArguments[0], expected.Type)))
                 Error(MediatorDiagnostics.Missing, expected.Location, expected.Type.ToDisplayString());
         if (errors.Count != 0) return new RegistryModel(name + ".g.cs", "", errors.ToImmutable());
-        return new RegistryModel(name + ".g.cs", Emit(registry, entries, includesStandard), errors.ToImmutable());
+        var capabilities = Emission.BehaviorRegistryEmitter.Build(context.SemanticModel.Compilation, registry, entries, pipelineOptions, Error, syntax.GetLocation());
+        if (errors.Count != 0) return new RegistryModel(name + ".g.cs", "", errors.ToImmutable());
+        return new RegistryModel(name + ".g.cs", Emit(registry, entries, includesStandard, capabilities), errors.ToImmutable());
     }
-    private static bool Is(INamedTypeSymbol type, string metadataName) => type.OriginalDefinition.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat) == metadataName || MetadataName(type.OriginalDefinition) == metadataName;
+    internal static bool Is(INamedTypeSymbol type, string metadataName) => type.OriginalDefinition.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat) == metadataName || MetadataName(type.OriginalDefinition) == metadataName;
     private static string MetadataName(INamedTypeSymbol type) => type.ContainingNamespace.ToDisplayString() + "." + type.MetadataName;
     private static bool IsHandler(INamedTypeSymbol type) => Is(type, "Meridian.Mediator.IRequestHandler`1") || Is(type, "Meridian.Mediator.IRequestHandler`2") || Is(type, "Meridian.Mediator.INotificationHandler`1") || Is(type, "Meridian.Mediator.Streaming.IStreamRequestHandler`2");
-    private static bool Closed(ITypeSymbol type) => type.TypeKind != TypeKind.TypeParameter && (type is not IArrayTypeSymbol array || Closed(array.ElementType)) && (type is not INamedTypeSymbol n || (!n.IsUnboundGenericType && n.TypeArguments.All(Closed) && (n.ContainingType == null || Closed(n.ContainingType))));
-    private static string TypeName(ISymbol type) => type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-    private static string? Constructor(Compilation compilation, INamedTypeSymbol registry, INamedTypeSymbol handler, out string reason)
+    internal static bool Closed(ITypeSymbol type) => type.TypeKind != TypeKind.TypeParameter && (type is not IArrayTypeSymbol array || Closed(array.ElementType)) && (type is not INamedTypeSymbol n || (!n.IsUnboundGenericType && n.TypeArguments.All(Closed) && (n.ContainingType == null || Closed(n.ContainingType))));
+    internal static string TypeName(ISymbol type) => type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    internal static string? Constructor(Compilation compilation, INamedTypeSymbol registry, INamedTypeSymbol handler, out string reason)
     {
         reason = "type and a unique constructor must be accessible from the registry";
         if (handler.IsAbstract || handler.TypeKind != TypeKind.Class || !compilation.IsSymbolAccessibleWithin(handler, registry)) return null;
@@ -156,30 +167,37 @@ public sealed class MeridianMediatorGenerator : IIncrementalGenerator
         if (value is ulong ul) return ul.ToString(CultureInfo.InvariantCulture) + "UL";
         return Convert.ToString(value, CultureInfo.InvariantCulture);
     }
-    private static string Emit(INamedTypeSymbol registry, List<Entry> entries, bool standard)
+    private static string Emit(INamedTypeSymbol registry, List<Entry> entries, bool standard, List<Emission.BehaviorRegistryEmitter.Capability> capabilities)
     {
         const string g = "global::Meridian.Mediator.Generated.";
         var b = new StringBuilder("// <auto-generated/>\n#nullable enable\n");
         if (!registry.ContainingNamespace.IsGlobalNamespace) b.Append("namespace ").Append(registry.ContainingNamespace.ToDisplayString()).Append(" {\n");
-        b.Append("partial class @").Append(registry.Name).Append(" : ").Append(g).Append("IGeneratedMediatorRegistry, ").Append(g).Append("IGeneratedMediatorContributions {\npublic @").Append(registry.Name).Append("() {}\npublic string RegistryId => ").Append(SymbolDisplay.FormatLiteral(registry.ContainingAssembly.Identity.Name + ":" + registry.ToDisplayString(), true)).Append(";\n");
+        b.Append("partial class @").Append(registry.Name).Append(" : ").Append(g).Append("IGeneratedMediatorRegistry, ").Append(g).Append("IGeneratedMediatorContributions, ").Append(g).Append("IGeneratedMediatorBehaviorCapabilities {\npublic @").Append(registry.Name).Append("() {}\npublic string RegistryId => ").Append(SymbolDisplay.FormatLiteral(registry.ContainingAssembly.Identity.Name + ":" + registry.ToDisplayString(), true)).Append(";\n");
         foreach (var pair in new[] { ("RequestTypes", "RequestHandler"), ("NotificationTypes", "NotificationHandler"), ("StreamTypes", "StreamHandler") })
             b.Append("public global::System.Collections.Generic.IReadOnlyCollection<global::System.Type> ").Append(pair.Item1).Append(" { get; } = global::System.Array.AsReadOnly(new global::System.Type[] { ").Append(string.Join(", ", entries.Where(e => e.Category == pair.Item2).Select(e => TypeName(e.Contract.TypeArguments[0])).Distinct().OrderBy(t => t, StringComparer.Ordinal).Select(t => "typeof(" + t + ")"))).Append(" });\n");
+        Emission.BehaviorRegistryEmitter.EmitCapabilities(b, capabilities);
         b.Append("public bool IncludesStandardPipeline => ").Append(standard ? "true" : "false").Append(";\npublic global::System.Collections.Generic.IReadOnlyList<").Append(g).Append("GeneratedMediatorContribution> Contributions { get; } = global::System.Array.AsReadOnly(new ").Append(g).Append("GeneratedMediatorContribution[] {\n");
         var ordinal = 0;
         foreach (var entry in entries)
-            b.Append("new ").Append(g).Append("GeneratedMediatorContribution(typeof(").Append(TypeName(entry.Contract)).Append("), typeof(").Append(TypeName(entry.Handler)).Append("), null, ").Append(g).Append("GeneratedMediatorCategory.").Append(entry.Category).Append(", ").Append(g).Append("GeneratedMediatorPhase.Handler, 0, ").Append(ordinal++).Append(", ").Append(g).Append("GeneratedMediatorLifetime.HandlerLifetime, ").Append(g).Append("GeneratedMediatorActivation.Declared, static sp => ").Append(entry.Constructor).Append("),\n");
-        b.Append("});\npublic void RegisterServices(global::Microsoft.Extensions.DependencyInjection.IServiceCollection services, global::Microsoft.Extensions.DependencyInjection.ServiceLifetime handlerLifetime) { if (IncludesStandardPipeline) throw new global::System.NotSupportedException(\"Generated standard pipeline activation requires generated pipeline dispatch support.\"); ").Append(g).Append("GeneratedMediatorRegistration.RegisterServices(services, Contributions, handlerLifetime); }\n");
-        b.Append("public global::Meridian.Mediator.Wrappers.RequestHandlerBase? FindRequestHandler(global::System.Type requestType) => null;\npublic global::Meridian.Mediator.Wrappers.NotificationHandlerWrapperBase? FindNotificationHandler(global::System.Type notificationType) => null;\npublic global::Meridian.Mediator.Wrappers.StreamRequestHandlerBase? FindStreamHandler(global::System.Type requestType) => null;\n}\n");
+            b.Append("new ").Append(g).Append("GeneratedMediatorContribution(typeof(").Append(TypeName(entry.Contract)).Append("), typeof(").Append(TypeName(entry.Handler)).Append("), ").Append(entry.Definition == null ? "null" : "typeof(" + TypeName(entry.Definition.ConstructUnboundGenericType()) + ")").Append(", ").Append(g).Append("GeneratedMediatorCategory.").Append(entry.Category).Append(", ").Append(g).Append("GeneratedMediatorPhase.").Append(entry.Phase).Append(", ").Append(entry.Order).Append(", ").Append(ordinal++).Append(", ").Append(g).Append("GeneratedMediatorLifetime.").Append(entry.Lifetime).Append(", ").Append(g).Append("GeneratedMediatorActivation.").Append(entry.Activation).Append(", static sp => ").Append(entry.Constructor).Append("),\n");
+        b.Append("});\npublic void RegisterServices(global::Microsoft.Extensions.DependencyInjection.IServiceCollection services, global::Microsoft.Extensions.DependencyInjection.ServiceLifetime handlerLifetime) { ").Append(g).Append("GeneratedMediatorRegistration.RegisterServices(services, Contributions, handlerLifetime, IncludesStandardPipeline); }\n");
+        Emission.RequestRegistryEmitter.Emit(b, entries);
+        b.Append("public global::Meridian.Mediator.Wrappers.NotificationHandlerWrapperBase? FindNotificationHandler(global::System.Type notificationType) => null;\npublic global::Meridian.Mediator.Wrappers.StreamRequestHandlerBase? FindStreamHandler(global::System.Type requestType) => null;\n}\n");
         if (!registry.ContainingNamespace.IsGlobalNamespace) b.Append("}\n");
         return b.ToString();
     }
-    private sealed class Entry
+    internal sealed class Entry
     {
         public Entry(INamedTypeSymbol handler, INamedTypeSymbol contract, string category, string? constructor) { Handler = handler; Contract = contract; Category = category; Constructor = constructor; }
         public INamedTypeSymbol Handler { get; }
         public INamedTypeSymbol Contract { get; }
         public string Category { get; }
         public string? Constructor { get; }
+        public string Phase { get; set; } = "Handler";
+        public string Lifetime { get; set; } = "HandlerLifetime";
+        public string Activation { get; set; } = "Declared";
+        public int Order { get; set; }
+        public INamedTypeSymbol? Definition { get; set; }
     }
     private const string AttributeSource = @"// <auto-generated/>
 #nullable enable

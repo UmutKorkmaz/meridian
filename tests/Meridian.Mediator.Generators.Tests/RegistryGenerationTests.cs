@@ -14,9 +14,9 @@ public class RegistryGenerationTests
     private const string Prefix = "using System; using System.Threading; using System.Threading.Tasks; using Meridian.Mediator; using Meridian.Mediator.Generated; ";
     private const string Handler = "public sealed class Q : IRequest<int> {} public sealed class H : IRequestHandler<Q,int> { public Task<int> Handle(Q q, CancellationToken c) => Task.FromResult(42); } ";
     private static readonly MetadataReference[] References = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator).Append(typeof(IRequest<>).Assembly.Location).Append(typeof(Microsoft.Extensions.DependencyInjection.IServiceCollection).Assembly.Location).Distinct().Select(p => MetadataReference.CreateFromFile(p)).ToArray();
-    private static (GeneratorDriverRunResult Result, Compilation Output) Generate(string body)
+    private static (GeneratorDriverRunResult Result, Compilation Output) Generate(string body, bool warningsAsErrors = false)
     {
-        var input = CSharpCompilation.Create("Fixture", new[] { CSharpSyntaxTree.ParseText(Prefix + body, new CSharpParseOptions(LanguageVersion.CSharp12)) }, References, new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
+        var input = CSharpCompilation.Create("Fixture", new[] { CSharpSyntaxTree.ParseText(Prefix + body, new CSharpParseOptions(LanguageVersion.CSharp12)) }, References, new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary, generalDiagnosticOption: warningsAsErrors ? ReportDiagnostic.Error : ReportDiagnostic.Default));
         GeneratorDriver driver = CSharpGeneratorDriver.Create(new[] { new MeridianMediatorGenerator().AsSourceGenerator() }, parseOptions: new CSharpParseOptions(LanguageVersion.CSharp12));
         driver = driver.RunGeneratorsAndUpdateCompilation(input, out var output, out _);
         return (driver.GetRunResult(), output);
@@ -57,7 +57,7 @@ public class RegistryGenerationTests
         using var first = provider.CreateScope(); using var second = provider.CreateScope();
         Assert.Same(first.ServiceProvider.GetRequiredService(contract), first.ServiceProvider.GetRequiredService(contract));
         Assert.NotSame(first.ServiceProvider.GetRequiredService(contract), second.ServiceProvider.GetRequiredService(contract));
-        Assert.Null(registry.FindRequestHandler(registry.RequestTypes.Single()));
+        Assert.NotNull(registry.FindRequestHandler(registry.RequestTypes.Single()));
     }
     [Fact]
     public void Missing_Explicit_Expected_Request_Has_Stable_Diagnostic()
@@ -187,7 +187,7 @@ public class RegistryGenerationTests
     [Fact]
     public void Pipeline_Capability_Is_Not_Silently_Ignored()
     {
-        Assert.Single(Generate(Handler + "[GenerateMediatorRegistry(typeof(H),BehaviorTypes=new[]{typeof(H)})] public partial class Registry {}").Result.Diagnostics, d => d.Id == "MERIDIANMED005");
+        Assert.Single(Generate(Handler + "[GenerateMediatorRegistry(typeof(H),BehaviorTypes=new[]{typeof(H)})] public partial class Registry {}").Result.Diagnostics, d => d.Id == "MERIDIANMED003");
         var registry = Load(Generate(Handler + "[GenerateMediatorRegistry(typeof(H),IncludeStandardPipeline=true)] public partial class Registry {}"));
         Assert.True(((IGeneratedMediatorContributions)registry).IncludesStandardPipeline);
     }
@@ -249,7 +249,7 @@ public class RegistryGenerationTests
     {
         var source = "public enum E : byte { One=1, Two=2 } " + Handler.Replace("public Task<int>", "public H("+type+" value = "+constant+") { Value = value; } public object? Value { get; } public Task<int>");
         var registry = Load(Generate(source + "[GenerateMediatorRegistry(typeof(H))] public partial class Registry {}"));
-        var contribution = ((IGeneratedMediatorContributions)registry).Contributions.Single();
+        var contribution = ((IGeneratedMediatorContributions)registry).Contributions.Single(c => c.Phase == GeneratedMediatorPhase.Handler);
         var parameterType = contribution.ImplementationType.GetConstructors().Single().GetParameters().Single().ParameterType;
         var underlyingType = Nullable.GetUnderlyingType(parameterType) ?? parameterType;
         foreach (var registered in new[] { false, true })
@@ -274,10 +274,10 @@ public class RegistryGenerationTests
         var registry = Load(Generate(source));
         Assert.Equal(registry.RequestTypes.Single(), registry.StreamTypes.Single());
         var contributions = ((IGeneratedMediatorContributions)registry).Contributions;
-        Assert.Equal(2, contributions.Count);
+        Assert.Equal(2, contributions.Count(c => c.Phase == GeneratedMediatorPhase.Handler));
         var services = new ServiceCollection(); registry.RegisterServices(services, ServiceLifetime.Transient);
         using var provider = services.BuildServiceProvider();
-        foreach (var contribution in contributions) Assert.Equal(contribution.ImplementationType, provider.GetRequiredService(contribution.ServiceType).GetType());
+        foreach (var contribution in contributions.Where(c => c.Phase == GeneratedMediatorPhase.Handler)) Assert.Equal(contribution.ImplementationType, provider.GetRequiredService(contribution.ServiceType).GetType());
     }
     [Theory]
     [InlineData("same", false, false)]
@@ -293,7 +293,7 @@ public class RegistryGenerationTests
         const string source = "public class N : INotification {} public class NH : INotificationHandler<N> { public static int Calls; public Task Handle(N n,CancellationToken c) { Calls++; return Task.CompletedTask; } } public class OtherNH : INotificationHandler<N> { public static int Calls; public Task Handle(N n,CancellationToken c) { Calls++; return Task.CompletedTask; } } [GenerateMediatorRegistry(typeof(NH))] public partial class Registry {}";
         var registry = Load(Generate(source));
         var assembly = registry.GetType().Assembly;
-        var contribution = ((IGeneratedMediatorContributions)registry).Contributions.Single();
+        var contribution = ((IGeneratedMediatorContributions)registry).Contributions.Single(c => c.Phase == GeneratedMediatorPhase.Handler);
         var services = new ServiceCollection();
         if (opaqueFactory) services.AddTransient(contribution.ServiceType, _ => Activator.CreateInstance(contribution.ImplementationType)!);
         void Generated(MeridianMediatorConfiguration c) { if (differingLifetime) c.Lifetime = ServiceLifetime.Singleton; typeof(MeridianMediatorConfiguration).GetMethod("AddGeneratedRegistry")!.MakeGenericMethod(registry.GetType()).Invoke(c, null); }
@@ -323,7 +323,7 @@ public class RegistryGenerationTests
     {
         const string source = "public class N : INotification {} public class NH : INotificationHandler<N>, IDisposable { public static int Calls; public static int Disposals; public Task Handle(N n,CancellationToken c) { Calls++; return Task.CompletedTask; } public void Dispose() { Disposals++; } } [GenerateMediatorRegistry(typeof(NH))] public partial class Registry {}";
         var registry = Load(Generate(source));
-        var contribution = ((IGeneratedMediatorContributions)registry).Contributions.Single();
+        var contribution = ((IGeneratedMediatorContributions)registry).Contributions.Single(c => c.Phase == GeneratedMediatorPhase.Handler);
         var services = new ServiceCollection();
         registry.RegisterServices(services, ServiceLifetime.Transient);
         if (mutation != "none") services.RemoveAll(contribution.ServiceType);
@@ -346,6 +346,92 @@ public class RegistryGenerationTests
             await provider.GetRequiredService<IMediator>().Publish((INotification)Activator.CreateInstance(registry.NotificationTypes.Single())!);
         Assert.Equal(expectedCalls, (int)contribution.ImplementationType.GetField("Calls")!.GetValue(null)!);
         Assert.Equal(expectedCalls, (int)contribution.ImplementationType.GetField("Disposals")!.GetValue(null)!);
+    }
+
+    [Fact]
+    public async Task Closed_Behavior_And_Processors_Execute_In_Declared_Phases()
+    {
+        const string extras = "public class B<T,U> : Meridian.Mediator.Pipeline.IPipelineBehavior<T,U> where T:notnull { public async Task<U> Handle(T q,RequestHandlerDelegate<U> next,CancellationToken c) { var r=await next(); return (U)(object)((int)(object)r!+1); } } public class P : Meridian.Mediator.Pipeline.IRequestPreProcessor<Q> { public Task Process(Q q,CancellationToken c) => Task.CompletedTask; } ";
+        var registry = Load(Generate(Handler + extras + "[GenerateMediatorRegistry(typeof(H),BehaviorTypes=new[]{typeof(B<,>)},PreProcessorTypes=new[]{typeof(P)})] public partial class Registry {}"));
+        var services = new ServiceCollection(); registry.RegisterServices(services,ServiceLifetime.Transient);
+        using var provider = services.BuildServiceProvider();
+        var request = Activator.CreateInstance(registry.RequestTypes.Single())!;
+        Assert.Equal(43, await registry.FindRequestHandler(request.GetType())!.Handle(request,provider,default));
+    }
+
+    [Theory]
+    [InlineData("ExceptionHandlerTypes", "public class E : Meridian.Mediator.Pipeline.IRequestExceptionHandler<Q,int,Exception> { public Task Handle(Q q,Exception e,Meridian.Mediator.Pipeline.RequestExceptionHandlerState<int> state,CancellationToken c) { state.SetHandled(17); return Task.CompletedTask; } }", 17)]
+    [InlineData("ExceptionActionTypes", "public class E : Meridian.Mediator.Pipeline.IRequestExceptionAction<Q,Exception> { public Task Execute(Q q,Exception e,CancellationToken c) => Task.FromException(new Exception(\"ignored\")); }", -1)]
+    public async Task Declared_Typed_Exception_Inputs_Are_Operational(string option, string extra, int expected)
+    {
+        var registry = Load(Generate(Handler.Replace("Task.FromResult(42)", "Task.FromException<int>(new InvalidOperationException(\"original\"))") + extra + "[GenerateMediatorRegistry(typeof(H),"+option+"=new[]{typeof(E)})] public partial class Registry {}"));
+        var services = new ServiceCollection(); registry.RegisterServices(services,ServiceLifetime.Transient);
+        using var provider = services.BuildServiceProvider();
+        var request = Activator.CreateInstance(registry.RequestTypes.Single())!;
+        if(expected == 17) Assert.Equal(17, await registry.FindRequestHandler(request.GetType())!.Handle(request,provider,default));
+        else Assert.Equal("original", (await Assert.ThrowsAsync<InvalidOperationException>(() => registry.FindRequestHandler(request.GetType())!.Handle(request,provider,default))).Message);
+    }
+
+    [Theory]
+    [InlineData("where T:class", "public sealed class Q : IRequest<int>", true)]
+    [InlineData("where T:struct", "public sealed class Q : IRequest<int>", false)]
+    [InlineData("where T:new()", "public sealed class Q : IRequest<int>", true)]
+    [InlineData("where T:IMarker", "public sealed class Q : IRequest<int>", false)]
+    [InlineData("where U:unmanaged", "public sealed class Q : IRequest<int>", true)]
+    [InlineData("where T:IMarker", "public sealed class Q : IRequest<int>, IMarker", true)]
+    public async Task Finite_Constraints_Are_Checked_By_The_Consumer_Compiler(string constraints,string request,bool applies)
+    {
+        var behavior="public interface IMarker {} public class B<T,U> : Meridian.Mediator.Pipeline.IPipelineBehavior<T,U> "+constraints+" { public async Task<U> Handle(T q,RequestHandlerDelegate<U> next,CancellationToken c) { var r=await next(); return (U)(object)((int)(object)r!+1); } } ";
+        var registry=Load(Generate(Handler.Replace("public sealed class Q : IRequest<int>",request)+behavior+"[GenerateMediatorRegistry(typeof(H),BehaviorTypes=new[]{typeof(B<,>)})] public partial class Registry {}"));
+        var services=new ServiceCollection();registry.RegisterServices(services,ServiceLifetime.Transient);
+        using var provider=services.BuildServiceProvider();
+        var query=Activator.CreateInstance(registry.RequestTypes.Single())!;
+        Assert.Equal(applies ? 43 : 42,await registry.FindRequestHandler(query.GetType())!.Handle(query,provider,default));
+        var capability=Assert.Single(((IGeneratedMediatorBehaviorCapabilities)registry).BehaviorCapabilities,c=>c.DefinitionType.Name.StartsWith("B`",StringComparison.Ordinal));
+        Assert.Equal(applies,capability.Applies); Assert.Equal(typeof(int),capability.ResponseType); Assert.Equal(GeneratedMediatorCategory.Behavior,capability.Category);
+    }
+    [Fact]
+    public void Unsupported_Nested_Substitution_Is_Diagnosed_And_Explicit_Audit_Is_Supported()
+    {
+        var bad=Generate(Handler+"public class B<T,U> : Meridian.Mediator.Pipeline.IPipelineBehavior<System.Collections.Generic.List<T>,U> { public Task<U> Handle(System.Collections.Generic.List<T> q,RequestHandlerDelegate<U> next,CancellationToken c)=>next(); } [GenerateMediatorRegistry(typeof(H),BehaviorTypes=new[]{typeof(B<,>)})] public partial class Registry {}");
+        Assert.Contains(bad.Result.Diagnostics,d=>d.Id=="MERIDIANMED005");
+        var good=Generate(Handler+"[GenerateMediatorRegistry(typeof(H),BehaviorTypes=new[]{typeof(Meridian.Mediator.Behaviors.AuditBehavior<,>)})] public partial class Registry {}");
+        Assert.Empty(good.Result.Diagnostics);Assert.Empty(good.Output.GetDiagnostics().Where(d=>d.Severity==DiagnosticSeverity.Error));
+        Assert.DoesNotContain("MakeGenericType",RegistrySource(good));Assert.DoesNotContain("Activator",RegistrySource(good));
+    }
+
+    [Fact]
+    public async Task Constraint_Probe_Uses_Registry_Accessibility_And_Avoids_Member_Collisions()
+    {
+        var source="[GenerateMediatorRegistry(typeof(Registry.H),BehaviorTypes=new[]{typeof(Registry.B<,>)})] public partial class Registry { private int __MeridianConstraintProbe; private class Q:IRequest<int>{} private class H:IRequestHandler<Q,int> { public Task<int> Handle(Q q,CancellationToken c)=>Task.FromResult(9); } private class B<T,U>:Meridian.Mediator.Pipeline.IPipelineBehavior<T,U> where T:class {public Task<U> Handle(T q,RequestHandlerDelegate<U> next,CancellationToken c)=>next();} }";
+        var registry=Load(Generate(source));
+        var services=new ServiceCollection();registry.RegisterServices(services,ServiceLifetime.Transient);
+        using var provider=services.BuildServiceProvider();
+        var request=Activator.CreateInstance(registry.RequestTypes.Single(),true)!;
+        Assert.Equal(9,await registry.FindRequestHandler(request.GetType())!.Handle(request,provider,default));
+        Assert.True(Assert.Single(((IGeneratedMediatorBehaviorCapabilities)registry).BehaviorCapabilities,c=>c.DefinitionType.Name.StartsWith("B`",StringComparison.Ordinal)).Applies);
+    }
+    [Fact]
+    public void Dependent_Constraint_Mismatch_Is_Explicitly_Inapplicable()
+    {
+        var source=Handler+"public class B<T,U>:Meridian.Mediator.Pipeline.IPipelineBehavior<T,U> where T:U {public Task<U> Handle(T q,RequestHandlerDelegate<U> next,CancellationToken c)=>next();} [GenerateMediatorRegistry(typeof(H),BehaviorTypes=new[]{typeof(B<,>)})] public partial class Registry {}";
+        var registry=Load(Generate(source));
+        Assert.False(Assert.Single(((IGeneratedMediatorBehaviorCapabilities)registry).BehaviorCapabilities,c=>c.DefinitionType.Name.StartsWith("B`",StringComparison.Ordinal)).Applies);
+    }
+
+    [Fact]
+    public void Nullable_Response_Does_Not_Satisfy_Notnull_Behavior_Constraint()
+    {
+        var source="#nullable enable\npublic class Q:IRequest<string?> {} public class H:IRequestHandler<Q,string?> {public Task<string?> Handle(Q q,CancellationToken c)=>Task.FromResult<string?>(null);} public class B<T,U>:Meridian.Mediator.Pipeline.IPipelineBehavior<T,U> where T:notnull where U:notnull {public Task<U> Handle(T q,RequestHandlerDelegate<U> next,CancellationToken c)=>next();} [GenerateMediatorRegistry(typeof(H),BehaviorTypes=new[]{typeof(B<,>)})] public partial class Registry {}";
+        var registry=Load(Generate("\n"+source));
+        Assert.False(Assert.Single(((IGeneratedMediatorBehaviorCapabilities)registry).BehaviorCapabilities,c=>c.DefinitionType.Name.StartsWith("B`",StringComparison.Ordinal)).Applies);
+    }
+
+    [Fact]
+    public void Constraint_Probe_Has_No_Incidental_Warnings_In_WarningsAsErrors_Consumer()
+    {
+        var result=Generate("\n#nullable enable\n"+Handler+"public class B<T,U>:Meridian.Mediator.Pipeline.IPipelineBehavior<T,U> where T:notnull {public Task<U> Handle(T q,RequestHandlerDelegate<U> next,CancellationToken c)=>next();} [GenerateMediatorRegistry(typeof(H),BehaviorTypes=new[]{typeof(B<,>)})] public partial class Registry {}",true);
+        Assert.Empty(result.Result.Diagnostics);Assert.Empty(result.Output.GetDiagnostics().Where(d=>d.Severity==DiagnosticSeverity.Error));
     }
 
 }

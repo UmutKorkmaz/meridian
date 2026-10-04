@@ -11,9 +11,11 @@ namespace Meridian.Mediator.Extensions;
 /// </summary>
 public class MeridianMediatorConfiguration
 {
+    internal bool ActivateGeneratedStandardPipeline { get; set; }
+
     internal List<Generated.IGeneratedMediatorRegistry> GeneratedRegistries { get; } = new();
 
-    /// <summary>Requires generated wrapper dispatch. False preserves legacy dispatch. The metadata-only stage rejects true.</summary>
+    /// <summary>Requires generated wrapper dispatch. False preserves legacy dispatch.</summary>
     public bool RequireGeneratedDispatch { get; set; }
 
     /// <summary>Adds explicit generated closed registrations without assembly scanning.</summary>
