@@ -40,6 +40,17 @@ public sealed class MeridianMapperGenerator : IIncrementalGenerator
 namespace Meridian.Mapping
 {
     internal enum GeneratedMappingMode { Legacy = 0, Structural = 1 }
+    internal enum GeneratedConversionKind { CheckedNumeric = 0, InvariantParse = 1 }
+    [System.AttributeUsage(System.AttributeTargets.Class, AllowMultiple = true, Inherited = false)]
+    internal sealed class ConvertMapMemberAttribute : System.Attribute
+    {
+        public ConvertMapMemberAttribute(string destinationMember, GeneratedConversionKind kind) { DestinationMember = destinationMember; Kind = kind; }
+        public string DestinationMember { get; }
+        public GeneratedConversionKind Kind { get; }
+        public System.Type? SourceType { get; set; }
+        public System.Type? DestinationType { get; set; }
+    }
+
     [System.AttributeUsage(System.AttributeTargets.Class, AllowMultiple = true, Inherited = false)]
     internal sealed class MapMemberAttribute : System.Attribute
     {

@@ -61,7 +61,6 @@ public class GeneratedConstructionTests
 
     [Theory]
     [InlineData("int[]")]
-    [InlineData("System.DayOfWeek")]
     public void Constructor_Does_Not_Bypass_Pending_Structural_Support(string type)
     {
         var result = GeneratorTestHarness.Compile($$"""

@@ -4,6 +4,7 @@ using System.Collections.Immutable;
 using System.Linq;
 using Meridian.Mapping.Generators.Diagnostics;
 using Meridian.Mapping.Generators.Models;
+using Meridian.Mapping.Generators.Emission;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 
@@ -13,8 +14,9 @@ namespace Meridian.Mapping.Generators.Discovery;
 internal static class MemberConfigurationBuilder
 {
     internal static ImmutableArray<MemberModel> Build(INamedTypeSymbol container, ITypeSymbol source, ITypeSymbol destination,
-        Compilation compilation, bool structural, AttributeData[] pairs, Action<DiagnosticDescriptor, object[]> report)
+        Compilation compilation, GeneratedOptions options, AttributeData[] pairs, Action<DiagnosticDescriptor, object[]> report)
     {
+        var structural = options.Mode == 1;
         var readable = MappingModelBuilder.GetWritableNameLookup(source, false);
         var writable = MappingModelBuilder.GetWritableNameLookup(destination, true);
         var targets = new List<(string Name, ITypeSymbol Type, bool Initializer, bool Required)>();
@@ -63,6 +65,8 @@ internal static class MemberConfigurationBuilder
             var renames = configs.Where(a => a.AttributeClass!.Name == "MapMemberAttribute").ToArray();
             var ignores = configs.Where(a => a.AttributeClass!.Name == "IgnoreMapMemberAttribute").ToArray();
             var converters = configs.Where(a => a.AttributeClass!.Name == "MapWithAttribute").ToArray();
+            var conversions = configs.Where(a => a.AttributeClass!.Name == "ConvertMapMemberAttribute").ToArray();
+            if (conversions.Length > 1 || conversions.Length > 0 && converters.Length > 0) Invalid("conflicting conversion for destination member '" + target.Name + "'");
             if (renames.Length > 1 || ignores.Length > 1 || converters.Length > 1 || ignores.Length > 0 && configs.Length > 1)
                 Invalid("conflicting configuration for destination member '" + target.Name + "'");
             var sourceName = renames.FirstOrDefault()?.ConstructorArguments[1].Value as string ?? target.Name;
@@ -76,7 +80,7 @@ internal static class MemberConfigurationBuilder
             string? expression = property is not null && (identity || !target.Initializer && assignable) ? "source.@" + property.Name : null;
             if (property is not null && expression is null)
                 failure = "source type '" + property.Type.ToDisplayString() + "' differs from destination type '" + target.Type.ToDisplayString() + "'";
-            if (!ignored && renames.Length > 0 && property is null) Invalid("configured source member '" + sourceName + "' is not readable");
+            if (!ignored && (renames.Length > 0 || conversions.Length > 0) && property is null) Invalid("configured source member '" + sourceName + "' is not readable");
             if (!ignored && converters.Length > 0)
             {
                 var converter = converters[0];
@@ -95,18 +99,45 @@ internal static class MemberConfigurationBuilder
                 else expression = type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) + ".@" + methods[0].Name + "((" +
                     methods[0].Parameters[0].Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) + ")source.@" + property!.Name + ")";
             }
+            var conversion = new ConversionModel(identity, property?.Type.ToDisplayString() ?? "", target.Type.ToDisplayString());
+            string? helper = null;
+            if (!ignored && property is not null && converters.Length == 0 && (structural || conversions.Length > 0))
+            {
+                var kind = conversions.FirstOrDefault()?.ConstructorArguments[1].Value as int?;
+                conversion = ConversionClassifier.Classify(property.Type, target.Type, options with { ConversionKind = kind });
+                if (conversions.Length > 0 && (kind is not (0 or 1) || conversion.Kind == "Unsupported"))
+                {
+                    failure = "conversion kind is invalid or incompatible for destination member '" + target.Name + "'";
+                    if (target.Initializer || kind is not (0 or 1)) Invalid(failure);
+                    expression = null;
+                }
+                else if (conversion.Kind != "Unsupported")
+                {
+                    // Keep direct identity expressions stable for constructor consumption and ordinary references.
+                    if (conversion.Kind != "Identity" || !identity)
+                    {
+                        var helperName = "__MeridianConvert" + result.Count;
+                        expression = helperName + "(source.@" + property.Name + ")";
+                        helper = ConversionEmitter.Emit(conversion, helperName, target.Name);
+                    }
+                }
+            }
+            if (expression is not null && structural && property?.Type.IsReferenceType == true &&
+                target.Type.IsReferenceType && property.Type.NullableAnnotation != NullableAnnotation.NotAnnotated &&
+                target.Type.NullableAnnotation == NullableAnnotation.NotAnnotated) expression += "!";
             if (expression is not null) failure = null;
+            var skipNull = structural && !options.AllowNullDestinationValues && target.Initializer && target.Type.IsReferenceType && expression is not null;
+            var cannotSkip = skipNull && (target.Required || writable[target.Name].SetMethod!.IsInitOnly);
             result.Add(new MemberModel(property?.Name ?? sourceName, target.Name,
                 property?.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) ?? "", target.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-                new ConversionModel(identity, property?.Type.ToDisplayString() ?? "", target.Type.ToDisplayString()), expression,
+                conversion, expression,
                 target.Initializer, target.Required, ignored, failure, configs.Length > 0,
                 structural && !ignored && converters.Length == 0 && property is not null && expression is not null &&
-                (identity && !SymbolEqualityComparer.IncludeNullability.Equals(property.Type, target.Type) ||
-                 property.Type.NullableAnnotation == NullableAnnotation.Annotated && target.Type.NullableAnnotation == NullableAnnotation.NotAnnotated ||
-                 NeedsStructuralSupport(target.Type) || pairs.Any(p => SymbolEqualityComparer.Default.Equals(p.ConstructorArguments[0].Value as ITypeSymbol, property.Type) &&
-                    SymbolEqualityComparer.Default.Equals(p.ConstructorArguments[1].Value as ITypeSymbol, target.Type)))));
+                (NeedsStructuralSupport(target.Type) || pairs.Any(p => SymbolEqualityComparer.Default.Equals(p.ConstructorArguments[0].Value as ITypeSymbol, property.Type) &&
+                    SymbolEqualityComparer.Default.Equals(p.ConstructorArguments[1].Value as ITypeSymbol, target.Type))),
+                helper, skipNull, cannotSkip));
         }
-        foreach (var configuration in configurations.Where(a => a.AttributeClass!.Name is "MapWithAttribute" or "MapMemberAttribute"))
+        foreach (var configuration in configurations.Where(a => a.AttributeClass!.Name is "MapWithAttribute" or "MapMemberAttribute" or "ConvertMapMemberAttribute"))
         {
             var name = (string)configuration.ConstructorArguments[0].Value!;
             var applicable = result.Where(m => Matches(m.DestinationName, name, m.IsInitializer)).ToArray();
@@ -138,7 +169,7 @@ internal static class MemberConfigurationBuilder
     {
         if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable)
             return NeedsStructuralSupport(nullable.TypeArguments[0]);
-        return type.TypeKind == TypeKind.Enum || type is IArrayTypeSymbol ||
+        return type is IArrayTypeSymbol ||
             type.SpecialType != SpecialType.System_String && type.AllInterfaces.Any(i => i.SpecialType == SpecialType.System_Collections_IEnumerable) ||
             type.SpecialType == SpecialType.System_Collections_IEnumerable;
     }
@@ -150,7 +181,7 @@ internal static class MemberConfigurationBuilder
     }
 
     private static bool IsMemberAttribute(AttributeData attribute) => attribute.AttributeClass?.ToDisplayString() is
-        "Meridian.Mapping.MapMemberAttribute" or "Meridian.Mapping.IgnoreMapMemberAttribute" or "Meridian.Mapping.MapWithAttribute";
+        "Meridian.Mapping.MapMemberAttribute" or "Meridian.Mapping.IgnoreMapMemberAttribute" or "Meridian.Mapping.MapWithAttribute" or "Meridian.Mapping.ConvertMapMemberAttribute";
     private static bool Matches(string name, string configured, bool initializer) => string.Equals(name, configured,
         initializer ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase);
     private static bool HasTarget(ITypeSymbol? destination, string name, bool structural) => destination is INamedTypeSymbol type &&

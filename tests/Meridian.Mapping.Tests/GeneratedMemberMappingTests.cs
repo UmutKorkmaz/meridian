@@ -197,7 +197,7 @@ public class GeneratedMemberMappingTests
     [Theory]
     [InlineData("string", "string?")]
     [InlineData("string?", "string")]
-    public void Renamed_Nullability_Transitions_Remain_Unsupported(string sourceType, string destinationType)
+    public void Renamed_Nullability_Transitions_Are_Mapped(string sourceType, string destinationType)
     {
         var result = GeneratorTestHarness.Compile($$"""
             #nullable enable
@@ -206,9 +206,10 @@ public class GeneratedMemberMappingTests
             public class Dto { public {{destinationType}} Value { get; set; } = ""; }
             [GenerateMapper(typeof(Source), typeof(Dto), Mode = GeneratedMappingMode.Structural)]
             [MapMember("Value", "Other")]
-            public static partial class Maps {}
+            public static partial class Maps { public static bool Proof() => MapToDto(new Source { Other = "Ada" }).Value == "Ada"; }
             """);
-        Assert.Contains(result.Diagnostics, d => d.Id == "MERIDIANGEN005");
+        Assert.DoesNotContain(result.Diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+        Assert.True(GeneratorTestHarness.InvokeStatic<bool>(result, "Maps", "Proof"));
         Assert.DoesNotContain(result.Compilation.GetDiagnostics(), d => d.Severity == DiagnosticSeverity.Error);
     }
 

@@ -31,6 +31,11 @@ Check(independentInitializer.Original == "Ada" && independentInitializer.Age == 
 Console.WriteLine("CANDIDATE generated independentInitializer=Ada:42");
 Check(Container.LowercaseMaps.MapToLowercaseDto(new LowercaseSource()).Name == "Ada", "case-insensitive positional constructor binding");
 Console.WriteLine("CANDIDATE generated lowercaseConstructor=Ada");
+var converted = Container.ConversionMaps.MapToConversionDto(new ConversionSource { Count = 42, Text = "1.5", Role = "Friday", Narrow = 42 });
+Check(converted.Count == 42L && converted.Number == 0 && converted.Text == 1.5m && converted.Role == DayOfWeek.Friday && converted.Narrow == 42 && converted.Name == "seed", "structural conversions and null policies");
+try { Container.ConversionMaps.MapToConversionDto(new ConversionSource { Narrow = 300 }); throw new Exception("unchecked conversion"); } catch (OverflowException) { }
+try { Container.ConversionMaps.MapToConversionDto(new ConversionSource { Role = "99" }); throw new Exception("undefined enum accepted"); } catch (MeridianEnumMappingException) { }
+Console.WriteLine("CANDIDATE generated conversions=42:0:1.5:Friday null=seed checked=true enumStrict=true");
 #endif
 static void Check(bool result, string name) { if (!result) throw new InvalidOperationException(name); }
 public sealed class Child { public int Value { get; set; } }
@@ -67,9 +72,16 @@ public partial class Container
     [MapWith("Score", typeof(MemberConverters), "Length")]
     [IgnoreMapMember("Note")]
     public static partial class ExplicitLegacyMaps { }
+    [GenerateMapper(typeof(ConversionSource), typeof(ConversionDto), Mode = GeneratedMappingMode.Structural, AllowNullDestinationValues = false)]
+    [ConvertMapMember("Text", GeneratedConversionKind.InvariantParse)]
+    [ConvertMapMember("Role", GeneratedConversionKind.InvariantParse)]
+    [ConvertMapMember("Narrow", GeneratedConversionKind.CheckedNumeric, SourceType = typeof(ConversionSource), DestinationType = typeof(ConversionDto))]
+    public static partial class ConversionMaps { }
 #endif
 }
 #if !BASELINE
+public sealed class ConversionSource { public int Count { get; set; } public int? Number { get; set; } public string Text { get; set; } = "1.5"; public string Role { get; set; } = "Friday"; public int Narrow { get; set; } public string? Name { get; set; } }
+public sealed class ConversionDto { public long Count { get; set; } public int Number { get; set; } public decimal Text { get; set; } public DayOfWeek Role { get; set; } public byte Narrow { get; set; } public string? Name { get; set; } = "seed"; }
 public sealed class MemberSource { public string Original { get; set; } = ""; public int Age { get; set; } }
 public sealed record ImmutableDto(string Name, int Age, int Seed = 73)
 {

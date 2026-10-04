@@ -105,12 +105,12 @@ internal static class MappingModelBuilder
             if (options.GenerateResolver)
                 Report(MapperDiagnostics.UnsupportedStructural, "GenerateResolver is not implemented yet");
             if (options.Mode == 1 && (options.MaxDepth != 64 || options.MaxCollectionItems != 10000 ||
-                options.PreserveReferences || options.AllowUndefinedEnumValues || options.AllowNullCollections || !options.AllowNullDestinationValues) &&
+                options.PreserveReferences || options.AllowNullCollections) &&
                 options.MaxDepth > 0 && options.MaxCollectionItems > 0)
-                Report(MapperDiagnostics.UnsupportedStructural, "non-default structural traversal, enum and null policies are not implemented yet");
+                Report(MapperDiagnostics.UnsupportedStructural, "non-default structural traversal and collection policies are not implemented yet");
 
             var members = MemberConfigurationBuilder.Build(container, source, destination,
-                context.SemanticModel.Compilation, options.Mode == 1, declarations, Report);
+                context.SemanticModel.Compilation, options, declarations, Report);
             var constructor = options.Mode == 1
                 ? destination is INamedTypeSymbol namedDestination
                     ? ConstructorModelBuilder.Select(namedDestination, members)
@@ -142,7 +142,7 @@ internal static class MappingModelBuilder
                     binding.DestinationTypeIdentity == member.DestinationTypeIdentity &&
                     (!member.IsConfigured && member.SourceTypeIdentity.Length == 0 ||
                      binding.SourceName == member.SourceName && binding.SourceTypeIdentity == member.SourceTypeIdentity &&
-                     (binding.Expression == member.Expression || member.Expression is null && binding.Expression == "source.@" + member.SourceName)));
+                     (binding.Expression == member.Expression || binding.ConversionHelper is not null && member.ConversionHelper is not null && binding.Conversion == member.Conversion || member.Expression is null && binding.Expression == "source.@" + member.SourceName)));
                 // A default can satisfy an absent optional property, but never consumes a source-backed assignment.
                 var defaultSatisfied = !member.IsConfigured && member.SourceTypeIdentity.Length == 0 && !constructor.Arguments.IsDefault &&
                     constructor.Arguments.Any(a => a.Binding is null && a.ParameterTypeIdentity == member.DestinationTypeIdentity &&
@@ -154,6 +154,8 @@ internal static class MappingModelBuilder
                         Report(MapperDiagnostics.UnsupportedConstruction, destination.ToDisplayString(), "ignored required member '" + member.DestinationName + "' is not satisfied by the constructor");
                     continue;
                 }
+                if (member.CannotSkipNull)
+                    Report(MapperDiagnostics.UnsupportedStructural, "member '" + member.DestinationName + "' cannot skip null assignment to an init-only or required reference property");
                 if (member.Failure is not null)
                     Report(options.Mode == 1 ? MapperDiagnostics.StructuralUnmapped : MapperDiagnostics.LegacyUnmapped,
                         member.DestinationName, member.Failure);

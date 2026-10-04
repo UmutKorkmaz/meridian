@@ -20,7 +20,7 @@ public class GeneratorDiagnosticTests
     [Fact]
     public void Structural_Mismatch_Is_Error()
     {
-        var result = GeneratorTestHarness.Compile(Fixture(", Mode = GeneratedMappingMode.Structural", "long"));
+        var result = GeneratorTestHarness.Compile(Fixture(", Mode = GeneratedMappingMode.Structural", "System.Guid"));
         AssertDiagnostic(result, "MERIDIANGEN002", DiagnosticSeverity.Error);
         AssertCompiles(result);
         Assert.DoesNotContain("public static global::Dto MapToDto", result.GeneratedSource);
@@ -143,9 +143,7 @@ public class GeneratorDiagnosticTests
     [InlineData("int[]")]
     [InlineData("System.Collections.Generic.List<int>")]
     [InlineData("System.Collections.Generic.IEnumerable<int>")]
-    [InlineData("System.DayOfWeek")]
-    [InlineData("System.DayOfWeek?")]
-    public void Structural_Pending_Collection_And_Enum_Capabilities_Are_Diagnosed(string memberType)
+    public void Structural_Pending_Collection_Capabilities_Are_Diagnosed(string memberType)
     {
         var source = Fixture(", Mode = GeneratedMappingMode.Structural", memberType).Replace("public int Value", "public " + memberType + " Value");
         var result = GeneratorTestHarness.Compile(source);
@@ -156,8 +154,6 @@ public class GeneratorDiagnosticTests
     [Theory]
     [InlineData("PreserveReferences = true")]
     [InlineData("AllowNullCollections = true")]
-    [InlineData("AllowNullDestinationValues = false")]
-    [InlineData("AllowUndefinedEnumValues = true")]
     [InlineData("MaxDepth = 10")]
     [InlineData("MaxCollectionItems = 10")]
     [InlineData("GenerateResolver = true")]
@@ -232,13 +228,13 @@ public class GeneratorDiagnosticTests
     public void Changed_Options_Invalidate_Emission_And_Diagnostics_Use_Current_Tree()
     {
         var parse = CSharpParseOptions.Default.WithLanguageVersion(LanguageVersion.CSharp12);
-        var tree = CSharpSyntaxTree.ParseText(Fixture("", "long"), parse, "Input.cs");
+        var tree = CSharpSyntaxTree.ParseText(Fixture("", "System.Guid"), parse, "Input.cs");
         var references = GeneratorTestHarness.Compile(Fixture("")).Compilation.References;
         var input = CSharpCompilation.Create("OptionCache", [tree], references, new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary));
         GeneratorDriver driver = CSharpGeneratorDriver.Create([new MeridianMapperGenerator().AsSourceGenerator()], parseOptions: parse);
         driver = driver.RunGenerators(input);
         Assert.Equal(DiagnosticSeverity.Info, Assert.Single(driver.GetRunResult().Diagnostics).Severity);
-        var replacement = CSharpSyntaxTree.ParseText("\n\n" + Fixture(", Mode = GeneratedMappingMode.Structural", "long"), parse, "Input.cs");
+        var replacement = CSharpSyntaxTree.ParseText("\n\n" + Fixture(", Mode = GeneratedMappingMode.Structural", "System.Guid"), parse, "Input.cs");
         input = input.ReplaceSyntaxTree(tree, replacement);
         driver = driver.RunGeneratorsAndUpdateCompilation(input, out var updated, out var diagnostics);
         var error = Assert.Single(diagnostics);
