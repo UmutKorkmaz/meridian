@@ -8,7 +8,9 @@ param(
 
     [string] $LogDirectory,
 
-    [switch] $NoBuild
+    [switch] $NoBuild,
+
+    [switch] $IncludeHttp
 )
 
 $ErrorActionPreference = 'Stop'
@@ -77,6 +79,14 @@ foreach ($sample in $samples) {
         catch { Write-Warning "Could not clean up sample process: $_" }
         $process.Dispose()
     }
+}
+if ($IncludeHttp) {
+    if ($Framework -ne 'net10.0') { throw 'HTTP sample targets net10.0 only.' }
+    if (-not $env:MERIDIAN_TEST_REDIS) { throw 'HTTP smoke requires an explicitly isolated MERIDIAN_TEST_REDIS.' }
+    $arguments = @('test', (Join-Path $repoRoot 'tests/Meridian.AspNetCore.Tests/Meridian.AspNetCore.Tests.csproj'), '-c', 'Release', '--filter', 'FullyQualifiedName~SocketTests', '--logger', 'trx;LogFileName=http-socket.trx', '--results-directory', (Join-Path $LogDirectory 'http'))
+    if ($NoBuild) { $arguments += '--no-build' }
+    & $dotnet @arguments
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 Write-Host "PASS samples: $passed/$($samples.Count) ($Framework)"
 exit 0

@@ -14,6 +14,8 @@ All samples build on `dotnet build` and exit with code 0 when run.
 | **[ModularMonolith](Meridian.ModularMonolith/)** | Per-module boundaries inside one process | Teams with a modular monolith that need cross-module messaging |
 | **[VerticalSlice](Meridian.VerticalSlice/)** | One file per feature, request + handler + validator co-located | Teams using vertical-slice architecture |
 
+The additional [Orders HTTP sample](Meridian.AspNetCore/) targets .NET 10 and requires explicit disposable SQLite, dedicated Redis and local signing configuration. Run its bounded host smoke with `eng/run-samples.ps1 -Framework net10.0 -IncludeHttp`; its web host is not part of the console loop.
+
 ## Feature → sample matrix
 
 If you want to see a specific feature in action:

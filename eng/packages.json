@@ -156,6 +156,24 @@
         "Meridian.Mediator"
       ],
       "licenseExpression": "MIT"
+    },
+    {
+      "id": "Meridian.Mediator.AspNetCore",
+      "project": "src/Meridian.Mediator.AspNetCore/Meridian.Mediator.AspNetCore.csproj",
+      "kind": "runtime",
+      "versionSource": "Version",
+      "baselineVersion": null,
+      "targetFrameworks": [
+        "net8.0",
+        "net9.0",
+        "net10.0"
+      ],
+      "analyzerPaths": [],
+      "directPackageDependencies": [],
+      "projectDependencies": [
+        "Meridian.Mediator"
+      ],
+      "licenseExpression": "MIT"
     }
   ],
   "compilerHosts": [
@@ -291,6 +309,21 @@
       ],
       "packageIds": [
         "Meridian.Mediator.EntityFrameworkCore"
+      ],
+      "variants": [
+        "legacy"
+      ],
+      "baselineComparison": false
+    },
+    {
+      "id": "Meridian.HttpConsumer",
+      "project": "tests/consumers/Meridian.HttpConsumer/Meridian.HttpConsumer.csproj",
+      "sourceFiles": [
+        "tests/consumers/Meridian.HttpConsumer/Meridian.HttpConsumer.csproj",
+        "tests/consumers/Meridian.HttpConsumer/Program.cs"
+      ],
+      "packageIds": [
+        "Meridian.Mediator.AspNetCore"
       ],
       "variants": [
         "legacy"
