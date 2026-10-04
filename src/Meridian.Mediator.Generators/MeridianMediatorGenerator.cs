@@ -95,7 +95,8 @@ public sealed class MeridianMediatorGenerator : IIncrementalGenerator
                 entries.Add(new Entry(handler, contract, category, constructor));
             }
         }
-        foreach (var group in entries.Where(e => e.Category != "NotificationHandler").GroupBy(e => (ISymbol)e.Contract.TypeArguments[0], SymbolEqualityComparer.Default).OrderBy(g => TypeName(g.Key!), StringComparer.Ordinal))
+        foreach (var category in entries.Where(e => e.Category != "NotificationHandler").GroupBy(e => e.Category).OrderBy(g => g.Key, StringComparer.Ordinal))
+        foreach (var group in category.GroupBy(e => (ISymbol)e.Contract.TypeArguments[0], SymbolEqualityComparer.Default).OrderBy(g => TypeName(g.Key!), StringComparer.Ordinal))
             if (group.Select(e => (ISymbol)e.Handler).Distinct(SymbolEqualityComparer.Default).Count() > 1)
                 Error(MediatorDiagnostics.Duplicate, syntax.GetLocation(), TypeName(group.Key!));
         if (classified) foreach (var expected in expectations.OrderBy(e => TypeName(e.Type), StringComparer.Ordinal))
@@ -133,7 +134,7 @@ public sealed class MeridianMediatorGenerator : IIncrementalGenerator
             {
                 var constant = Constant(parameter.ExplicitDefaultValue, parameter.Type);
                 if (constant == null) { reason = "optional parameter default cannot be emitted"; return null; }
-                arguments.Add("(" + type + ")(sp.GetService(typeof(" + type + ")) ?? (object?)" + constant + ")!");
+                arguments.Add("(" + type + ")(sp.GetService(typeof(" + type + ")) ?? (object?)(" + type + ")(" + constant + "))!");
             }
             else if (parameter.Type is INamedTypeSymbol enumerable && Is(enumerable, "System.Collections.Generic.IEnumerable`1"))
                 arguments.Add("global::Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetServices<" + TypeName(enumerable.TypeArguments[0]) + ">(sp)");

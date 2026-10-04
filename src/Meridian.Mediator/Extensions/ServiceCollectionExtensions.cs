@@ -162,7 +162,8 @@ public static class ServiceCollectionExtensions
                     var descriptor = new ServiceDescriptor(interfaceType, type, lifetime);
                     if (genericDef == typeof(INotificationHandler<>))
                     {
-                        services.TryAddEnumerable(descriptor);
+                        if (!Generated.GeneratedMediatorRegistration.HasGeneratedRegistration(services, interfaceType, type))
+                            services.TryAddEnumerable(descriptor);
                     }
                     else
                     {

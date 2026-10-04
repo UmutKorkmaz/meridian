@@ -14,12 +14,20 @@ public static class GeneratedMediatorRegistration
             if (item.Phase != GeneratedMediatorPhase.Handler)
                 throw new NotSupportedException("Generated pipeline contributions require the generated dispatch capability.");
             var lifetime = item.Lifetime switch { GeneratedMediatorLifetime.Transient => ServiceLifetime.Transient, GeneratedMediatorLifetime.Singleton => ServiceLifetime.Singleton, _ => handlerLifetime };
-            if (services.Any(d => d.ServiceType == typeof(FactoryMarker) && d.ImplementationInstance is FactoryMarker m && m.Service == item.ServiceType && m.Implementation == item.ImplementationType && m.Lifetime == lifetime)) continue;
-            if (services.Any(d => d.ServiceType == item.ServiceType && d.ImplementationType == item.ImplementationType && d.Lifetime == lifetime)) continue;
+            // Notification enumeration follows TryAddEnumerable identity: first service/implementation wins, regardless of lifetime.
+            var identityLifetime = item.Category == GeneratedMediatorCategory.NotificationHandler ? (ServiceLifetime?)null : lifetime;
+            if (HasGeneratedRegistration(services, item.ServiceType, item.ImplementationType, identityLifetime)) continue;
+            if (services.Any(d => d.ServiceType == item.ServiceType && d.ImplementationType == item.ImplementationType && (identityLifetime == null || d.Lifetime == identityLifetime))) continue;
             services.Add(new ServiceDescriptor(item.ServiceType, item.Factory, lifetime));
             services.AddSingleton(new FactoryMarker(item.ServiceType, item.ImplementationType, lifetime));
         }
     }
+    // Legacy scanning can see identities erased by the public ServiceDescriptor factory overload.
+    // Opaque user factories are deliberately not treated as equivalent implementations.
+    internal static bool HasGeneratedRegistration(IServiceCollection services, Type serviceType, Type implementationType, ServiceLifetime? lifetime = null) =>
+        services.Any(d => d.ServiceType == typeof(FactoryMarker) && d.ImplementationInstance is FactoryMarker m &&
+            m.Service == serviceType && m.Implementation == implementationType && (lifetime == null || m.Lifetime == lifetime));
+
     internal static void RegisterRegistries(IServiceCollection services, IReadOnlyList<IGeneratedMediatorRegistry> registries, ServiceLifetime lifetime, bool strict)
     {
         if (strict) throw new NotSupportedException("RequireGeneratedDispatch needs generated wrapper dispatch; this registry package currently supplies closed DI registration metadata only.");

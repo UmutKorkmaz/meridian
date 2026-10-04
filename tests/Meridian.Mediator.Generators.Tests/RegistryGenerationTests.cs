@@ -64,7 +64,7 @@ public class RegistryGenerationTests
         var result = Generate(Handler + "public class Other : IRequest<int> {} [GenerateMediatorRegistry(ExpectedRequestTypes = new[] { typeof(Q), typeof(Q) })] public partial class Registry {}");
         var diagnostic = Assert.Single(result.Result.Diagnostics);
         Assert.Equal("MERIDIANMED001", diagnostic.Id);
-        Assert.Equal("Registry 'Registry' declares expected request 'Q', but its handlerTypes contain no matching request handler", diagnostic.GetMessage());
+        Assert.Equal("Registry 'Registry' declares expected request 'Q', but its handlerTypes contain no matching request handler", diagnostic.GetMessage(System.Globalization.CultureInfo.InvariantCulture));
         Assert.Equal("typeof(Q)", diagnostic.Location.SourceTree!.GetText().ToString(diagnostic.Location.SourceSpan));
     }
     [Theory]
@@ -226,6 +226,90 @@ public class RegistryGenerationTests
         Assert.Single(registry.RequestTypes);
         Assert.Throws<NotSupportedException>(() => ((IList<Type>)registry.RequestTypes).Add(typeof(string)));
         Assert.Throws<NotSupportedException>(() => ((IList<GeneratedMediatorContribution>)((IGeneratedMediatorContributions)registry).Contributions).Clear());
+    }
+
+    [Theory]
+    [InlineData("byte", "1")]
+    [InlineData("sbyte", "1")]
+    [InlineData("short", "1")]
+    [InlineData("ushort", "1")]
+    [InlineData("int", "1")]
+    [InlineData("uint", "1")]
+    [InlineData("long", "1")]
+    [InlineData("ulong", "1")]
+    [InlineData("float", "1")]
+    [InlineData("double", "1")]
+    [InlineData("decimal", "1")]
+    [InlineData("byte?", "1")]
+    [InlineData("uint?", "1")]
+    [InlineData("E", "E.One")]
+    [InlineData("E?", "E.One")]
+    public void Optional_Numeric_Defaults_Preserve_Declared_Type_And_Registered_Override(string type, string constant)
+    {
+        var source = "public enum E : byte { One=1, Two=2 } " + Handler.Replace("public Task<int>", "public H("+type+" value = "+constant+") { Value = value; } public object? Value { get; } public Task<int>");
+        var registry = Load(Generate(source + "[GenerateMediatorRegistry(typeof(H))] public partial class Registry {}"));
+        var contribution = ((IGeneratedMediatorContributions)registry).Contributions.Single();
+        var parameterType = contribution.ImplementationType.GetConstructors().Single().GetParameters().Single().ParameterType;
+        var underlyingType = Nullable.GetUnderlyingType(parameterType) ?? parameterType;
+        foreach (var registered in new[] { false, true })
+        {
+            var services = new ServiceCollection();
+            if (registered)
+            {
+                var value = underlyingType.IsEnum ? Enum.ToObject(underlyingType, 2) : Convert.ChangeType(2, underlyingType, System.Globalization.CultureInfo.InvariantCulture);
+                services.AddSingleton(parameterType, _ => value);
+            }
+            registry.RegisterServices(services, ServiceLifetime.Transient);
+            using var provider = services.BuildServiceProvider();
+            var instance = provider.GetRequiredService(contribution.ServiceType);
+            var actual = contribution.ImplementationType.GetProperty("Value")!.GetValue(instance);
+            Assert.Equal(underlyingType, actual!.GetType());
+            Assert.Equal(registered ? 2 : 1, Convert.ToInt32(actual, System.Globalization.CultureInfo.InvariantCulture));
+        }
+    }
+    [Fact] public void Ordinary_And_Stream_Contracts_Have_Independent_Duplicate_Slots()
+    {
+        var source = Handler.Replace("Q : IRequest<int>","Q : IRequest<int>, Meridian.Mediator.Streaming.IStreamRequest<int>") + "public class SH : Meridian.Mediator.Streaming.IStreamRequestHandler<Q,int> { public System.Collections.Generic.IAsyncEnumerable<int> Handle(Q q,CancellationToken c)=>throw new NotImplementedException(); } [GenerateMediatorRegistry(typeof(H),typeof(SH))] public partial class Registry {}";
+        var registry = Load(Generate(source));
+        Assert.Equal(registry.RequestTypes.Single(), registry.StreamTypes.Single());
+        var contributions = ((IGeneratedMediatorContributions)registry).Contributions;
+        Assert.Equal(2, contributions.Count);
+        var services = new ServiceCollection(); registry.RegisterServices(services, ServiceLifetime.Transient);
+        using var provider = services.BuildServiceProvider();
+        foreach (var contribution in contributions) Assert.Equal(contribution.ImplementationType, provider.GetRequiredService(contribution.ServiceType).GetType());
+    }
+    [Theory]
+    [InlineData("same", false, false)]
+    [InlineData("generated-first", false, false)]
+    [InlineData("scanned-first", false, false)]
+    [InlineData("same", true, false)]
+    [InlineData("generated-first", true, false)]
+    [InlineData("scanned-first", true, false)]
+    [InlineData("generated-first", false, true)]
+    [InlineData("scanned-first", false, true)]
+    public async Task Generated_And_Scanned_Notifications_Deduplicate_Known_Handlers_Only(string order, bool opaqueFactory, bool differingLifetime)
+    {
+        const string source = "public class N : INotification {} public class NH : INotificationHandler<N> { public static int Calls; public Task Handle(N n,CancellationToken c) { Calls++; return Task.CompletedTask; } } public class OtherNH : INotificationHandler<N> { public static int Calls; public Task Handle(N n,CancellationToken c) { Calls++; return Task.CompletedTask; } } [GenerateMediatorRegistry(typeof(NH))] public partial class Registry {}";
+        var registry = Load(Generate(source));
+        var assembly = registry.GetType().Assembly;
+        var contribution = ((IGeneratedMediatorContributions)registry).Contributions.Single();
+        var services = new ServiceCollection();
+        if (opaqueFactory) services.AddTransient(contribution.ServiceType, _ => Activator.CreateInstance(contribution.ImplementationType)!);
+        void Generated(MeridianMediatorConfiguration c) { if (differingLifetime) c.Lifetime = ServiceLifetime.Singleton; typeof(MeridianMediatorConfiguration).GetMethod("AddGeneratedRegistry")!.MakeGenericMethod(registry.GetType()).Invoke(c, null); }
+        if (order == "same") services.AddMeridianMediator(c => { Generated(c); c.RegisterServicesFromAssembly(assembly); });
+        else if (order == "generated-first") { services.AddMeridianMediator(Generated); services.AddMeridianMediator(c => c.RegisterServicesFromAssembly(assembly)); }
+        else { services.AddMeridianMediator(c => c.RegisterServicesFromAssembly(assembly)); services.AddMeridianMediator(Generated); }
+        using var provider = services.BuildServiceProvider();
+        await provider.GetRequiredService<IMediator>().Publish((INotification)Activator.CreateInstance(registry.NotificationTypes.Single())!);
+        Assert.Equal(opaqueFactory ? 2 : 1, (int)contribution.ImplementationType.GetField("Calls")!.GetValue(null)!);
+        Assert.Equal(1, (int)assembly.GetType("OtherNH")!.GetField("Calls")!.GetValue(null)!);
+        Assert.Equal(opaqueFactory ? 3 : 2, services.Count(d => d.ServiceType == contribution.ServiceType));
+        if (differingLifetime)
+        {
+            var handler = provider.GetServices(contribution.ServiceType).Single(h => h!.GetType() == contribution.ImplementationType);
+            var again = provider.GetServices(contribution.ServiceType).Single(h => h!.GetType() == contribution.ImplementationType);
+            if (order == "generated-first") Assert.Same(handler, again); else Assert.NotSame(handler, again);
+        }
     }
 
 }
