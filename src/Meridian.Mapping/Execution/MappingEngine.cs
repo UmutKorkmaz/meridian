@@ -88,6 +88,7 @@ public class MappingEngine
     /// </summary>
     public object MapToExisting(object source, object destination, Type sourceType, Type destinationType, ResolutionContext context)
     {
+        context = context.ForExistingDestination();
         if (IsCollectionMapping(sourceType, destinationType, out var srcElementType, out var destElementType))
         {
             var reusedCollection = TryMapCollectionOntoExisting(
@@ -371,6 +372,11 @@ public class MappingEngine
             {
                 value = ConvertValue(value, destPropType, childContext);
             }
+            else if (value != null && propertyMap.UseDestinationValue != true)
+            {
+                value = ConvertAssignableValue(value, destPropType, childContext);
+            }
+
 
             // Apply value transformers
             if (value != null && _valueTransformers != null)
@@ -438,7 +444,7 @@ public class MappingEngine
 
         var nestedTypeMap = ResolveTypeMap(value, valueType, destPropType);
         if (nestedTypeMap != null)
-            return MapProperties(value, existingValue, nestedTypeMap, context);
+            return MapProperties(value, existingValue, nestedTypeMap, context.ForExistingDestination());
 
         return value;
     }
@@ -501,6 +507,22 @@ public class MappingEngine
         return destination;
     }
 
+    internal object? ConvertAssignableValue(object? value, Type destinationType, ResolutionContext context)
+    {
+        if (value is null || !context.AllowGeneratedAssignableMappings ||
+            _configurationProvider is not IGeneratedMappingConfigurationProvider { GeneratedResolvers.Count: > 0 })
+            return value;
+
+        var typeMap = ResolveTypeMap(value, value.GetType(), destinationType);
+        if (typeMap is not null)
+            return MapWithTypeMap(value, typeMap, context);
+        var generated = FindGeneratedMapping(value.GetType(), destinationType);
+        if (generated is null) return value;
+        return context.Depth >= context.MaxDepth
+            ? (destinationType.IsValueType ? Activator.CreateInstance(destinationType) : null)
+            : generated.Map(value, context);
+    }
+
     private object? ConvertValue(object value, Type destType, ResolutionContext context)
     {
         var sourceType = value.GetType();
@@ -512,7 +534,7 @@ public class MappingEngine
 
         // Direct assignability
         if (destType.IsAssignableFrom(sourceType))
-            return value;
+            return ConvertAssignableValue(value, destType, context);
 
         // Collection mapping
         if (IsCollectionMapping(sourceType, destType, out var srcElem, out var destElem))

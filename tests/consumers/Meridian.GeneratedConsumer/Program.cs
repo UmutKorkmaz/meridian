@@ -15,6 +15,22 @@ bridgeConfiguration.AssertConfigurationIsValid();
 if (bridgeConfiguration.CreateMapper().Map<ValueSource, ValueClassDto>(new ValueSource {Value=42}).Value != 42)
     throw new InvalidOperationException("generated resolver bridge failed");
 Console.WriteLine("resolverBridge=42");
+foreach (var interpreted in new[] { false, true })
+{
+    var sameConfiguration = new MapperConfiguration(c =>
+    {
+        c.UseGeneratedMappings(new SameTypeMaps.GeneratedResolver());
+        var map = c.CreateMap<Source, Dto>();
+        if (interpreted) map.AfterMap((s, d) => { });
+    });
+    var sameSource = new Source { Child = new Child { Value = 42 } };
+    var sameMapped = sameConfiguration.CreateMapper().Map<Source, Dto>(sameSource);
+    Check(!ReferenceEquals(sameSource.Child, sameMapped.Child) && sameMapped.Child?.Value == 42, "same-type nested resolver");
+    sameMapped.Child!.Value = 7;
+    Check(sameSource.Child.Value == 42, "generated child mutation isolation");
+}
+Console.WriteLine("sameTypeNested=42 interpreter=true compiled=true independent=true");
+
 var inherited = Container.EnhancedMaps.MapToInitDto(new InheritedSource { Id = 42, Name = "init" });
 Check(inherited.Id == 42 && inherited.Name == "init", "inherited/init destination");
 Check(Container.RequiredMaps.MapToRequiredDto(new Source { Value = 42 }).Value == 42, "SetsRequiredMembers zero constructor");
@@ -169,4 +185,9 @@ public sealed class OptionalDto
 #if !BASELINE
 [GenerateMapper(typeof(ValueSource),typeof(ValueClassDto),Mode=GeneratedMappingMode.Structural,GenerateResolver=true)]
 public static partial class BridgeMaps { }
+#endif
+
+#if !BASELINE
+[GenerateMapper(typeof(Child),typeof(Child),Mode=GeneratedMappingMode.Structural,GenerateResolver=true)]
+public static partial class SameTypeMaps { }
 #endif

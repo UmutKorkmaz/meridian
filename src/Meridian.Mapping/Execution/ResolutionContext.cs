@@ -18,6 +18,7 @@ public class ResolutionContext
     // Share the operation root, not a snapshot of its lazily allocated dictionary.
     // A child may be the first map that enables PreserveReferences.
     private readonly ResolutionContext _cacheOwner;
+    internal bool AllowGeneratedAssignableMappings { get; } = true;
     internal int? InheritedMaxDepth { get; }
     internal int? InheritedMaxCollectionItems { get; }
 
@@ -86,7 +87,8 @@ public class ResolutionContext
         IDictionary<string, object?> items,
         object? state,
         int? maxDepth = null,
-        int? maxCollectionItems = null)
+        int? maxCollectionItems = null,
+        bool allowGeneratedAssignableMappings = true)
     {
         Mapper = mapper;
         Depth = depth;
@@ -94,6 +96,7 @@ public class ResolutionContext
         _cacheOwner = cacheOwner;
         Items = items;
         State = state;
+        AllowGeneratedAssignableMappings = allowGeneratedAssignableMappings;
         InheritedMaxDepth = maxDepth;
         InheritedMaxCollectionItems = maxCollectionItems;
     }
@@ -104,8 +107,11 @@ public class ResolutionContext
     /// <returns>A new resolution context one level deeper.</returns>
     public ResolutionContext IncrementDepth()
     {
-        return new ResolutionContext(Mapper, Depth + 1, ServiceProvider, _cacheOwner, Items, State, InheritedMaxDepth, InheritedMaxCollectionItems);
+        return new ResolutionContext(Mapper, Depth + 1, ServiceProvider, _cacheOwner, Items, State, InheritedMaxDepth, InheritedMaxCollectionItems, AllowGeneratedAssignableMappings);
     }
+
+    internal ResolutionContext ForExistingDestination() => new(Mapper, Depth, ServiceProvider, _cacheOwner, Items, State,
+        InheritedMaxDepth, InheritedMaxCollectionItems, allowGeneratedAssignableMappings: false);
 
     /// <summary>
     /// Maps an explicitly configured nested pair using this operation's services, state and cache.
@@ -123,7 +129,7 @@ public class ResolutionContext
         if (maxDepth is <= 0) throw new ArgumentOutOfRangeException(nameof(maxDepth));
         if (maxCollectionItems is <= 0) throw new ArgumentOutOfRangeException(nameof(maxCollectionItems));
         var nested = new ResolutionContext(Mapper, checked(Depth + relativeDepth), ServiceProvider, _cacheOwner, Items, State,
-            Math.Min(MaxDepth, maxDepth ?? int.MaxValue), Math.Min(MaxCollectionItems, maxCollectionItems ?? int.MaxValue));
+            Math.Min(MaxDepth, maxDepth ?? int.MaxValue), Math.Min(MaxCollectionItems, maxCollectionItems ?? int.MaxValue), AllowGeneratedAssignableMappings);
         return mapper.TryMapConfigured(source, sourceType, destinationType, nested, out destination);
     }
 

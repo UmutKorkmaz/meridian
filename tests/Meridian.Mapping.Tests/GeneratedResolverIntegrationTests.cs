@@ -85,6 +85,218 @@ public class GeneratedResolverIntegrationTests
         Assert.True(GeneratorTestHarness.InvokeStatic<bool>(result,"Maps",nested?"ProofNested":"Proof"));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Same_Type_Nested_Descriptor_Uses_Copy_Context_And_Cache(bool interpreter)
+    {
+        var resolver = new SameResolver();
+        var configuration = SameConfiguration(interpreter, resolver);
+        var mapper = configuration.CreateMapper(new SameServices());
+        var child = new SameChild { Value = 42 };
+        var state = new object();
+        var result = mapper.Map<SameParent, SameParentDto>(new() { Left = child, Right = child }, options =>
+        { options.State = state; options.Items["answer"] = 7; });
+        Assert.NotSame(child, result.Left);
+        Assert.Same(result.Left, result.Right);
+        Assert.Equal(49, result.Left!.Value);
+        Assert.Equal(2, resolver.Calls);
+        Assert.Same(state, resolver.Seen!.State);
+        Assert.IsType<SameServices>(resolver.Seen.ServiceProvider);
+        Assert.Equal(1, resolver.Seen.Depth);
+        Assert.Equal(4, resolver.Seen.MaxDepth);
+        Assert.Equal(3, resolver.Seen.MaxCollectionItems);
+        result.Left.Value = 100;
+        Assert.Equal(42, child.Value);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Same_Type_Explicit_Map_Wins_Without_Resolver_Lookup(bool interpreter)
+    {
+        var resolver = new SameResolver { ThrowOnLookup = true };
+        var configuration = SameConfiguration(interpreter, resolver, explicitChild: true);
+        var source = new SameChild { Value = 42 };
+        var result = configuration.CreateMapper().Map<SameParent, SameParentDto>(new() { Left = source });
+        Assert.NotSame(source, result.Left);
+        Assert.Equal(88, result.Left!.Value);
+        Assert.Equal(0, resolver.Calls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Same_Type_Generated_Dispatch_Respects_Depth_Cap(bool interpreter)
+    {
+        var resolver = new SameResolver();
+        var configuration = SameConfiguration(interpreter, resolver, maxDepth: 1);
+        var result = configuration.CreateMapper().Map<SameParent, SameParentDto>(new() { Left = new SameChild() });
+        Assert.Null(result.Left);
+        Assert.Equal(0, resolver.Calls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Same_Type_Unregistered_And_Existing_Destination_Preserve_Alias(bool interpreter)
+    {
+        var child = new SameChild { Value = 42 };
+        var source = new SameParent { Left = child };
+        var unregistered = SameConfiguration(interpreter, null).CreateMapper().Map<SameParent, SameParentDto>(source);
+        Assert.Same(child, unregistered.Left);
+        var resolver = new SameResolver { ThrowOnLookup = true };
+        var mapper = SameConfiguration(interpreter, resolver).CreateMapper();
+        var existing = new SameParentDto();
+        Assert.Same(existing, mapper.Map(source, existing));
+        Assert.Same(child, existing.Left);
+        Assert.Equal(0, resolver.Calls);
+        resolver.ThrowOnLookup = false;
+        var fresh = mapper.Map<SameParent, SameParentDto>(source, o => o.Items["answer"] = 7);
+        Assert.NotSame(child, fresh.Left);
+        Assert.Equal(49, fresh.Left!.Value);
+        Assert.Equal(1, resolver.Calls);
+    }
+
+    [Fact]
+    public void Same_Type_Destination_Reuse_Does_Not_Invoke_Descriptor()
+    {
+        var resolver = new SameResolver { ThrowOnLookup = true };
+        var configuration = new MapperConfiguration(c =>
+        {
+            c.UseGeneratedMappings(resolver);
+            c.CreateMap<SameParent, SameParentDto>().ForMember(d => d.Left, o => { o.MapFrom(s => s.Left); o.UseDestinationValue(); });
+            c.CreateMap<SameChild, SameChild>();
+        });
+        var existing = new SameParentDto { Left = new SameChild() };
+        var original = existing.Left;
+        var result = configuration.CreateMapper().Map(new SameParent { Left = new SameChild { Value = 42 } }, existing);
+        Assert.Same(original, result.Left);
+        Assert.Equal(42, result.Left!.Value);
+        Assert.Equal(0, resolver.Calls);
+    }
+
+    [Fact]
+    public void Same_Type_Element_Registration_Does_Not_Deep_Copy_Assignable_Collection()
+    {
+        var resolver = new SameResolver();
+        var configuration = new MapperConfiguration(c =>
+        {
+            c.UseGeneratedMappings(resolver);
+            c.CreateMap<SameCollectionParent, SameCollectionDto>();
+        });
+        var values = new[] { new SameChild { Value = 42 } };
+        var mapped = configuration.CreateMapper().Map<SameCollectionParent, SameCollectionDto>(new() { Values = values });
+        Assert.Same(values, mapped.Values);
+        Assert.Equal(0, resolver.Calls);
+    }
+
+    [Fact]
+    public void Same_Type_Collection_Pair_Registration_Executes_Before_Assignability()
+    {
+        var resolver = new SameCollectionResolver();
+        var configuration = new MapperConfiguration(c =>
+        {
+            c.UseGeneratedMappings(resolver);
+            c.CreateMap<SameCollectionParent, SameCollectionDto>();
+        });
+        var values = new[] { new SameChild { Value = 42 } };
+        var mapped = configuration.CreateMapper().Map<SameCollectionParent, SameCollectionDto>(new() { Values = values });
+        Assert.NotSame(values, mapped.Values);
+        Assert.Equal(43, mapped.Values![0].Value);
+        Assert.Equal(1, resolver.Calls);
+    }
+
+    public sealed class SameCollectionParent { public SameChild[]? Values { get; set; } }
+    public sealed class SameCollectionDto { public SameChild[]? Values { get; set; } }
+    private sealed class SameCollectionResolver : IGeneratedMappingResolver
+    {
+        public int Calls;
+        public bool TryGetMapping(Type source, Type destination, out GeneratedMappingDescriptor? mapping)
+        {
+            mapping = source == typeof(SameChild[]) && destination == source
+                ? new GeneratedMappingDescriptor(source, destination, (value, context) =>
+                { Calls++; return ((SameChild[])value!).Select(c => new SameChild { Value = c.Value + 1 }).ToArray(); }) : null;
+            return mapping is not null;
+        }
+    }
+
+    [Fact]
+    public void Same_Type_Compiled_Member_Is_Read_Once()
+    {
+        var configuration = new MapperConfiguration(c => { c.UseGeneratedMappings(new SameResolver()); c.CreateMap<ReadOnceParent, ReadOnceDto>(); });
+        Assert.NotNull(configuration.FindTypeMap(typeof(ReadOnceParent), typeof(ReadOnceDto))!.CompiledFastPath);
+        var source = new ReadOnceParent();
+        var mapped = configuration.CreateMapper().Map<ReadOnceParent, ReadOnceDto>(source, o => o.Items["answer"] = 7);
+        Assert.Equal(1, source.Reads);
+        Assert.Equal(49, mapped.Left!.Value);
+    }
+
+    public sealed class ReadOnceParent
+    {
+        public int Reads;
+        public SameChild Left { get { Reads++; return new SameChild { Value = 42 }; } }
+    }
+    public sealed class ReadOnceDto { public SameChild? Left { get; set; } }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Same_Type_Nested_Ambiguity_Throws_Before_Descriptor_Execution(bool interpreter)
+    {
+        var first = new SameResolver();
+        var second = new SameResolver();
+        var configuration = new MapperConfiguration(c =>
+        {
+            c.UseGeneratedMappings(first, second);
+            var map = c.CreateMap<SameParent, SameParentDto>();
+            if (interpreter) map.AfterMap((s, d) => { });
+        });
+        Assert.Throws<InvalidOperationException>(() => configuration.CreateMapper().Map<SameParent, SameParentDto>(new() { Left = new SameChild() }));
+        Assert.Equal(0, first.Calls);
+        Assert.Equal(0, second.Calls);
+    }
+
+    private static MapperConfiguration SameConfiguration(bool interpreter, SameResolver? resolver, bool explicitChild = false, int maxDepth = 4)
+    {
+        var configuration = new MapperConfiguration(c =>
+        {
+            c.DefaultMaxDepth = maxDepth;
+            c.DefaultMaxCollectionItems = 3;
+            if (resolver is not null) c.UseGeneratedMappings(resolver);
+            var map = c.CreateMap<SameParent, SameParentDto>();
+            if (interpreter) map.AfterMap((s, d) => { });
+            if (explicitChild) c.CreateMap<SameChild, SameChild>().AfterMap((s, d) => d.Value = 88);
+        });
+        Assert.Equal(!interpreter, configuration.FindTypeMap(typeof(SameParent), typeof(SameParentDto))!.CompiledFastPath is not null);
+        return configuration;
+    }
+
+    public sealed class SameChild { public int Value { get; set; } }
+    public sealed class SameParent { public SameChild? Left { get; set; } public SameChild? Right { get; set; } }
+    public sealed class SameParentDto { public SameChild? Left { get; set; } public SameChild? Right { get; set; } }
+    private sealed class SameServices : IServiceProvider { public object? GetService(Type serviceType) => null; }
+    private sealed class SameResolver : IGeneratedMappingResolver
+    {
+        public int Calls;
+        public bool ThrowOnLookup;
+        public Meridian.Mapping.Execution.ResolutionContext? Seen;
+        public bool TryGetMapping(Type source, Type destination, out GeneratedMappingDescriptor? mapping)
+        {
+            if (ThrowOnLookup && source == typeof(SameChild) && destination == source) throw new InvalidOperationException("Unexpected resolver lookup");
+            mapping = source == typeof(SameChild) && destination == source
+                ? new GeneratedMappingDescriptor(source, destination, (value, context) =>
+                {
+                    Calls++; Seen = context;
+                    if (context.TryGetMapped(value!, destination, out var cached)) return cached;
+                    var copy = new SameChild { Value = ((SameChild)value!).Value + (int)context.Items["answer"]! };
+                    context.CacheMapped(value!, destination, copy);
+                    return copy;
+                }) : null;
+            return mapping is not null;
+        }
+    }
+
     private const string Fixture = """
         using System;
         using System.Collections.Generic;

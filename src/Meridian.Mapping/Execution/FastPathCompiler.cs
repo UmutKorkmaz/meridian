@@ -43,6 +43,9 @@ internal static class FastPathCompiler
             null)
         ?? throw new InvalidOperationException("MappingEngine.Map(object, Type, Type, ResolutionContext) not found.");
 
+    private static readonly MethodInfo _engineConvertAssignableValueMethod =
+        typeof(MappingEngine).GetMethod(nameof(MappingEngine.ConvertAssignableValue), BindingFlags.NonPublic | BindingFlags.Instance)!;
+
     private static readonly MethodInfo _contextIncrementDepthMethod =
         typeof(ResolutionContext).GetMethod(nameof(ResolutionContext.IncrementDepth))!;
 
@@ -66,7 +69,8 @@ internal static class FastPathCompiler
     public static Func<object, MappingEngine, ResolutionContext, object>? TryCompile(
         TypeMap typeMap,
         bool allowNullDestinationValues,
-        bool hasValueTransformers)
+        bool hasValueTransformers,
+        bool hasGeneratedMappings = false)
     {
         if (!IsSimpleTypeMap(typeMap, allowNullDestinationValues, hasValueTransformers))
             return null;
@@ -92,7 +96,7 @@ internal static class FastPathCompiler
         {
             if (pm.Ignored) continue;
 
-            var assign = TryBuildAssignment(pm, srcTyped, dst, engineParam, ctxParam);
+            var assign = TryBuildAssignment(pm, srcTyped, dst, engineParam, ctxParam, hasGeneratedMappings);
             if (assign is null) return null;  // unreachable given IsSimpleTypeMap, but defensive
             body.Add(assign);
         }
@@ -261,7 +265,8 @@ internal static class FastPathCompiler
         ParameterExpression srcTyped,
         ParameterExpression dst,
         ParameterExpression engineParam,
-        ParameterExpression ctxParam)
+        ParameterExpression ctxParam,
+        bool hasGeneratedMappings)
     {
         var sourceExpr = BuildSourceExpression(pm, srcTyped);
         if (sourceExpr is null) return null;
@@ -274,8 +279,14 @@ internal static class FastPathCompiler
 
         if (destType.IsAssignableFrom(sourceExpr.Type))
         {
-            // Happy path: same type or source-is-subclass-of-dest.
-            valueExpr = sourceExpr;
+            // With registered generated mappings, the shared dispatcher checks
+            // explicit/generated pairs before preserving an unregistered alias.
+            // Pass the source once; the dispatcher handles null without a second getter read.
+            valueExpr = hasGeneratedMappings
+                ? Expression.Convert(Expression.Call(engineParam, _engineConvertAssignableValueMethod,
+                    Expression.Convert(sourceExpr, typeof(object)), Expression.Constant(destType, typeof(Type)),
+                    Expression.Call(ctxParam, _contextIncrementDepthMethod)), destType)
+                : sourceExpr;
         }
         else if (IsSimpleConvertible(sourceExpr.Type, destType))
         {

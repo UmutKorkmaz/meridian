@@ -111,7 +111,7 @@ public class MapperConfiguration : IConfigurationProvider, IGeneratedMappingConf
         foreach (var typeMap in typeMaps.Values)
         {
             typeMap.CompiledFastPath =
-                FastPathCompiler.TryCompile(typeMap, allowNullDest, hasTransformers);
+                FastPathCompiler.TryCompile(typeMap, allowNullDest, hasTransformers, GeneratedResolvers.Count > 0);
         }
     }
 
