@@ -1,4 +1,6 @@
+using Meridian.Mediator.Diagnostics;
 using Meridian.Mediator.Pipeline;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Localization;
 
 namespace Meridian.Mediator.Behaviors;
@@ -32,13 +34,30 @@ public sealed class LocalizedValidationBehavior<TRequest, TResponse> : IPipeline
 {
     private readonly IEnumerable<IValidator<TRequest>> _validators;
     private readonly IStringLocalizer<TRequest> _localizer;
+    private readonly MediatorMetrics _metrics;
 
     public LocalizedValidationBehavior(
         IEnumerable<IValidator<TRequest>> validators,
         IStringLocalizer<TRequest> localizer)
+        : this(validators, localizer, null)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance that reports rejections to a provider-owned metrics component.
+    /// </summary>
+    /// <param name="validators">The validators for the request type.</param>
+    /// <param name="localizer">The localizer for the request type.</param>
+    /// <param name="metrics">The metrics component. A null value leaves metrics disabled.</param>
+    [ActivatorUtilitiesConstructor]
+    public LocalizedValidationBehavior(
+        IEnumerable<IValidator<TRequest>> validators,
+        IStringLocalizer<TRequest> localizer,
+        MediatorMetrics? metrics)
     {
         _validators = validators ?? throw new ArgumentNullException(nameof(validators));
         _localizer = localizer ?? throw new ArgumentNullException(nameof(localizer));
+        _metrics = metrics ?? MediatorMetrics.Disabled;
     }
 
     public async Task<TResponse> Handle(
@@ -63,7 +82,13 @@ public sealed class LocalizedValidationBehavior<TRequest, TResponse> : IPipeline
         }
 
         if (errors.Count > 0)
+        {
+            if (_metrics.ValidationEnabled)
+            {
+                _metrics.RecordValidationRejection(typeof(TRequest));
+            }
             throw new ValidationException(errors);
+        }
 
         return await next().ConfigureAwait(false);
     }

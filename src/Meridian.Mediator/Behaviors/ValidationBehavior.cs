@@ -1,4 +1,6 @@
+using Meridian.Mediator.Diagnostics;
 using Meridian.Mediator.Pipeline;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Meridian.Mediator.Behaviors;
 
@@ -71,14 +73,28 @@ public class ValidationBehavior<TRequest, TResponse> : IPipelineBehavior<TReques
     where TRequest : notnull
 {
     private readonly IEnumerable<IValidator<TRequest>> _validators;
+    private readonly MediatorMetrics _metrics;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ValidationBehavior{TRequest, TResponse}"/> class.
     /// </summary>
     /// <param name="validators">The validators for the request type.</param>
     public ValidationBehavior(IEnumerable<IValidator<TRequest>> validators)
+        : this(validators, null)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ValidationBehavior{TRequest, TResponse}"/> class that reports
+    /// rejections to a provider-owned metrics component.
+    /// </summary>
+    /// <param name="validators">The validators for the request type.</param>
+    /// <param name="metrics">The metrics component. A null value leaves metrics disabled.</param>
+    [ActivatorUtilitiesConstructor]
+    public ValidationBehavior(IEnumerable<IValidator<TRequest>> validators, MediatorMetrics? metrics)
     {
         _validators = validators ?? throw new ArgumentNullException(nameof(validators));
+        _metrics = metrics ?? MediatorMetrics.Disabled;
     }
 
     /// <inheritdoc/>
@@ -97,6 +113,10 @@ public class ValidationBehavior<TRequest, TResponse> : IPipelineBehavior<TReques
 
         if (errors.Count > 0)
         {
+            if (_metrics.ValidationEnabled)
+            {
+                _metrics.RecordValidationRejection(typeof(TRequest));
+            }
             throw new ValidationException(errors);
         }
 

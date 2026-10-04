@@ -45,7 +45,7 @@ async Task Case(string id, Func<Task> body)
     }
 }
 
-ServiceProvider BuildApp(string name, out Marker marker)
+ServiceProvider BuildApp(string name, out Marker marker, bool metrics = false)
 {
     marker = new Marker(name);
     var services = new ServiceCollection().AddFixtureServices(marker);
@@ -55,6 +55,7 @@ ServiceProvider BuildApp(string name, out Marker marker)
         c.Lifetime = ServiceLifetime.Scoped;
         c.RequireGeneratedDispatch = true;
         c.AddGeneratedRegistry<AppRegistry>().AddGeneratedRegistry<ExtraRegistry>().AddGeneratedRegistry<AppRegistry>();
+        if (metrics) c.Metrics = new MediatorMetricsOptions { Enabled = true };
     });
     services.AddMeridianMediator(c =>
     {
@@ -106,6 +107,25 @@ await Case("typed-object-query", async () =>
         Check.Equal(2, trace.Count("pass:GetOrder"));
         Check.Equal(2, trace.Count("validator:GetOrder"));
     }
+
+    // Opt-in metrics stay Native AOT clean: an enabled provider creates its meter and observes a typed and an object send.
+    var observed = 0L;
+    using var metricsProvider = BuildApp("typed-object-metrics", out _, metrics: true);
+    using var listener = new System.Diagnostics.Metrics.MeterListener();
+    listener.InstrumentPublished = (instrument, l) =>
+    {
+        if (instrument.Meter.Name == "Meridian.Mediator") l.EnableMeasurementEvents(instrument);
+    };
+    listener.SetMeasurementEventCallback<long>((instrument, value, _, _) =>
+    {
+        if (instrument.Name == "meridian.mediator.request.count") observed += value;
+    });
+    listener.Start();
+    using var metricsScope = metricsProvider.CreateScope();
+    var metricsMediator = metricsScope.ServiceProvider.GetRequiredService<IMediator>();
+    Check.Equal(4L, (await metricsMediator.Send(new GetOrder(4))).Id);
+    Check.IsType<OrderDto>(await metricsMediator.Send((object)new GetOrder(5)));
+    Check.Equal(2L, observed);
 });
 
 await Case("void-forms", async () =>
