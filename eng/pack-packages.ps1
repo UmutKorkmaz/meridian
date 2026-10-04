@@ -4,108 +4,84 @@ param(
     [string] $OutputDirectory = 'artifacts/packages',
     [Parameter(Mandatory)][ValidatePattern('^\d+\.\d+\.\d+-[0-9A-Za-z.-]+$')][string] $CandidateVersion,
     [string] $Manifest = 'eng/packages.json',
-    [switch] $InspectOnly
+    [switch] $InspectOnly,
+    [switch] $ValidateOnly
 )
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'package-inventory.psm1') -Force -DisableNameChecking
 $repo = Split-Path -Parent $PSScriptRoot
 $manifestPath = if ([IO.Path]::IsPathRooted($Manifest)) { $Manifest } else { Join-Path $repo $Manifest }
-$json = Get-Content -Raw $manifestPath
-if (-not (Test-Json -Json $json -SchemaFile (Join-Path $PSScriptRoot 'packages.schema.json'))) { throw 'Invalid package manifest' }
-$inventory = $json | ConvertFrom-Json
+$inventory = Read-PackageInventory $repo $manifestPath
 $feed = [IO.Path]::GetFullPath($OutputDirectory)
-$null = New-Item -ItemType Directory -Force $feed
 $dotnet = (Get-Command dotnet -CommandType Application | Select-Object -First 1).Source
-function Invoke-Dotnet([string[]] $Arguments) {
-    & $dotnet @Arguments
-    if ($LASTEXITCODE -ne 0) { throw "dotnet failed ($LASTEXITCODE): $($Arguments -join ' ')" }
-}
-function Evaluate([string] $Project, [string[]] $Properties, [string[]] $Items = @(), [string[]] $Extra = @()) {
-    $arguments = @('msbuild', $Project, '-nologo', "-p:Configuration=$Configuration", "-getProperty:$($Properties -join ',')") + $Extra
-    if ($Items.Count) { $arguments += "-getItem:$($Items -join ',')" }
-    $output = & $dotnet @arguments
-    if ($LASTEXITCODE -ne 0) { throw "Could not evaluate $Project" }
-    return ($output -join "`n" | ConvertFrom-Json)
-}
-function Read-ZipText($Archive, [string] $Path) {
-    $entry = $Archive.GetEntry($Path)
-    if (-not $entry) { throw "Missing archive asset $Path" }
-    $reader = [IO.StreamReader]::new($entry.Open())
-    try { $reader.ReadToEnd() } finally { $reader.Dispose() }
-}
-$ids = @()
+$evaluations = @{}
+# Validate every entry before creating any package. InspectOnly never evaluates or builds projects.
+if (-not $InspectOnly) { $evaluations = Test-EvaluatedInventory $inventory $repo $dotnet $Configuration }
+if ($ValidateOnly) { Write-Host "PASS validated inventory: $($inventory.packages.Count) packages"; return }
+$null = New-Item -ItemType Directory -Force $feed
+$hashFile = Join-Path $feed "package-manifest.$CandidateVersion.json"
+$recorded = if ($InspectOnly) { Get-Content -Raw $hashFile | ConvertFrom-Json } else { $null }
+if (-not $InspectOnly -and @(Get-ChildItem $feed -Filter "*.$CandidateVersion.nupkg").Count) { throw 'Candidate version already exists in output feed; choose a fresh version' }
 $evidence = @()
+$versionOverrides = @($inventory.packages.versionSource | Select-Object -Unique | ForEach-Object { "-p:${_}=$CandidateVersion" })
 foreach ($package in $inventory.packages) {
-    if ($ids -contains $package.id) { throw "Duplicate package $($package.id)" }
-    $ids += $package.id
-    $analyzerTargets = @{}
-    $project = Join-Path $repo $package.project
-    if (-not (Test-Path -LiteralPath $project -PathType Leaf)) { throw "Missing project $project" }
+    $project = Resolve-RepositoryPath $repo $package.project
     if (-not $InspectOnly) {
-        $evaluated = Evaluate $project @('PackageId', 'IsPackable', 'TargetFrameworks', 'TargetFramework', 'PackageValidationBaselineVersion', $package.versionSource) @('PackageReference', 'ProjectReference')
-        $p = $evaluated.Properties
-        if ($p.PackageId -ne $package.id -or $p.IsPackable -ne 'true') { throw "Package identity mismatch: $project" }
-        if (-not $p.($package.versionSource)) { throw "Missing version property: $($package.versionSource)" }
-        $tfms = if ($p.TargetFrameworks) { @($p.TargetFrameworks -split ';') } else { @($p.TargetFramework) }
-        if (Compare-Object $tfms @($package.targetFrameworks)) { throw "TargetFramework mismatch: $project" }
-        if ($p.PackageValidationBaselineVersion -ne $package.baselineVersion) { throw "API baseline mismatch: $project" }
-        $actualDeps = @($evaluated.Items.PackageReference | Where-Object { $_.PrivateAssets -ne 'all' } | ForEach-Object { "$($_.Identity)=$($_.Version)" })
-        $expectedDeps = @($package.directPackageDependencies | ForEach-Object { "$($_.id)=$($_.version)" })
-        if (Compare-Object $actualDeps $expectedDeps) { throw "Direct dependency mismatch: $project" }
-        foreach ($analyzer in $package.analyzerPaths) {
-            $producer = [IO.Path]::GetFullPath((Join-Path $repo $analyzer.project))
-            $references = @($evaluated.Items.ProjectReference | Where-Object { [IO.Path]::GetFullPath($_.FullPath) -eq $producer -and $_.ReferenceOutputAssembly -eq 'false' -and $_.OutputItemType -eq 'Analyzer' })
-            if ($references.Count -ne 1) { throw "Analyzer producer is not an evaluated analyzer reference: $producer" }
-            $target = Evaluate $producer @('TargetPath', 'TargetFramework') @() @("-p:Configuration=$Configuration")
-            if ($target.Properties.TargetFramework -ne 'netstandard2.0' -or [IO.Path]::GetFileName($target.Properties.TargetPath) -ne [IO.Path]::GetFileName($analyzer.packagePath)) { throw 'Analyzer target mismatch' }
-            $analyzerTargets[$analyzer.packagePath] = $target.Properties.TargetPath
-        }
         Push-Location $repo
-        try { Invoke-Dotnet @('pack', $project, '-c', $Configuration, '-o', $feed, "-p:Version=$CandidateVersion", "-p:PackageVersion=$CandidateVersion") } finally { Pop-Location }
+        try {
+            & $dotnet pack $project -c $Configuration -o $feed "-p:PackageVersion=$CandidateVersion" @versionOverrides
+            if ($LASTEXITCODE -ne 0) { throw "dotnet pack failed (exit=$LASTEXITCODE): $project" }
+        } finally { Pop-Location }
     }
     $nupkg = Join-Path $feed "$($package.id).$CandidateVersion.nupkg"
     $symbols = Join-Path $feed "$($package.id).$CandidateVersion.snupkg"
+    $assembly = if ($InspectOnly) { @($recorded.packages | Where-Object id -EQ $package.id)[0].assemblyName } else { $evaluations[$package.id].properties.AssemblyName }
+    $declaredDeps = @(Get-DeclaredDependencies $package $CandidateVersion)
     $zip = [IO.Compression.ZipFile]::OpenRead($nupkg)
     try {
-        [xml] $nuspec = Read-ZipText $zip "$($package.id).nuspec"
+        [xml] $nuspec = Read-ArchiveText $zip "$($package.id).nuspec"
         $metadata = $nuspec.package.metadata
         if ($metadata.id -ne $package.id -or $metadata.version -ne $CandidateVersion) { throw 'Nuspec identity mismatch' }
-        if ($metadata.license.type -ne 'expression' -or $metadata.license.InnerText -ne 'MIT' -or $metadata.readme -ne 'README.md') { throw 'Missing README/license metadata' }
-        foreach ($asset in @('README.md', 'LICENSE')) { if (-not $zip.GetEntry($asset)) { throw "Missing $asset" } }
-        foreach ($tfm in $package.targetFrameworks) { if (-not $zip.GetEntry("lib/$tfm/$($package.id).dll")) { throw "Missing runtime $tfm" } }
-        $groups = @($metadata.dependencies.group)
-        if (Compare-Object @($groups | ForEach-Object targetFramework) @($package.targetFrameworks)) { throw 'Dependency group mismatch' }
+        if ($metadata.license.type -ne 'expression' -or $metadata.license.InnerText -ne $package.licenseExpression -or $metadata.readme -ne 'README.md') { throw 'Missing README/license metadata' }
+        foreach ($asset in @('README.md','LICENSE')) { if (-not $zip.GetEntry($asset)) { throw "Missing $asset" } }
+        if ($package.kind -eq 'runtime') {
+            foreach ($tfm in $package.targetFrameworks) { if (-not $zip.GetEntry("lib/$tfm/$assembly.dll")) { throw "Missing runtime $tfm" } }
+            Assert-SameSet @($metadata.dependencies.group | ForEach-Object targetFramework) @($package.targetFrameworks) 'Dependency group mismatch'
+        } elseif (@($zip.Entries | Where-Object FullName -Like 'lib/*').Count) { throw 'Analyzer-only package contains runtime lib assets' }
+        $groups = @($metadata.dependencies.group | Where-Object { $_ })
+        if (-not $groups.Count -and $declaredDeps.Count) { throw 'Missing nuspec dependency groups' }
         foreach ($group in $groups) {
-            $actual = @($group.dependency | ForEach-Object { "$($_.id)=$($_.version)" })
-            $expected = @($package.directPackageDependencies | ForEach-Object { "$($_.id)=$($_.version)" })
-            if (Compare-Object $actual $expected) { throw "Nuspec dependency mismatch for $($group.targetFramework)" }
+            $actual = @($group.dependency | Where-Object { $_ } | ForEach-Object { "$($_.id)=$($_.version)" })
+            Assert-SameSet $actual @($declaredDeps | ForEach-Object { "$($_.id)=$($_.version)" }) "Nuspec dependency mismatch for $($group.targetFramework)"
         }
         $assets = @($zip.Entries | Where-Object FullName -Like 'analyzers/*' | ForEach-Object FullName)
-        $expectedAssets = @($package.analyzerPaths | ForEach-Object packagePath)
-        if (($assets.Count -ne $expectedAssets.Count) -or ($assets.Count -gt 0 -and (Compare-Object $assets $expectedAssets))) { throw 'Analyzer archive layout mismatch' }
+        Assert-SameSet $assets @($package.analyzerPaths | ForEach-Object packagePath) 'Analyzer archive layout mismatch'
         $analyzerHashes = @()
         foreach ($analyzer in $package.analyzerPaths) {
-            $stream = $zip.GetEntry($analyzer.packagePath).Open()
-            $sha = [Security.Cryptography.SHA256]::Create()
-            try { $hash = [Convert]::ToHexString($sha.ComputeHash($stream)).ToLowerInvariant() } finally { $sha.Dispose(); $stream.Dispose() }
-            if (-not $InspectOnly -and $hash -ne (Get-FileHash $analyzerTargets[$analyzer.packagePath] -Algorithm SHA256).Hash.ToLowerInvariant()) { throw 'Packed analyzer differs from evaluated producer TargetPath' }
-            $analyzerHashes += @{ project=$analyzer.project; packagePath=$analyzer.packagePath; sha256=$hash }
+            $hash = Get-ArchiveHash $zip.GetEntry($analyzer.packagePath)
+            $producerHash = if ($InspectOnly) { @(@($recorded.packages | Where-Object id -EQ $package.id)[0].analyzers | Where-Object packagePath -EQ $analyzer.packagePath)[0].producerSha256 } else { (Get-FileHash $evaluations[$package.id].analyzers[$analyzer.packagePath] -Algorithm SHA256).Hash.ToLowerInvariant() }
+            if ($hash -ne $producerHash) { throw 'Packed analyzer differs from evaluated producer TargetPath' }
+            $analyzerHashes += [ordered]@{ project=$analyzer.project; packagePath=$analyzer.packagePath; sha256=$hash; producerSha256=$producerHash }
         }
         $entries = @($zip.Entries | ForEach-Object FullName)
+        $binaryHashes = @($zip.Entries | Where-Object { $_.FullName -match '\.(dll|pdb)$' } | ForEach-Object { [ordered]@{ path=$_.FullName;sha256=(Get-ArchiveHash $_) } })
+        $licenseHash = Get-ArchiveHash $zip.GetEntry('LICENSE')
     } finally { $zip.Dispose() }
-    $zip = [IO.Compression.ZipFile]::OpenRead($symbols)
-    try {
-        foreach ($tfm in $package.targetFrameworks) { if (-not $zip.GetEntry("lib/$tfm/$($package.id).pdb")) { throw "Missing symbols $tfm" } }
-    } finally { $zip.Dispose() }
-    $evidence += [ordered]@{ id=$package.id; version=$CandidateVersion; package=[IO.Path]::GetFileName($nupkg); sha256=(Get-FileHash $nupkg -Algorithm SHA256).Hash.ToLowerInvariant(); symbols=[IO.Path]::GetFileName($symbols); symbolsSha256=(Get-FileHash $symbols -Algorithm SHA256).Hash.ToLowerInvariant(); assets=$entries; analyzers=$analyzerHashes }
+    $symbolsHash = $null
+    if ($package.kind -eq 'runtime') {
+        $zip = [IO.Compression.ZipFile]::OpenRead($symbols)
+        try { foreach ($tfm in $package.targetFrameworks) { if (-not $zip.GetEntry("lib/$tfm/$assembly.pdb")) { throw "Missing symbols $tfm" } } } finally { $zip.Dispose() }
+        $symbolsHash = (Get-FileHash $symbols -Algorithm SHA256).Hash.ToLowerInvariant()
+    } elseif (Test-Path $symbols) { $symbolsHash = (Get-FileHash $symbols -Algorithm SHA256).Hash.ToLowerInvariant() }
+    $evidence += [ordered]@{ id=$package.id; kind=$package.kind; version=$CandidateVersion; assemblyName=$assembly; package=[IO.Path]::GetFileName($nupkg); sha256=(Get-FileHash $nupkg -Algorithm SHA256).Hash.ToLowerInvariant(); symbols=if ($symbolsHash) {[IO.Path]::GetFileName($symbols)} else {$null}; symbolsSha256=$symbolsHash; license=[ordered]@{ expression=$package.licenseExpression; file='LICENSE'; sha256=$licenseHash }; dependencies=$declaredDeps; assets=$entries; binaries=$binaryHashes; analyzers=$analyzerHashes; baselineVersion=$package.baselineVersion }
 }
-$hashFile = Join-Path $feed "package-manifest.$CandidateVersion.json"
-$result = [ordered]@{ schemaVersion=1; manifestSha256=(Get-FileHash $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant(); packages=$evidence }
+$result = [ordered]@{ schemaVersion=1; candidateVersion=$CandidateVersion; manifestSha256=(Get-FileHash $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant(); packages=$evidence }
 if ($InspectOnly) {
-    $recorded = Get-Content -Raw $hashFile | ConvertFrom-Json
     if ($recorded.manifestSha256 -ne $result.manifestSha256) { throw 'Inventory hash changed since packing' }
+    Assert-SameSet @($recorded.packages.id) @($evidence.id) 'Recorded inventory identities mismatch'
     foreach ($entry in $evidence) {
         $old = @($recorded.packages | Where-Object id -EQ $entry.id)
         if ($old.Count -ne 1 -or $old[0].sha256 -ne $entry.sha256 -or $old[0].symbolsSha256 -ne $entry.symbolsSha256) { throw "Package hash mismatch: $($entry.id)" }
     }
-} else { $result | ConvertTo-Json -Depth 12 | Set-Content $hashFile }
-Write-Host "PASS package inventory, assets, dependencies and hashes: $($ids.Count) packages ($CandidateVersion)"
+} else { $result | ConvertTo-Json -Depth 14 | Set-Content $hashFile }
+Write-Host "PASS package inventory, assets, dependencies and hashes: $($inventory.packages.Count) packages ($CandidateVersion)"

@@ -44,19 +44,35 @@ jobs:
       - name: Ignore preview SDK pin for release
         run: mv global.json global.json.release-ignored
 
-      - name: Restore
+      - name: Select packages for this tag from inventory
+        id: versions
+        shell: pwsh
         run: |
-          dotnet restore src/Meridian.Mapping/Meridian.Mapping.csproj
-          dotnet restore src/Meridian.Mediator/Meridian.Mediator.csproj
-          dotnet restore tests/Meridian.Mapping.Tests/Meridian.Mapping.Tests.csproj
-          dotnet restore tests/Meridian.Mediator.Tests/Meridian.Mediator.Tests.csproj
+          Import-Module ./eng/package-inventory.psm1 -Force -DisableNameChecking
+          $inventory = Read-PackageInventory (Get-Location).Path 'eng/packages.json'
+          $tagVersion = $env:GITHUB_REF_NAME -replace '^v', ''
+          $selected = @(Select-ReleasePackages $inventory (Get-Location).Path (Get-Command dotnet).Source $tagVersion)
+          New-Item -ItemType Directory -Force ./artifacts | Out-Null
+          ConvertTo-Json -InputObject $selected -Depth 10 | Set-Content ./artifacts/selected-packages.json
+          "tag_version=$tagVersion" >> $env:GITHUB_OUTPUT
 
-      - name: Build (Release, deterministic)
+      - name: Restore selected inventory and test projects
+        shell: pwsh
         run: |
-          dotnet build src/Meridian.Mapping/Meridian.Mapping.csproj \
-            -c Release --no-restore -p:ContinuousIntegrationBuild=true
-          dotnet build src/Meridian.Mediator/Meridian.Mediator.csproj \
-            -c Release --no-restore -p:ContinuousIntegrationBuild=true
+          $selected = @(Get-Content -Raw ./artifacts/selected-packages.json | ConvertFrom-Json)
+          foreach ($project in @($selected.project) + @('tests/Meridian.Mapping.Tests/Meridian.Mapping.Tests.csproj', 'tests/Meridian.Mediator.Tests/Meridian.Mediator.Tests.csproj')) {
+            dotnet restore $project
+            if ($LASTEXITCODE -ne 0) { throw "Restore failed: $project" }
+          }
+
+      - name: Build selected inventory (Release, deterministic)
+        shell: pwsh
+        run: |
+          $selected = @(Get-Content -Raw ./artifacts/selected-packages.json | ConvertFrom-Json)
+          foreach ($package in $selected) {
+            dotnet build $package.project -c Release --no-restore -p:ContinuousIntegrationBuild=true
+            if ($LASTEXITCODE -ne 0) { throw "Build failed: $($package.id)" }
+          }
 
       - name: Test (final gate)
         run: |
@@ -65,49 +81,14 @@ jobs:
           dotnet test tests/Meridian.Mediator.Tests/Meridian.Mediator.Tests.csproj \
             -c Release -f net10.0 --no-restore --nologo
 
-      - name: Select packages for this tag
-        id: versions
+      - name: Pack selected inventory packages
+        shell: pwsh
         run: |
-          tag_version="${GITHUB_REF_NAME#v}"
-          mapping_version="$(dotnet msbuild src/Meridian.Mapping/Meridian.Mapping.csproj -nologo -getProperty:Version | tail -n 1 | tr -d '\r')"
-          mediator_version="$(dotnet msbuild src/Meridian.Mediator/Meridian.Mediator.csproj -nologo -getProperty:Version | tail -n 1 | tr -d '\r')"
-
-          echo "tag_version=$tag_version" >> "$GITHUB_OUTPUT"
-          echo "mapping_version=$mapping_version" >> "$GITHUB_OUTPUT"
-          echo "mediator_version=$mediator_version" >> "$GITHUB_OUTPUT"
-
-          if [ "$mapping_version" = "$tag_version" ]; then
-            echo "pack_mapping=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "pack_mapping=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          if [ "$mediator_version" = "$tag_version" ]; then
-            echo "pack_mediator=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "pack_mediator=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          if [ "$mapping_version" != "$tag_version" ] && [ "$mediator_version" != "$tag_version" ]; then
-            echo "::error::No package version matches tag $GITHUB_REF_NAME"
-            exit 1
-          fi
-
-      - name: Pack
-        run: |
-          mkdir -p ./artifacts
-
-          if [ "${{ steps.versions.outputs.pack_mapping }}" = "true" ]; then
-            dotnet pack src/Meridian.Mapping/Meridian.Mapping.csproj \
-              -c Release --no-build -o ./artifacts \
-              -p:ContinuousIntegrationBuild=true
-          fi
-
-          if [ "${{ steps.versions.outputs.pack_mediator }}" = "true" ]; then
-            dotnet pack src/Meridian.Mediator/Meridian.Mediator.csproj \
-              -c Release --no-build -o ./artifacts \
-              -p:ContinuousIntegrationBuild=true
-          fi
+          $selected = @(Get-Content -Raw ./artifacts/selected-packages.json | ConvertFrom-Json)
+          foreach ($package in $selected) {
+            dotnet pack $package.project -c Release --no-build -o ./artifacts -p:ContinuousIntegrationBuild=true
+            if ($LASTEXITCODE -ne 0) { throw "Pack failed: $($package.id)" }
+          }
 
       - name: Attest build provenance (Sigstore)
         uses: actions/attest-build-provenance@v4
@@ -119,19 +100,15 @@ jobs:
       - name: Install CycloneDX SBOM tool
         run: dotnet tool install --global CycloneDX
 
-      - name: Generate SBOMs
+      - name: Generate SBOMs for selected inventory
+        shell: pwsh
         run: |
-          mkdir -p ./sbom
-
-          if [ "${{ steps.versions.outputs.pack_mapping }}" = "true" ]; then
-            dotnet CycloneDX src/Meridian.Mapping/Meridian.Mapping.csproj \
-              -o ./sbom -fn meridian-mapping.sbom.json -F Json
-          fi
-
-          if [ "${{ steps.versions.outputs.pack_mediator }}" = "true" ]; then
-            dotnet CycloneDX src/Meridian.Mediator/Meridian.Mediator.csproj \
-              -o ./sbom -fn meridian-mediator.sbom.json -F Json
-          fi
+          New-Item -ItemType Directory -Force ./sbom | Out-Null
+          $selected = @(Get-Content -Raw ./artifacts/selected-packages.json | ConvertFrom-Json)
+          foreach ($package in $selected) {
+            dotnet CycloneDX $package.project -o ./sbom -fn "$($package.id).sbom.json" -F Json
+            if ($LASTEXITCODE -ne 0) { throw "SBOM failed: $($package.id)" }
+          }
 
       - name: Upload packages artifact
         uses: actions/upload-artifact@v4

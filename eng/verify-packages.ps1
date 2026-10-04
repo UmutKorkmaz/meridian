@@ -9,43 +9,44 @@ param(
     [string] $OutputDirectory = 'artifacts/package-consumers'
 )
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'package-inventory.psm1') -Force -DisableNameChecking
 $repo = Split-Path -Parent $PSScriptRoot
 $Feed = [IO.Path]::GetFullPath($Feed)
 $manifestPath = if ([IO.Path]::IsPathRooted($Manifest)) { $Manifest } else { Join-Path $repo $Manifest }
-# Verify against the hashes produced at pack time, without rebuilding the candidate.
 & (Join-Path $PSScriptRoot 'pack-packages.ps1') -OutputDirectory $Feed -CandidateVersion $CandidateVersion -Manifest $manifestPath -InspectOnly
-$inventory = Get-Content -Raw $manifestPath | ConvertFrom-Json
+$inventory = Read-PackageInventory $repo $manifestPath
 if ([bool]$Framework -ne [bool]$SdkVersion) { throw 'Framework and SdkVersion must be specified together' }
 $candidateLanes = if ($Framework) { @([pscustomobject]@{ framework=$Framework; sdkVersion=$SdkVersion }) } else { @($inventory.compilerHosts) }
-# 2.1.3 bundles Roslyn 5.3 and cannot load on the older hosts. Its unsuppressed
-# historical failures are retained in the A4 compatibility evidence. Operational
-# output comparison uses SDK 10; every requested candidate lane still must pass.
+# Published 2.1.3 old-host failures remain A4 historical evidence. The baseline
+# operational comparison runs on SDK 10; all candidate compiler hosts must pass.
+$baselineConsumers = @($inventory.consumers | Where-Object baselineComparison)
+$baselinePackages = @(Get-PackageClosure $inventory @($baselineConsumers.packageIds | Select-Object -Unique))
 $referenceLane = @($inventory.compilerHosts | Where-Object framework -EQ 'net10.0')
-if ($referenceLane.Count -ne 1) { throw 'Exactly one SDK 10 reference lane is required' }
-$lanes = @([pscustomobject]@{ framework=$referenceLane[0].framework; sdkVersion=$referenceLane[0].sdkVersion; baselineOnly=$true }) + $candidateLanes
+if ($baselineConsumers.Count -and $referenceLane.Count -ne 1) { throw 'Exactly one SDK 10 reference lane is required' }
+$lanes = @()
+if ($baselineConsumers.Count) { $lanes += [pscustomobject]@{ framework=$referenceLane[0].framework; sdkVersion=$referenceLane[0].sdkVersion; baselineOnly=$true } }
+$lanes += @($candidateLanes | ForEach-Object { [pscustomobject]@{framework=$_.framework;sdkVersion=$_.sdkVersion;baselineOnly=$false} })
 $common = @{}
 $dotnet = (Get-Command dotnet -CommandType Application | Select-Object -First 1).Source
 $run = Join-Path ([IO.Path]::GetFullPath($OutputDirectory)) "$CandidateVersion/$([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffffffZ'))"
 $null = New-Item -ItemType Directory -Force $run
 '<Project />' | Set-Content (Join-Path $run 'Directory.Build.props')
 '<Project />' | Set-Content (Join-Path $run 'Directory.Build.targets')
-if (-not $BaselineFeed) {
+if ($baselinePackages.Count -and -not $BaselineFeed) {
     $BaselineFeed = Join-Path $run 'baseline-feed'
     $null = New-Item -ItemType Directory -Force $BaselineFeed
-    foreach ($package in $inventory.packages | Where-Object baselineVersion) {
+    foreach ($package in $baselinePackages) {
         $id = $package.id.ToLowerInvariant()
         $version = $package.baselineVersion
         Invoke-WebRequest "https://api.nuget.org/v3-flatcontainer/$id/$version/$id.$version.nupkg" -OutFile (Join-Path $BaselineFeed "$id.$version.nupkg")
     }
 }
-$BaselineFeed = [IO.Path]::GetFullPath($BaselineFeed)
-$baselineVersions = @($inventory.packages | Where-Object baselineVersion | Select-Object -ExpandProperty baselineVersion -Unique)
-if ($baselineVersions.Count -ne 1) { throw 'Core consumer fixtures require one shared stable baseline version' }
-$baselineHashes = @($inventory.packages | Where-Object baselineVersion | ForEach-Object {
+if ($BaselineFeed) { $BaselineFeed = [IO.Path]::GetFullPath($BaselineFeed) }
+$baselineHashes = @($baselinePackages | ForEach-Object {
     $path = Join-Path $BaselineFeed "$($_.id.ToLowerInvariant()).$($_.baselineVersion).nupkg"
     [ordered]@{ id=$_.id; version=$_.baselineVersion; file=[IO.Path]::GetFileName($path); sha256=(Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant() }
 })
-$baselineHashes | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $run 'baseline-hashes.json')
+ConvertTo-Json -InputObject $baselineHashes -Depth 5 | Set-Content (Join-Path $run 'baseline-hashes.json')
 function Execute([string[]] $Arguments, [string] $Log) {
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = [Diagnostics.ProcessStartInfo]::new($dotnet)
@@ -68,10 +69,30 @@ function Execute([string[]] $Arguments, [string] $Log) {
         return $output
     } finally { $process.Dispose() }
 }
+function Read-RestoredComponents($Assets, [string] $Packages) {
+    $components = @()
+    foreach ($library in $Assets.libraries.PSObject.Properties | Where-Object { $_.Value.type -eq 'package' }) {
+        $identity = $library.Name.Split('/')
+        $id = $identity[0]; $version = $identity[1]
+        $path = Join-Path $Packages "$($library.Value.path)/$($id.ToLowerInvariant()).$version.nupkg"
+        $archive = [IO.Compression.ZipFile]::OpenRead($path)
+        try {
+            $entry = @($archive.Entries | Where-Object FullName -Like '*.nuspec')
+            if ($entry.Count -ne 1) { throw "Missing restored nuspec: $id" }
+            [xml] $nuspec = Read-ArchiveText $archive $entry[0].FullName
+            $license = $nuspec.package.metadata.license
+            $licenseFileHash = if ($license -and $license.type -eq 'file') { Get-ArchiveHash $archive.GetEntry($license.InnerText) } else { $null }
+            $components += [ordered]@{ id=$id; version=$version; sha256=(Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant(); nuspecSha256=(Get-ArchiveHash $entry[0]); restoreSha512=$library.Value.sha512; licenseType=if ($license) {$license.type} else {$null}; license=if ($license) {$license.InnerText} else {$null}; licenseFileSha256=$licenseFileHash; path=$path }
+        } finally { $archive.Dispose() }
+    }
+    return $components
+}
 $results = @()
+$components = @{}
+$graphs = @()
 foreach ($lane in $lanes) {
-    if ($lane.framework -notin @($inventory.compilerHosts.framework) -or $lane.sdkVersion -notmatch '^\d+\.\d+\.\d+$' -or $lane.sdkVersion.Split('.')[0] -ne $lane.framework.Substring(3).Split('.')[0]) { throw 'Invalid compiler lane' }
-    $dir = Join-Path $run "$($lane.framework)-$($lane.sdkVersion)-$($lane.baselineOnly -eq $true)"
+    if (@($inventory.compilerHosts | Where-Object { $_.framework -eq $lane.framework -and $_.sdkVersion -eq $lane.sdkVersion }).Count -ne 1) { throw 'Invalid compiler lane: must match a pinned manifest host' }
+    $dir = Join-Path $run "$($lane.framework)-$($lane.sdkVersion)-$($lane.baselineOnly)"
     $null = New-Item -ItemType Directory -Force $dir
     @{ sdk=@{ version=$lane.sdkVersion; rollForward='disable'; allowPrerelease=$false } } | ConvertTo-Json | Set-Content (Join-Path $dir 'global.json')
     Push-Location $dir
@@ -83,49 +104,89 @@ foreach ($lane in $lanes) {
         $sdkLine = @($installed -split "`r?`n" | Where-Object { $_.StartsWith("$sdk ") })
         if ($sdkLine.Count -ne 1 -or $sdkLine[0] -notmatch '\[(.+)\]$') { throw 'Cannot locate selected SDK compiler' }
         $compiler = Join-Path $Matches[1] "$sdk/Roslyn/bincore/csc.dll"
-        $compilerVersion = (Execute @('exec', $compiler, '-version') (Join-Path $dir 'compiler.log')).Trim()
-        $variants = if ($lane.baselineOnly) { @('baseline') } else { @('legacy', 'migrated') }
-        foreach ($variant in $variants) {
-            $version = if ($variant -eq 'baseline') { $baselineVersions[0] } else { $CandidateVersion }
-            $sourceFeed = if ($variant -eq 'baseline') { $BaselineFeed } else { $Feed }
-            foreach ($name in @('Legacy', 'Generated')) {
-                if ($variant -eq 'migrated' -and $name -eq 'Generated') { continue }
-                $consumer = "Meridian.${name}Consumer"
-                $work = Join-Path $dir "$variant-$consumer"
+        $compilerVersion = (Execute @('exec',$compiler,'-version') (Join-Path $dir 'compiler.log')).Trim()
+        $consumers = if ($lane.baselineOnly) { $baselineConsumers } else { @($inventory.consumers) }
+        foreach ($consumer in $consumers) {
+            $closure = @(Get-PackageClosure $inventory $consumer.packageIds)
+            $variants = if ($lane.baselineOnly) { @('baseline') } else { @($consumer.variants) }
+            foreach ($variant in $variants) {
+                $versions = @(if ($variant -eq 'baseline') { $closure.baselineVersion | Select-Object -Unique } else { $CandidateVersion })
+                if ($versions.Count -ne 1) { throw "Consumer closure needs one shared package version: $($consumer.id)" }
+                $version = $versions[0]
+                $sourceFeed = if ($variant -eq 'baseline') { $BaselineFeed } else { $Feed }
+                $work = Join-Path $dir "$variant-$($consumer.id)"
                 $null = New-Item -ItemType Directory -Force $work
                 @{ sdk=@{ version=$lane.sdkVersion; rollForward='disable'; allowPrerelease=$false } } | ConvertTo-Json | Set-Content (Join-Path $work 'global.json')
-                # Copy input fixtures, including their hashes, before any restore/build.
-                Copy-Item (Join-Path $repo "tests/consumers/$consumer/Program.cs") $work
-                Copy-Item (Join-Path $repo "tests/consumers/$consumer/$consumer.csproj") $work
-                $fixture = @(Get-ChildItem $work -File | ForEach-Object { @{ file=$_.Name; sha256=(Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant() } })
-                $fixture | ConvertTo-Json | Set-Content (Join-Path $work 'fixture-hashes.json')
-                # No inherited repository sources; exact Meridian IDs route only to the local feed.
+                $sourceDir = Split-Path (Resolve-RepositoryPath $repo $consumer.project)
+                $fixture = @()
+                foreach ($input in $consumer.sourceFiles) {
+                    $source = Resolve-RepositoryPath $repo $input
+                    $relative = [IO.Path]::GetRelativePath($sourceDir,$source)
+                    $destination = Join-Path $work $relative
+                    $null = New-Item -ItemType Directory -Force (Split-Path $destination)
+                    Copy-Item -LiteralPath $source -Destination $destination
+                    $fixture += [ordered]@{ source=$input; file=$relative; sha256=(Get-FileHash $destination -Algorithm SHA256).Hash.ToLowerInvariant() }
+                }
+                ConvertTo-Json -InputObject $fixture -Depth 5 | Set-Content (Join-Path $work 'fixture-hashes.json')
                 $escapedFeed = [Security.SecurityElement]::Escape($sourceFeed)
                 $patterns = ($inventory.packages | ForEach-Object { "<package pattern=`"$($_.id)`" />" }) -join ''
                 "<configuration><packageSources><clear/><add key=`"candidate`" value=`"$escapedFeed`"/><add key=`"dependencies`" value=`"https://api.nuget.org/v3/index.json`"/></packageSources><packageSourceMapping><packageSource key=`"candidate`">$patterns</packageSource><packageSource key=`"dependencies`"><package pattern=`"*`"/></packageSource></packageSourceMapping></configuration>" | Set-Content (Join-Path $work 'NuGet.Config')
                 $packages = Join-Path $work 'packages'
-                $project = Join-Path $work "$consumer.csproj"
-                $properties = @("-p:ConsumerFramework=$($lane.framework)", "-p:MeridianPackageVersion=$version", "-p:BaselineConsumer=$($variant -eq 'baseline')", "-p:MigratedConsumer=$($variant -eq 'migrated')", "-p:RestorePackagesPath=$packages")
-                $null = Execute (@('restore', $project, '--configfile', (Join-Path $work 'NuGet.Config'), '--no-cache') + $properties) (Join-Path $work 'restore.log')
-                foreach ($package in $inventory.packages) {
+                $project = Join-Path $work ([IO.Path]::GetFileName($consumer.project))
+                $properties = @("-p:ConsumerFramework=$($lane.framework)","-p:MeridianPackageVersion=$version","-p:BaselineConsumer=$($variant -eq 'baseline')","-p:MigratedConsumer=$($variant -eq 'migrated')","-p:RestorePackagesPath=$packages")
+                $evaluated = Invoke-ProjectEvaluation $dotnet $project @('LangVersion','TreatWarningsAsErrors','AssemblyName') @('PackageReference','ProjectReference') $properties
+                if (@($evaluated.Items.ProjectReference).Count) { throw "NuGet consumer cannot load source ProjectReference: $($consumer.id)" }
+                if ($evaluated.Properties.LangVersion -notin @('12','12.0') -or $evaluated.Properties.TreatWarningsAsErrors -ne 'true') { throw 'Consumer must enforce CSharp12 and warnings as errors' }
+                $roots = @($evaluated.Items.PackageReference | Where-Object { $_.Identity -in $inventory.packages.id })
+                Assert-SameSet @($roots.Identity) @($consumer.packageIds) "Consumer root dependency mismatch: $($consumer.id)"
+                foreach ($root in $roots) { if ($root.Version -ne "[$version]") { throw "Consumer package version must be exact: $($root.Identity)" } }
+                $null = Execute (@('restore',$project,'--configfile',(Join-Path $work 'NuGet.Config'),'--no-cache') + $properties) (Join-Path $work 'restore.log')
+                $assetsPath = Join-Path $work 'obj/project.assets.json'
+                $assets = Get-Content -Raw $assetsPath | ConvertFrom-Json
+                $actualIds = @($assets.libraries.PSObject.Properties | Where-Object { $_.Value.type -eq 'package' -and $_.Name.Split('/')[0] -in $inventory.packages.id } | ForEach-Object { $_.Name.Split('/')[0] })
+                Assert-SameSet $actualIds @($closure.id) "Restored inventory closure mismatch: $($consumer.id)"
+                foreach ($package in $closure) {
                     $id = $package.id.ToLowerInvariant()
                     $restored = Join-Path $packages "$id/$version/$id.$version.nupkg"
-                    $expected = Get-FileHash (Join-Path $sourceFeed "$($package.id).$version.nupkg") -Algorithm SHA256 -ErrorAction SilentlyContinue
-                    if (-not $expected) { $expected = Get-FileHash (Join-Path $sourceFeed "$id.$version.nupkg") -Algorithm SHA256 }
-                    if ((Get-FileHash $restored -Algorithm SHA256).Hash -ne $expected.Hash) { throw "Restored package hash differs: $id" }
+                    $expectedPath = Join-Path $sourceFeed "$($package.id).$version.nupkg"
+                    if (-not (Test-Path $expectedPath)) { $expectedPath = Join-Path $sourceFeed "$id.$version.nupkg" }
+                    if ((Get-FileHash $restored -Algorithm SHA256).Hash -ne (Get-FileHash $expectedPath -Algorithm SHA256).Hash) { throw "Restored package hash differs: $id" }
                 }
-                $null = Execute (@('build', $project, '-c', 'Release', '--no-restore', '-warnaserror') + $properties) (Join-Path $work 'build.log')
-                $output = Execute @((Join-Path $work "bin/Release/$($lane.framework)/$consumer.dll")) (Join-Path $work 'run.log')
+                foreach ($component in (Read-RestoredComponents $assets $packages)) { $components["$($component.id)/$($component.version)"] = $component }
+                $graph = @($assets.targets.PSObject.Properties | ForEach-Object { $target=$_; @($target.Value.PSObject.Properties | ForEach-Object { [ordered]@{ identity=$_.Name; dependencies=$_.Value.dependencies } }) })
+                $graphs += [ordered]@{consumer=$consumer.id;variant=$variant;framework=$lane.framework;assetsSha256=(Get-FileHash $assetsPath -Algorithm SHA256).Hash.ToLowerInvariant();dependencies=$graph}
+                $null = Execute (@('build',$project,'-c','Release','--no-restore','-warnaserror') + $properties) (Join-Path $work 'build.log')
+                $binary = Join-Path $work "bin/Release/$($lane.framework)/$($evaluated.Properties.AssemblyName).dll"
+                $output = Execute @($binary) (Join-Path $work 'run.log')
                 $runtimeLine = @($output -split "`r?`n" | Where-Object { $_.StartsWith('HOST runtime=') })
                 $family = $lane.framework.Substring(3).Split('.')[0]
                 if ($runtimeLine.Count -ne 1 -or $runtimeLine[0] -notmatch "^HOST runtime=$family\.") { throw "Wrong actual consumer runtime: $runtimeLine" }
                 $lines = @($output -split "`r?`n" | Where-Object { $_.StartsWith('COMMON ') })
-                if ($variant -eq 'baseline') { $common[$name] = $lines } elseif (Compare-Object @($common[$name]) $lines) { throw "Old/new common output mismatch: $consumer" }
-                $results += @{ framework=$lane.framework; sdkVersion=$sdk; compilerVersion=$compilerVersion; runtime=$runtimeLine[0]; consumer=$consumer; variant=$variant; packageVersion=$version; exit=0; commonOutput=$lines; directory=$work }
-                Write-Host "PASS $variant $consumer SDK=$sdk framework=$($lane.framework) CSharp=12 warningsAsErrors=true hashes=matched"
+                if (-not $lines.Count) { throw "Consumer has no asserted COMMON output: $($consumer.id)" }
+                if ($consumer.baselineComparison) {
+                    if ($variant -eq 'baseline') { $common[$consumer.id] = $lines } else { Assert-SameSet @($common[$consumer.id]) $lines "Old/new common output mismatch: $($consumer.id)" }
+                }
+                $results += [ordered]@{ framework=$lane.framework; sdkVersion=$sdk; compilerVersion=$compilerVersion; runtime=$runtimeLine[0]; consumer=$consumer.id; variant=$variant; baselineComparison=$consumer.baselineComparison; packageVersion=$version; packageIds=@($closure.id); exit=0; commonOutput=$lines; binarySha256=(Get-FileHash $binary -Algorithm SHA256).Hash.ToLowerInvariant(); directory=$work }
+                ConvertTo-Json -InputObject $results -Depth 10 | Set-Content (Join-Path $run 'consumer-results.json')
+                Write-Host "PASS $variant $($consumer.id) SDK=$sdk framework=$($lane.framework) CSharp=12 warningsAsErrors=true hashes=matched"
             }
         }
     } finally { Pop-Location }
 }
-$results | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $run 'consumer-results.json')
+$buildTooling = @()
+# Private analyzer build inputs are recorded separately from the shipped consumer graph.
+foreach ($producer in @($inventory.packages.analyzerPaths.project | Select-Object -Unique)) {
+    $project = Resolve-RepositoryPath $repo $producer
+    $assetsPath = Join-Path (Split-Path $project) 'obj/project.assets.json'
+    if (-not (Test-Path $assetsPath)) { throw "Missing analyzer build dependency evidence: $producer" }
+    $assets = Get-Content -Raw $assetsPath | ConvertFrom-Json
+    $folders = @($assets.packageFolders.PSObject.Properties.Name)
+    if ($folders.Count -ne 1) { throw "Analyzer build evidence needs one unambiguous package folder: $producer" }
+    $evaluated = Invoke-ProjectEvaluation $dotnet $project @('TargetFramework','AssemblyName') @('PackageReference') @('-p:Configuration=Release')
+    $roots = @($evaluated.Items.PackageReference | Where-Object { $_.PrivateAssets -eq 'all' } | ForEach-Object { [ordered]@{id=$_.Identity;version=$_.Version;privateAssets=$_.PrivateAssets} })
+    $buildTooling += [ordered]@{producer=$producer;scope='private-analyzer-build';assetsSha256=(Get-FileHash $assetsPath -Algorithm SHA256).Hash.ToLowerInvariant();privateRoots=$roots;components=@(Read-RestoredComponents $assets $folders[0])}
+}
+# This is a Meridian schemaVersion1 SBOM inventory, not a claimed CycloneDX/SPDX document.
+$sbom = [ordered]@{schemaVersion=1;format='meridian-restored-package-inventory';manifestSha256=(Get-FileHash $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant();candidateVersion=$CandidateVersion;components=@($components.Values | Sort-Object id,version);consumerGraphs=$graphs;distributedPackages=(Get-Content -Raw (Join-Path $Feed "package-manifest.$CandidateVersion.json") | ConvertFrom-Json).packages;buildTooling=$buildTooling;buildToolingScope='Private build tools are recorded separately from consumer distribution graphs'}
+$sbom | ConvertTo-Json -Depth 20 | Set-Content (Join-Path $run 'sbom-inventory.json')
 Write-Host "PASS packaged compiler consumers: $($results.Count); evidence=$run"
