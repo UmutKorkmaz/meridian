@@ -71,6 +71,37 @@ def cleanup_session(process, work):
     (work / 'cleanup-complete.json').write_text(json.dumps({'groups': sorted(groups)}))
 
 
+def cleanup_outer(processes, work, primary):
+    failures = []
+    complete = False
+    try:
+        complete = (work / 'cleanup-complete.json').exists()
+    except Exception as error:
+        failures.append(error)
+    for process in processes:
+        if not complete:
+            try:
+                groups = owned_groups(work, process.pid)
+            except Exception as error:
+                failures.append(error)
+                groups = {process.pid}
+            for group in groups:
+                try:
+                    kill_group(group)
+                except Exception as error:
+                    failures.append(error)
+        try:
+            process.communicate(timeout=5)
+        except Exception as error:
+            failures.append(error)
+    if failures:
+        error = ExceptionGroup('Independent fixture cleanup failed.', failures)
+        if primary is None:
+            raise error
+        primary.outer_cleanup_error = error
+        primary.add_note(f'Independent fixture cleanup also failed: {error!r}')
+
+
 def broken_launcher(work, detached=False):
     fake = work / 'broken-pwsh'
     fake.write_text('#!' + sys.executable + '\n' + f'''import os, subprocess, time
@@ -95,7 +126,7 @@ class HttpRunnerTimeoutTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix='meridian-http-exited-') as directory:
             self.run_watchdog(Path(directory), True)
 
-    def run_watchdog(self, work, exited_launcher, executable=PWSH):
+    def run_watchdog(self, work, exited_launcher, executable=PWSH, owned_processes=None):
         shim = work / 'dotnet'
         shim.write_text('#!' + sys.executable + '\n' + '''import json, os, subprocess, sys
 from pathlib import Path
@@ -118,15 +149,17 @@ else:
                    MERIDIAN_WATCHDOG_PID_FILE=str(work / 'pids.json'),
                    MERIDIAN_WATCHDOG_EARLY_EXIT='1' if exited_launcher else '0')
         started = time.monotonic()
+        diagnosis = None
+        primary = None
         process = subprocess.Popen(
             [executable, '-NoProfile', '-File', str(ROOT / 'eng/run-samples.ps1'),
              '-Framework', 'net10.0', '-NoBuild', '-IncludeHttp', '-TimeoutSeconds', '1',
              '-LogDirectory', str(work / 'logs')], env=env, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, start_new_session=True)
-        (work / 'session.json').write_text(json.dumps({'group': process.pid}))
-        diagnosis = None
-        primary = None
         try:
+            if owned_processes is not None:
+                owned_processes.append(process)
+            (work / 'session.json').write_text(json.dumps({'group': process.pid}))
             try:
                 output, _ = process.communicate(timeout=8)
             except subprocess.TimeoutExpired:
@@ -171,19 +204,21 @@ else:
         with tempfile.TemporaryDirectory(prefix='meridian-http-broken-runner-') as directory:
             work = Path(directory)
             fake = broken_launcher(work, detached=True)
+            processes = []
+            primary = None
             try:
                 with self.assertRaisesRegex(AssertionError, 'owned process still live'):
-                    self.run_watchdog(work, False, str(fake))
+                    self.run_watchdog(work, False, str(fake), processes)
                 ids = json.loads((work / 'pids.json').read_text())
                 statuses = {str(ids[name]): status(ids[name]) for name in ['parent', 'child']}
                 print(json.dumps({'failureCleanupStatuses': statuses}), flush=True)
                 self.assertTrue(all(not state or state.startswith('Z') for state in statuses.values()), statuses)
+            except BaseException as error:
+                primary = error
+                raise
             finally:
                 # Independent outer owner keeps this regression's expected RED from stranding anything.
-                receipt = work / 'session.json'
-                if receipt.exists() and not (work / 'cleanup-complete.json').exists():
-                    for group in owned_groups(work, json.loads(receipt.read_text())['group']):
-                        kill_group(group)
+                cleanup_outer(processes, work, primary)
 
 
     def test_cleanup_failure_retains_actual_primary_assertion_and_cleanup_object(self):
@@ -192,6 +227,8 @@ else:
             fake = broken_launcher(work)
             cleanup_error = OSError('selected cleanup error')
             actual_cleanup = cleanup_session
+            processes = []
+            primary = None
 
             def cleanup_then_fail(process, fixture):
                 actual_cleanup(process, fixture)
@@ -200,15 +237,111 @@ else:
             try:
                 with mock.patch(__name__ + '.cleanup_session', side_effect=cleanup_then_fail):
                     with self.assertRaisesRegex(AssertionError, 'owned process still live') as caught:
-                        self.run_watchdog(work, False, str(fake))
+                        self.run_watchdog(work, False, str(fake), processes)
                 self.assertIs(cleanup_error, caught.exception.cleanup_error)
                 ids = json.loads((work / 'pids.json').read_text())
                 self.assertTrue(all(not status(ids[name]) or status(ids[name]).startswith('Z') for name in ['parent', 'child']))
+            except BaseException as error:
+                primary = error
+                raise
             finally:
-                receipt = work / 'session.json'
-                if receipt.exists() and not (work / 'cleanup-complete.json').exists():
-                    for group in owned_groups(work, json.loads(receipt.read_text())['group']):
-                        kill_group(group)
+                cleanup_outer(processes, work, primary)
+
+    def test_session_receipt_write_failure_joins_actual_fixture(self):
+        self.check_session_write_failure(False)
+
+    def test_session_receipt_write_failure_retains_primary_and_cleanup_error(self):
+        self.check_session_write_failure(True)
+
+    def check_session_write_failure(self, secondary_failure):
+        with tempfile.TemporaryDirectory(prefix='meridian-http-session-write-') as directory:
+            work = Path(directory)
+            launcher = work / 'private-launcher'
+            launcher.write_text('#!' + sys.executable + '\nimport subprocess\n'
+                                "subprocess.Popen(['dotnet', 'test']).wait()\n")
+            launcher.chmod(0o755)
+            processes = []
+            selected = OSError('selected session receipt write failure')
+            cleanup_error = OSError('selected secondary cleanup failure')
+            real_popen = subprocess.Popen
+            real_write = Path.write_text
+            actual_cleanup = cleanup_session
+            ids = None
+            before = None
+            primary = None
+
+            def observe_popen(*args, **kwargs):
+                process = real_popen(*args, **kwargs)
+                if kwargs.get('start_new_session') and args[0][0] == str(launcher):
+                    processes.append(process)
+                return process
+
+            def fail_session_write(path, *args, **kwargs):
+                nonlocal ids, before
+                if path == work / 'session.json':
+                    deadline = time.monotonic() + 3
+                    while not (work / 'pids.json').exists():
+                        if time.monotonic() >= deadline:
+                            raise TimeoutError('Independent fixture readiness watchdog expired.')
+                        time.sleep(.01)
+                    ids = json.loads((work / 'pids.json').read_text())
+                    before = {str(pid): status(pid) for pid in
+                              [processes[0].pid, ids['parent'], ids['child']]}
+                    raise selected
+                return real_write(path, *args, **kwargs)
+
+            def cleanup_then_maybe_fail(process, fixture):
+                actual_cleanup(process, fixture)
+                if secondary_failure:
+                    raise cleanup_error
+
+            try:
+                with mock.patch.object(subprocess, 'Popen', side_effect=observe_popen), \
+                        mock.patch.object(Path, 'write_text', new=fail_session_write), \
+                        mock.patch(__name__ + '.cleanup_session', side_effect=cleanup_then_maybe_fail) as cleanup:
+                    with self.assertRaises(OSError) as caught:
+                        self.run_watchdog(work, False, str(launcher))
+                process = processes[0]
+                after = {str(pid): status(pid) for pid in
+                         [process.pid, ids['parent'], ids['child']]}
+                print(json.dumps({'sessionWriteFailure': True, 'secondaryFailure': secondary_failure,
+                                  'runnerPid': process.pid, 'ownedPids': ids, 'statusesBefore': before,
+                                  'statusesAfterUnwind': after, 'directRunnerJoined': process.returncode is not None,
+                                  'cleanupCalls': cleanup.call_count,
+                                  'primaryIdentityPreserved': caught.exception is selected,
+                                  'secondaryIdentityPreserved': (getattr(caught.exception, 'cleanup_error', None)
+                                                                is cleanup_error) if secondary_failure else None,
+                                  'receiptPersisted': (work / 'session.json').exists()}), flush=True)
+                self.assertIs(selected, caught.exception)
+                self.assertTrue(all(before.values()), before)
+                self.assertEqual(process.pid, ids['group'])
+                self.assertEqual(1, cleanup.call_count)
+                self.assertIsNotNone(process.returncode)
+                self.assertTrue(all(not state or state.startswith('Z') for state in after.values()), after)
+                self.assertFalse((work / 'session.json').exists())
+                if secondary_failure:
+                    self.assertIs(cleanup_error, caught.exception.cleanup_error)
+                else:
+                    self.assertFalse(hasattr(caught.exception, 'cleanup_error'))
+            except BaseException as error:
+                primary = error
+                raise
+            finally:
+                # Independent in-memory owner also works when session.json cannot be written.
+                cleanup_outer(processes, work, primary)
+                try:
+                    if ids is not None:
+                        after_outer = {str(pid): status(pid) for pid in
+                                       [processes[0].pid, ids['parent'], ids['child']]}
+                        print(json.dumps({'sessionWriteOuterJoined': all(process.returncode is not None
+                                                                         for process in processes),
+                                          'statusesAfterIndependentCleanup': after_outer}), flush=True)
+                        self.assertTrue(all(not state or state.startswith('Z')
+                                            for state in after_outer.values()), after_outer)
+                except Exception as cleanup:
+                    if primary is None:
+                        raise
+                    primary.add_note(f'Independent fixture cleanup also failed: {cleanup!r}')
 
 
 if __name__ == '__main__':
