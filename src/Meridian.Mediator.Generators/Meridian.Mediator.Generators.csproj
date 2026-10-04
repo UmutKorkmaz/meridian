@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>true</IsPackable>
+    <PackageId>Meridian.Mediator.Generators</PackageId>
+    <Version>2.1.3</Version>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <Description>Optional explicit closed mediator registry source generator.</Description>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <DevelopmentDependency>true</DevelopmentDependency>
+    <IsRoslynComponent>true</IsRoslynComponent>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <NoWarn>$(NoWarn);CS1591;RS2008</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" PrivateAssets="all"/>
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" Version="5.3.0" PrivateAssets="all"/>
+    <None Include="$(OutputPath)$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs"/>
+  </ItemGroup>
+  <!-- Analyzer-only distribution has no lib assets and therefore no standalone symbol package. -->
+  <Target Name="DisableAnalyzerSymbolPackage" BeforeTargets="GenerateNuspec">
+    <PropertyGroup>
+      <IncludeSymbols>false</IncludeSymbols>
+    </PropertyGroup>
+  </Target>
+</Project>

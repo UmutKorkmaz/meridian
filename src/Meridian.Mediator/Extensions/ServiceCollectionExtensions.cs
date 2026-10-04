@@ -26,6 +26,8 @@ public static class ServiceCollectionExtensions
         var config = new MeridianMediatorConfiguration();
         configure(config);
 
+        Generated.GeneratedMediatorRegistration.RegisterRegistries(services, config.GeneratedRegistries, config.Lifetime, config.RequireGeneratedDispatch);
+
         // Register the mediator itself
         services.TryAddTransient<IMediator>(sp =>
         {

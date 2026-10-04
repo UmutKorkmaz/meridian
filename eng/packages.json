@@ -174,6 +174,25 @@
         "Meridian.Mediator"
       ],
       "licenseExpression": "MIT"
+    },
+    {
+      "id": "Meridian.Mediator.Generators",
+      "project": "src/Meridian.Mediator.Generators/Meridian.Mediator.Generators.csproj",
+      "kind": "analyzer",
+      "versionSource": "Version",
+      "baselineVersion": null,
+      "targetFrameworks": [
+        "netstandard2.0"
+      ],
+      "analyzerPaths": [
+        {
+          "project": "src/Meridian.Mediator.Generators/Meridian.Mediator.Generators.csproj",
+          "packagePath": "analyzers/dotnet/cs/Meridian.Mediator.Generators.dll"
+        }
+      ],
+      "directPackageDependencies": [],
+      "projectDependencies": [],
+      "licenseExpression": "MIT"
     }
   ],
   "compilerHosts": [
@@ -324,6 +343,22 @@
       ],
       "packageIds": [
         "Meridian.Mediator.AspNetCore"
+      ],
+      "variants": [
+        "legacy"
+      ],
+      "baselineComparison": false
+    },
+    {
+      "id": "Meridian.MediatorRegistryConsumer",
+      "project": "tests/consumers/Meridian.MediatorRegistryConsumer/Meridian.MediatorRegistryConsumer.csproj",
+      "sourceFiles": [
+        "tests/consumers/Meridian.MediatorRegistryConsumer/Meridian.MediatorRegistryConsumer.csproj",
+        "tests/consumers/Meridian.MediatorRegistryConsumer/Program.cs"
+      ],
+      "packageIds": [
+        "Meridian.Mediator",
+        "Meridian.Mediator.Generators"
       ],
       "variants": [
         "legacy"
