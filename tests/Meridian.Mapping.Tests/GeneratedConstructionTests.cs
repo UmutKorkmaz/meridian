@@ -60,8 +60,8 @@ public class GeneratedConstructionTests
         "public class Dto { " + access + " Dto(string name) {} }");
 
     [Theory]
-    [InlineData("int[]")]
-    public void Constructor_Does_Not_Bypass_Pending_Structural_Support(string type)
+    [InlineData("int[,]")]
+    public void Constructor_Does_Not_Bypass_Unsupported_Structural_Shape(string type)
     {
         var result = GeneratorTestHarness.Compile($$"""
             using Meridian.Mapping;

@@ -75,12 +75,12 @@ public class GeneratedMemberMappingTests
     }
 
     [Fact]
-    public void Rename_Does_Not_Bypass_Pending_Structural_Support()
+    public void Rename_Does_Not_Bypass_Unsupported_Structural_Shape()
     {
         var result = GeneratorTestHarness.Compile("""
             using Meridian.Mapping;
-            public class Source { public int[] Other { get; set; } = new int[0]; }
-            public class Dto { public int[] Value { get; set; } = new int[0]; }
+            public class Source { public int[,] Other { get; set; } = new int[0,0]; }
+            public class Dto { public int[,] Value { get; set; } = new int[0,0]; }
             [GenerateMapper(typeof(Source), typeof(Dto), Mode = GeneratedMappingMode.Structural)]
             [MapMember("Value", "Other")]
             public static partial class Maps {}

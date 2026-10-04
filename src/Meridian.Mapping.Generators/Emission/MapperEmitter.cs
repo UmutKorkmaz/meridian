@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using Meridian.Mapping.Generators.Models;
 using Microsoft.CodeAnalysis;
@@ -49,11 +50,14 @@ internal static class MapperEmitter
         EmitTypeDeclarationOpen(sb, indent, model.TargetType);
         indent += "    ";
 
-        foreach (var pair in model.Pairs)
+        var structural = model.Pairs.Any(pair => pair.Options.Mode == 1 && pair.Constructor.IsSupported);
+        if (structural) GeneratedContextEmitter.Emit(sb);
+        for (var index = 0; index < model.Pairs.Length; index++)
         {
+            var pair = model.Pairs[index];
             if (!pair.Constructor.IsSupported) continue;
-
-            EmitMapMethod(sb, indent, pair);
+            if (pair.Options.Mode == 0) EmitMapMethod(sb, indent, pair);
+            if (structural) NestedMapperEmitter.Emit(sb, indent, pair, index);
             sb.AppendLine();
         }
 

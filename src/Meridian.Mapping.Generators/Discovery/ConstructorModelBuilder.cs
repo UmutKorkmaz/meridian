@@ -33,7 +33,8 @@ internal static class ConstructorModelBuilder
                     m.DestinationTypeIdentity == parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
                 var type = parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
                 if (member?.Expression is not null && !member.IsIgnored)
-                    arguments.Add(new ConstructorArgumentModel(parameter.Name, type, "(" + type + ")(" + member.Expression + ")", member));
+                    arguments.Add(new ConstructorArgumentModel(parameter.Name, type, "(" + parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat.WithMiscellaneousOptions(
+                        SymbolDisplayFormat.FullyQualifiedFormat.MiscellaneousOptions | SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier)) + ")(" + member.Expression + ")", member));
                 else if (parameter.HasExplicitDefaultValue && (member is null || !member.IsConfigured || member.IsIgnored))
                     arguments.Add(new ConstructorArgumentModel(parameter.Name, type, DefaultExpression(parameter)));
                 else { eligible = false; break; }

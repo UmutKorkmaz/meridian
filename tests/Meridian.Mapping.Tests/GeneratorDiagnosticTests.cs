@@ -140,10 +140,10 @@ public class GeneratorDiagnosticTests
     }
 
     [Theory]
-    [InlineData("int[]")]
-    [InlineData("System.Collections.Generic.List<int>")]
-    [InlineData("System.Collections.Generic.IEnumerable<int>")]
-    public void Structural_Pending_Collection_Capabilities_Are_Diagnosed(string memberType)
+    [InlineData("int[,]")]
+    [InlineData("System.Collections.Generic.HashSet<int>")]
+    [InlineData("System.Collections.Generic.Queue<int>")]
+    public void Structural_Unsupported_Collection_Shapes_Are_Diagnosed(string memberType)
     {
         var source = Fixture(", Mode = GeneratedMappingMode.Structural", memberType).Replace("public int Value", "public " + memberType + " Value");
         var result = GeneratorTestHarness.Compile(source);
@@ -152,10 +152,6 @@ public class GeneratorDiagnosticTests
     }
 
     [Theory]
-    [InlineData("PreserveReferences = true")]
-    [InlineData("AllowNullCollections = true")]
-    [InlineData("MaxDepth = 10")]
-    [InlineData("MaxCollectionItems = 10")]
     [InlineData("GenerateResolver = true")]
     public void Structural_Pending_Options_Are_Diagnosed(string option)
     {
@@ -318,7 +314,7 @@ public class GeneratorDiagnosticTests
     }
 
     [Fact]
-    public void Structural_Required_Field_And_Declared_Nested_Map_Are_Unsupported()
+    public void Structural_Required_Field_Is_Unsupported_And_Declared_Nested_Map_Is_Supported()
     {
         var required = GeneratorTestHarness.Compile("""
             using Meridian.Mapping;
@@ -338,7 +334,7 @@ public class GeneratorDiagnosticTests
             [GenerateMapper(typeof(Source), typeof(Dto), Mode = GeneratedMappingMode.Structural)]
             public static partial class Maps {}
             """);
-        AssertDiagnostic(nested, "MERIDIANGEN005", DiagnosticSeverity.Error);
+        Assert.DoesNotContain(nested.Diagnostics, d => d.Severity == DiagnosticSeverity.Error);
         AssertCompiles(nested);
     }
 

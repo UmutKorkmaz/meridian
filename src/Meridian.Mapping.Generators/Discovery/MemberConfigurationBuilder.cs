@@ -3,8 +3,8 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using Meridian.Mapping.Generators.Diagnostics;
-using Meridian.Mapping.Generators.Models;
 using Meridian.Mapping.Generators.Emission;
+using Meridian.Mapping.Generators.Models;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 
@@ -122,6 +122,19 @@ internal static class MemberConfigurationBuilder
                     }
                 }
             }
+            var traversalPairs = "";
+            var requiresTraversal = structural && !ignored && converters.Length == 0 && property is not null &&
+                (StructuralBindingBuilder.IsCollection(target.Type) || pairs.Any(p =>
+                    SymbolEqualityComparer.Default.Equals(p.ConstructorArguments[0].Value as ITypeSymbol, property.Type) &&
+                    SymbolEqualityComparer.Default.Equals(p.ConstructorArguments[1].Value as ITypeSymbol, target.Type)));
+            if (structural && !ignored && property is not null && converters.Length == 0 && conversions.Length == 0 &&
+                StructuralBindingBuilder.TryBuild(property.Type, target.Type, pairs, options, "__MeridianCollection" + result.Count,
+                    "source.@" + property.Name, target.Name, out var structuralExpression, out var structuralHelper, out traversalPairs))
+            {
+                expression = structuralExpression;
+                helper = structuralHelper;
+                requiresTraversal = false;
+            }
             if (expression is not null && structural && property?.Type.IsReferenceType == true &&
                 target.Type.IsReferenceType && property.Type.NullableAnnotation != NullableAnnotation.NotAnnotated &&
                 target.Type.NullableAnnotation == NullableAnnotation.NotAnnotated) expression += "!";
@@ -132,10 +145,8 @@ internal static class MemberConfigurationBuilder
                 property?.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) ?? "", target.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
                 conversion, expression,
                 target.Initializer, target.Required, ignored, failure, configs.Length > 0,
-                structural && !ignored && converters.Length == 0 && property is not null && expression is not null &&
-                (NeedsStructuralSupport(target.Type) || pairs.Any(p => SymbolEqualityComparer.Default.Equals(p.ConstructorArguments[0].Value as ITypeSymbol, property.Type) &&
-                    SymbolEqualityComparer.Default.Equals(p.ConstructorArguments[1].Value as ITypeSymbol, target.Type))),
-                helper, skipNull, cannotSkip));
+                requiresTraversal, helper, skipNull, cannotSkip,
+                target.Initializer && writable[target.Name].SetMethod!.IsInitOnly, traversalPairs));
         }
         foreach (var configuration in configurations.Where(a => a.AttributeClass!.Name is "MapWithAttribute" or "MapMemberAttribute" or "ConvertMapMemberAttribute"))
         {
@@ -163,15 +174,6 @@ internal static class MemberConfigurationBuilder
             if (members.Length > 0) return members.OfType<IMethodSymbol>();
         }
         return Enumerable.Empty<IMethodSymbol>();
-    }
-
-    private static bool NeedsStructuralSupport(ITypeSymbol type)
-    {
-        if (type is INamedTypeSymbol { OriginalDefinition.SpecialType: SpecialType.System_Nullable_T } nullable)
-            return NeedsStructuralSupport(nullable.TypeArguments[0]);
-        return type is IArrayTypeSymbol ||
-            type.SpecialType != SpecialType.System_String && type.AllInterfaces.Any(i => i.SpecialType == SpecialType.System_Collections_IEnumerable) ||
-            type.SpecialType == SpecialType.System_Collections_IEnumerable;
     }
 
     internal static bool IsAssignable(Compilation compilation, ITypeSymbol source, ITypeSymbol destination)

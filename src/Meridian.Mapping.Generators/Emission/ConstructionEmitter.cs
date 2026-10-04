@@ -13,7 +13,8 @@ internal static class ConstructionEmitter
             builder.Append(string.Join(", ", pair.Constructor.Arguments.Select(a => "@" + a.ParameterName + ": " + a.Expression)));
         builder.AppendLine(")");
         builder.Append(indent).AppendLine("    {");
-        foreach (var member in pair.Members.Where(m => m.IsInitializer && !m.IsIgnored))
+        var structural = pair.Options.Mode == 1;
+        foreach (var member in pair.Members.Where(m => m.IsInitializer && !m.IsIgnored && (!structural || m.IsInitOnly || m.IsRequired)))
         {
             if (member.Expression is not null && !member.SkipNullAssignment)
                 builder.Append(indent).Append("        @").Append(member.DestinationName).Append(" = ").Append(member.Expression).AppendLine(",");
@@ -24,12 +25,17 @@ internal static class ConstructionEmitter
                     .AppendLine(". Use runtime IMapper for type conversion.");
         }
         builder.Append(indent).AppendLine("    };");
+        if (structural && pair.Options.PreserveReferences && pair.ReferenceTypes)
+            builder.Append(indent).Append("    context.Cache(source, typeof(").Append(pair.DestinationIdentity).AppendLine("), result);");
         var index = 0;
-        foreach (var member in pair.Members.Where(m => m.SkipNullAssignment && !m.IsIgnored && m.Expression is not null))
+        foreach (var member in pair.Members.Where(m => m.IsInitializer && !m.IsIgnored && m.Expression is not null &&
+            (m.SkipNullAssignment || structural && !m.IsInitOnly && !m.IsRequired)))
         {
             var local = "__meridianValue" + index++;
             builder.Append(indent).Append("    var ").Append(local).Append(" = ").Append(member.Expression).AppendLine(";");
-            builder.Append(indent).Append("    if (").Append(local).Append(" is not null) result.@").Append(member.DestinationName).Append(" = ").Append(local).AppendLine(";");
+            builder.Append(indent).Append("    ");
+            if (member.SkipNullAssignment) builder.Append("if (").Append(local).Append(" is not null) ");
+            builder.Append("result.@").Append(member.DestinationName).Append(" = ").Append(local).AppendLine(";");
         }
         var bindings = pair.Constructor.Arguments.IsDefault ? pair.Members : pair.Members.Concat(pair.Constructor.Arguments.Where(a => a.Binding is not null).Select(a => a.Binding!));
         foreach (var helper in bindings.Select(m => m.ConversionHelper).Where(h => h is not null).Distinct())

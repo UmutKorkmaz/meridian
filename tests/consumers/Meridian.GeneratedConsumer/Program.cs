@@ -36,6 +36,17 @@ Check(converted.Count == 42L && converted.Number == 0 && converted.Text == 1.5m 
 try { Container.ConversionMaps.MapToConversionDto(new ConversionSource { Narrow = 300 }); throw new Exception("unchecked conversion"); } catch (OverflowException) { }
 try { Container.ConversionMaps.MapToConversionDto(new ConversionSource { Role = "99" }); throw new Exception("undefined enum accepted"); } catch (MeridianEnumMappingException) { }
 Console.WriteLine("CANDIDATE generated conversions=42:0:1.5:Friday null=seed checked=true enumStrict=true");
+var graph = new GraphSource { Value = 42 }; graph.Next = graph;
+var generatedGraph = Container.GraphMaps.MapToGraphDto(graph);
+Check(generatedGraph.Value == 42L && ReferenceEquals(generatedGraph, generatedGraph.Next), "generated mutable cycle identity");
+Check(Container.GraphMaps.MapToGraphDto(graph, new GeneratedMappingOptions { MaxDepth = 1 }).Next is null, "depth precedes cached reference");
+var collection = Container.CollectionMaps.MapToCollectionDto(new CollectionSource { Values = new[] { graph, graph } });
+Check(collection.Values.Count == 2 && collection.Values[0].Value == 42 && ReferenceEquals(collection.Values[0], collection.Values[1]), "nested collection mapping and shared identity");
+Check(Container.CollectionMaps.MapToCollectionDto(new CollectionSource()).Values.Count == 0, "null collection default");
+try { Container.CollectionMaps.MapToCollectionDto(new CollectionSource { Values = new[] { graph, graph } }, new GeneratedMappingOptions { MaxCollectionItems = 1 }); throw new Exception("collection cap ignored"); } catch (MeridianMappingLimitException e) { Check(e.MaxAllowed == 1 && e.ObservedValue == 2, "collection limit values"); }
+using var cancelled = new CancellationTokenSource(); cancelled.Cancel();
+try { Container.GraphMaps.MapToGraphDto(graph, new GeneratedMappingOptions { CancellationToken = cancelled.Token }); throw new Exception("cancellation ignored"); } catch (OperationCanceledException) { }
+Console.WriteLine("CANDIDATE generated graph=42 cycle=true collection=2 shared=true null=empty depth=true limit=true cancel=true");
 #endif
 static void Check(bool result, string name) { if (!result) throw new InvalidOperationException(name); }
 public sealed class Child { public int Value { get; set; } }
@@ -77,9 +88,18 @@ public partial class Container
     [ConvertMapMember("Role", GeneratedConversionKind.InvariantParse)]
     [ConvertMapMember("Narrow", GeneratedConversionKind.CheckedNumeric, SourceType = typeof(ConversionSource), DestinationType = typeof(ConversionDto))]
     public static partial class ConversionMaps { }
+    [GenerateMapper(typeof(GraphSource), typeof(GraphDto), Mode = GeneratedMappingMode.Structural, PreserveReferences = true)]
+    public static partial class GraphMaps { }
+    [GenerateMapper(typeof(GraphSource), typeof(GraphDto), Mode = GeneratedMappingMode.Structural, PreserveReferences = true)]
+    [GenerateMapper(typeof(CollectionSource), typeof(CollectionDto), Mode = GeneratedMappingMode.Structural)]
+    public static partial class CollectionMaps { }
 #endif
 }
 #if !BASELINE
+public sealed class GraphSource { public int Value { get; set; } public GraphSource? Next { get; set; } }
+public sealed class GraphDto { public long Value { get; set; } public GraphDto? Next { get; set; } }
+public sealed class CollectionSource { public IEnumerable<GraphSource>? Values { get; set; } }
+public sealed record CollectionDto(IReadOnlyList<GraphDto> Values);
 public sealed class ConversionSource { public int Count { get; set; } public int? Number { get; set; } public string Text { get; set; } = "1.5"; public string Role { get; set; } = "Friday"; public int Narrow { get; set; } public string? Name { get; set; } }
 public sealed class ConversionDto { public long Count { get; set; } public int Number { get; set; } public decimal Text { get; set; } public DayOfWeek Role { get; set; } public byte Narrow { get; set; } public string? Name { get; set; } = "seed"; }
 public sealed class MemberSource { public string Original { get; set; } = ""; public int Age { get; set; } }

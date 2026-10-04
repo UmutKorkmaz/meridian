@@ -71,10 +71,14 @@ internal static class MappingModelBuilder
                 !HasAccessibleSignature(source, destination, context, cancellationToken))
                 Report(MapperDiagnostics.InvalidConfiguration, "source and destination must be accessible, closed, nameable types usable in a public mapping method");
 
+            if (options.Mode == 1 && container.GetMembers().Any(m => m.Name == "GeneratedMappingContext" || m.Name.StartsWith("__MeridianMap", StringComparison.Ordinal)))
+                Report(MapperDiagnostics.MethodCollision, "generated traversal helpers", "the container uses a reserved generated helper name");
             var method = options.MethodName ?? "MapTo" + destination.Name;
+            if (declarations.Any(d => ReadOptions(d).Mode == 1) && (method == "GeneratedMappingContext" || method.StartsWith("__MeridianMap", StringComparison.Ordinal)))
+                Report(MapperDiagnostics.MethodCollision, method, "this name is reserved for generated traversal helpers");
             if (method == container.Name || container.GetMembers(method).Any(member =>
                 options.MethodName is not null || member is not IMethodSymbol existing ||
-                existing.Arity == 0 && existing.Parameters.Length == 1 && existing.Parameters[0].RefKind == RefKind.None &&
+                existing.Arity == 0 && (existing.Parameters.Length == 1 || options.Mode == 1 && existing.Parameters.Length == 2 && existing.Parameters[1].Type.ToDisplayString() == "Meridian.Mapping.GeneratedMappingOptions") && existing.Parameters[0].RefKind == RefKind.None &&
                 HaveSameSignatureType(existing.Parameters[0].Type, source)))
                 Report(MapperDiagnostics.MethodCollision, method, "an existing container member uses this name or signature");
             foreach (var other in declarations)
@@ -104,11 +108,6 @@ internal static class MappingModelBuilder
                 Report(MapperDiagnostics.UnsupportedConstruction, destination.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat), failure);
             if (options.GenerateResolver)
                 Report(MapperDiagnostics.UnsupportedStructural, "GenerateResolver is not implemented yet");
-            if (options.Mode == 1 && (options.MaxDepth != 64 || options.MaxCollectionItems != 10000 ||
-                options.PreserveReferences || options.AllowNullCollections) &&
-                options.MaxDepth > 0 && options.MaxCollectionItems > 0)
-                Report(MapperDiagnostics.UnsupportedStructural, "non-default structural traversal and collection policies are not implemented yet");
-
             var members = MemberConfigurationBuilder.Build(container, source, destination,
                 context.SemanticModel.Compilation, options, declarations, Report);
             var constructor = options.Mode == 1
@@ -165,10 +164,55 @@ internal static class MappingModelBuilder
             }
             pairs.Add(new MapPairModel(source.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
                 destination.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), source.Name, destination.Name,
-                NamespaceOf(source), NamespaceOf(destination), finalMembers.ToImmutable(), constructor with { IsSupported = supported && constructor.IsSupported }, options));
+                NamespaceOf(source), NamespaceOf(destination), finalMembers.ToImmutable(), constructor with { IsSupported = supported && constructor.IsSupported }, options, source.IsReferenceType && destination.IsReferenceType));
         }
+        ValidateTraversal(pairs, declarations, diagnostics, cancellationToken);
         return (new MapperModel(NamespaceOf(container), containingTypes, CreateTypeDeclarationInfo(container),
             BuildMetadataPath(container), pairs.ToImmutable(), nonPartial is null), diagnostics.ToImmutable());
+    }
+
+    private static void ValidateTraversal(ImmutableArray<MapPairModel>.Builder pairs, AttributeData[] declarations,
+        ImmutableArray<Diagnostic>.Builder diagnostics, CancellationToken cancellationToken)
+    {
+        IEnumerable<MemberModel> Bindings(MapPairModel pair) => pair.Members.Concat(pair.Constructor.Arguments.IsDefault
+            ? Enumerable.Empty<MemberModel>() : pair.Constructor.Arguments.Where(a => a.Binding is not null).Select(a => a.Binding!));
+        int[] Edges(MemberModel member) => member.TraversalPairs.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(value => int.Parse(value, CultureInfo.InvariantCulture)).Distinct().ToArray();
+        bool Reaches(int current, int target, HashSet<int> visited)
+        {
+            if (current == target) return true;
+            return visited.Add(current) && Bindings(pairs[current]).SelectMany(Edges).Any(next => Reaches(next, target, visited));
+        }
+        for (var index = 0; index < pairs.Count; index++)
+        {
+            var pair = pairs[index];
+            if (pair.Options.Mode != 1 || !pair.Options.PreserveReferences) continue;
+            var beforeCache = pair.Members.Where(m => m.IsInitOnly || m.IsRequired).Concat(pair.Constructor.Arguments.IsDefault
+                ? Enumerable.Empty<MemberModel>() : pair.Constructor.Arguments.Where(a => a.Binding is not null).Select(a => a.Binding!));
+            if (beforeCache.SelectMany(Edges).Any(next => Reaches(next, index, new HashSet<int>())))
+            {
+                diagnostics.Add(Diagnostic.Create(MapperDiagnostics.UnsupportedStructural,
+                    declarations[index].ApplicationSyntaxReference?.GetSyntax(cancellationToken).GetLocation(),
+                    "reference-preserved cycle traverses a constructor, init-only or required member before its destination can be cached"));
+                pairs[index] = pair with { Constructor = pair.Constructor with { IsSupported = false } };
+            }
+        }
+        // A failed declared pair must not leave a caller referring to a missing generated helper.
+        bool changed;
+        do
+        {
+            changed = false;
+            for (var index = 0; index < pairs.Count; index++)
+            {
+                var pair = pairs[index];
+                if (!pair.Constructor.IsSupported || !Bindings(pair).SelectMany(Edges).Any(next => !pairs[next].Constructor.IsSupported)) continue;
+                diagnostics.Add(Diagnostic.Create(MapperDiagnostics.UnsupportedStructural,
+                    declarations[index].ApplicationSyntaxReference?.GetSyntax(cancellationToken).GetLocation(),
+                    "a declared nested mapping pair is unsupported; fix its diagnostic before mapping this member"));
+                pairs[index] = pair with { Constructor = pair.Constructor with { IsSupported = false } };
+                changed = true;
+            }
+        } while (changed);
     }
 
     private static bool HaveSameSignatureType(ITypeSymbol left, ITypeSymbol right)
