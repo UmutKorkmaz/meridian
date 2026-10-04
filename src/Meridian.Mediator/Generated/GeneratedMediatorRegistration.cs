@@ -1,6 +1,8 @@
 using Microsoft.Extensions.DependencyInjection;
 using Meridian.Mediator.Extensions;
 using Meridian.Mediator.Pipeline;
+using Meridian.Mediator.Streaming;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 namespace Meridian.Mediator.Generated;
 /// <summary>Registration support called by generated consumer code.</summary>
 public static class GeneratedMediatorRegistration
@@ -53,10 +55,10 @@ public static class GeneratedMediatorRegistration
         var lifetime = config.Lifetime;
         var strict = config.RequireGeneratedDispatch;
         var effectiveStrict = strict || services.Any(d => d.ImplementationInstance is StrictMarker { Strict: true });
-        if (effectiveStrict && (config.AssembliesToScan.Count != 0 || config.OpenStreamBehaviors.Count != 0 || config.ClosedStreamBehaviors.Count != 0))
-            throw new InvalidOperationException("Strict generated dispatch cannot scan assemblies or configure unsupported stream behaviors.");
+        if (effectiveStrict && config.AssembliesToScan.Count != 0)
+            throw new InvalidOperationException("Strict generated dispatch cannot scan assemblies.");
 
-        if (effectiveStrict && services.Any(d => d.ServiceType == typeof(IPipelineBehavior<,>) || d.ImplementationType is { IsConstructedGenericType: true } implementation && implementation.GetGenericTypeDefinition() == typeof(RequestExceptionProcessorBehavior<,>)))
+        if (effectiveStrict && services.Any(d => d.ServiceType == typeof(IPipelineBehavior<,>) || d.ServiceType == typeof(IStreamPipelineBehavior<,>) || d.ImplementationType is { IsConstructedGenericType: true } implementation && implementation.GetGenericTypeDefinition() == typeof(RequestExceptionProcessorBehavior<,>)))
             throw new InvalidOperationException("Strict generated dispatch cannot use externally registered open pipeline descriptors; declare closed behavior factories in the registry.");
 
         var old = services.Where(d => d.ServiceType == typeof(RegistryMarker)).Select(d => (RegistryMarker)d.ImplementationInstance!).ToArray();
@@ -201,6 +203,92 @@ public static class GeneratedMediatorRegistration
         services.AddSingleton(current);
         return true;
     }
+    internal static bool NormalizeStreams(IServiceCollection services, MeridianMediatorConfiguration config)
+    {
+        var current = new StreamConfigurationMarker(config.ClosedStreamBehaviors.ToArray(), config.OpenStreamBehaviors.ToArray());
+        var configurations = services.Where(d => d.ImplementationInstance is StreamConfigurationMarker)
+            .Select(d => (StreamConfigurationMarker)d.ImplementationInstance!).Append(current).ToArray();
+        var registries = services.Where(d => d.ImplementationInstance is RegistryMarker)
+            .Select(d => (RegistryMarker)d.ImplementationInstance!).ToArray();
+        var strict = services.Any(d => d.ImplementationInstance is StrictMarker { Strict: true });
+        if (registries.Length == 0)
+        {
+            if (strict && configurations.Any(c => c.Closed.Length != 0 || c.Open.Length != 0))
+                throw new InvalidOperationException("Strict generated dispatch requires a registry declaring every configured stream behavior.");
+            services.AddSingleton(current);
+            return false;
+        }
+        var contributions = registries.Where(r => r.Registry is IGeneratedMediatorContributions)
+            .SelectMany(r => ((IGeneratedMediatorContributions)r.Registry).Contributions.Select(c => (Item: c, r.Lifetime))).ToArray();
+        var behaviors = contributions.Where(c => c.Item.Category == GeneratedMediatorCategory.StreamBehavior)
+            .GroupBy(c => (c.Item.ServiceType, c.Item.ImplementationType)).Select(g => g.First()).ToArray();
+        var pairs = contributions.Where(c => c.Item.Category == GeneratedMediatorCategory.StreamHandler)
+            .Select(c => c.Item.ServiceType.GenericTypeArguments).Select(a => (Request: a[0], Response: a[1])).Distinct().ToArray();
+        var capabilities = registries.SelectMany(r => r.Registry is IGeneratedMediatorBehaviorCapabilities metadata
+            ? metadata.BehaviorCapabilities : Array.Empty<GeneratedMediatorBehaviorCapability>()).ToArray();
+        var closed = configurations.SelectMany(c => c.Closed).Distinct().ToArray();
+        var open = configurations.SelectMany(c => c.Open).Distinct().ToArray();
+        var plan = new List<(GeneratedMediatorContribution? Item, Type Service, Type Implementation, ServiceLifetime Lifetime, GeneratedMediatorPhase Phase)>();
+        foreach (var entry in closed)
+        {
+            var match = behaviors.FirstOrDefault(b => b.Item.ServiceType == entry.ServiceType && b.Item.ImplementationType == entry.ImplementationType);
+            if (match.Item == null && strict)
+                throw new InvalidOperationException($"Stream behavior {entry.ImplementationType} has no generated closed contribution; declare it in StreamBehaviorTypes.");
+            plan.Add((match.Item, entry.ServiceType, entry.ImplementationType, ServiceLifetime.Transient, GeneratedMediatorPhase.ClosedStream));
+        }
+        foreach (var definition in open)
+        {
+            if (!strict)
+            {
+                plan.Add((null, typeof(IStreamPipelineBehavior<,>), definition, ServiceLifetime.Transient, GeneratedMediatorPhase.OpenStream));
+                continue;
+            }
+            var matches = behaviors.Where(b => b.Item.DefinitionType == definition).ToArray();
+            if (pairs.Length == 0 && matches.Length == 0)
+                throw new InvalidOperationException($"Stream behavior {definition} has no generated finite stream pairs; declare it in StreamBehaviorTypes.");
+            foreach (var pair in pairs)
+            {
+                var evidence = capabilities.Where(c => c.RequestType == pair.Request && c.ResponseType == pair.Response && c.DefinitionType == definition && c.Category == GeneratedMediatorCategory.StreamBehavior).ToArray();
+                var rooted = matches.Any(m => m.Item.ServiceType.GenericTypeArguments[0] == pair.Request && m.Item.ServiceType.GenericTypeArguments[1] == pair.Response);
+                if (evidence.Length == 0 && !rooted || evidence.Any(c => c.Applies) && !rooted || evidence.Any(c => !c.Applies) && rooted)
+                    throw new InvalidOperationException($"Stream behavior {definition} has no consistent generated closure for {pair.Request} / {pair.Response}; declare this finite pair.");
+            }
+            foreach (var match in matches)
+                plan.Add((match.Item, match.Item.ServiceType, match.Item.ImplementationType, ServiceLifetime.Transient, GeneratedMediatorPhase.OpenStream));
+        }
+        foreach (var behavior in behaviors)
+        {
+            if (!strict && behavior.Item.DefinitionType != null && open.Contains(behavior.Item.DefinitionType)) continue;
+            if (plan.Any(p => p.Service == behavior.Item.ServiceType && p.Implementation == behavior.Item.ImplementationType)) continue;
+            var lifetime = behavior.Item.Lifetime switch { GeneratedMediatorLifetime.Transient => ServiceLifetime.Transient, GeneratedMediatorLifetime.Singleton => ServiceLifetime.Singleton, _ => behavior.Lifetime };
+            plan.Add((behavior.Item, behavior.Item.ServiceType, behavior.Item.ImplementationType, lifetime, behavior.Item.Phase));
+        }
+        // Only exact descriptors owned by registration are removed; user factories survive.
+        foreach (var descriptor in services.Where(d => d.ImplementationInstance is FactoryMarker { Contribution.Category: GeneratedMediatorCategory.StreamBehavior } || d.ImplementationInstance is StreamDescriptorMarker).ToArray())
+        {
+            var owned = descriptor.ImplementationInstance is FactoryMarker factory ? factory.Descriptor : ((StreamDescriptorMarker)descriptor.ImplementationInstance!).Descriptor;
+            services.Remove(owned);
+            services.Remove(descriptor);
+        }
+        foreach (var item in plan.OrderBy(p => p.Phase))
+        {
+            if (item.Item != null) RegisterContribution(services, item.Item, item.Lifetime, lifetimeOverride: item.Lifetime);
+            else RegisterStreamBehavior(services, item.Service, item.Implementation);
+        }
+        services.AddSingleton(current);
+        return true;
+    }
+
+    internal static void RegisterStreamBehavior(IServiceCollection services, Type service, Type implementation)
+    {
+        var descriptor = ServiceDescriptor.Transient(service, implementation);
+        services.TryAddEnumerable(descriptor);
+        if (services.Any(d => ReferenceEquals(d, descriptor))) services.AddSingleton(new StreamDescriptorMarker(descriptor));
+    }
+
+    private sealed record StreamConfigurationMarker((Type ServiceType, Type ImplementationType)[] Closed, Type[] Open);
+    private sealed record StreamDescriptorMarker(ServiceDescriptor Descriptor);
+
     private sealed record ConfigurationMarker((Type ServiceType,Type ImplementationType,int Order,int RegistrationIndex,ServiceLifetime Lifetime)[] Behaviors,Type[] Pre,Type[] Post);
 
     internal static GeneratedMediatorComposition CreateComposition(IServiceProvider provider) => new(

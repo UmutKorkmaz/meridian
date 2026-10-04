@@ -94,6 +94,9 @@ public sealed class MeridianMediatorGenerator : IIncrementalGenerator
             var contracts = handler.AllInterfaces.Where(IsHandler).OrderBy(TypeName, StringComparer.Ordinal).ToArray();
             if (contracts.Any(c => c.TypeArguments[0] is INamedTypeSymbol request && request.AllInterfaces.Count(i => Is(i, "Meridian.Mediator.IRequest`1")) > 1))
             { classified = false; Error(MediatorDiagnostics.Unsupported, syntax.GetLocation(), TypeName(handler), "a request with incompatible response contracts has no unique dispatch slot"); continue; }
+            if (contracts.Any(c => Is(c, "Meridian.Mediator.Streaming.IStreamRequestHandler`2") &&
+                c.TypeArguments[0].AllInterfaces.Count(i => Is(i, "Meridian.Mediator.Streaming.IStreamRequest`1")) > 1))
+            { classified = false; Error(MediatorDiagnostics.Unsupported, syntax.GetLocation(), TypeName(handler), "a stream request with incompatible response contracts has no unique dispatch slot"); continue; }
             if (contracts.Length == 0) { classified = false; Error(MediatorDiagnostics.Invalid, syntax.GetLocation(), TypeName(handler), "type must implement a supported request, notification or stream handler contract"); continue; }
             // Match declared contracts before constructor validation to avoid false missing-handler cascades.
             var constructor = Constructor(context.SemanticModel.Compilation, registry, handler, out var reason);
@@ -182,7 +185,9 @@ public sealed class MeridianMediatorGenerator : IIncrementalGenerator
             b.Append("new ").Append(g).Append("GeneratedMediatorContribution(typeof(").Append(TypeName(entry.Contract)).Append("), typeof(").Append(TypeName(entry.Handler)).Append("), ").Append(entry.Definition == null ? "null" : "typeof(" + TypeName(entry.Definition.ConstructUnboundGenericType()) + ")").Append(", ").Append(g).Append("GeneratedMediatorCategory.").Append(entry.Category).Append(", ").Append(g).Append("GeneratedMediatorPhase.").Append(entry.Phase).Append(", ").Append(entry.Order).Append(", ").Append(ordinal++).Append(", ").Append(g).Append("GeneratedMediatorLifetime.").Append(entry.Lifetime).Append(", ").Append(g).Append("GeneratedMediatorActivation.").Append(entry.Activation).Append(", static sp => ").Append(entry.Constructor).Append("),\n");
         b.Append("});\npublic void RegisterServices(global::Microsoft.Extensions.DependencyInjection.IServiceCollection services, global::Microsoft.Extensions.DependencyInjection.ServiceLifetime handlerLifetime) { ").Append(g).Append("GeneratedMediatorRegistration.RegisterServices(services, Contributions, handlerLifetime, IncludesStandardPipeline); }\n");
         Emission.RequestRegistryEmitter.Emit(b, entries);
-        b.Append("public global::Meridian.Mediator.Wrappers.NotificationHandlerWrapperBase? FindNotificationHandler(global::System.Type notificationType) => null;\npublic global::Meridian.Mediator.Wrappers.StreamRequestHandlerBase? FindStreamHandler(global::System.Type requestType) => null;\n}\n");
+        Emission.NotificationRegistryEmitter.Emit(b, entries);
+        Emission.StreamRegistryEmitter.Emit(b, entries);
+        b.Append("}\n");
         if (!registry.ContainingNamespace.IsGlobalNamespace) b.Append("}\n");
         return b.ToString();
     }

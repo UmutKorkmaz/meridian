@@ -43,6 +43,46 @@ public class RegistryGenerationTests
         Assert.Contains(result.Result.Diagnostics, d => d.Id == "MERIDIANMED005");
     }
 
+    [Fact]
+    public void Ambiguous_Stream_Response_Is_Diagnosed()
+    {
+        var result=Generate("public sealed class S : Meridian.Mediator.Streaming.IStreamRequest<int>,Meridian.Mediator.Streaming.IStreamRequest<string> {} public sealed class H : Meridian.Mediator.Streaming.IStreamRequestHandler<S,int> { public System.Collections.Generic.IAsyncEnumerable<int> Handle(S s,CancellationToken c)=>throw new Exception(); } [GenerateMediatorRegistry(typeof(H))] public partial class Registry {}");
+        Assert.Contains(result.Result.Diagnostics,d=>d.Id=="MERIDIANMED005");
+    }
+
+    private const string StreamFixture = "public sealed class S : Meridian.Mediator.Streaming.IStreamRequest<int> {} public sealed class H : Meridian.Mediator.Streaming.IStreamRequestHandler<S,int> { public System.Collections.Generic.IAsyncEnumerable<int> Handle(S s,CancellationToken c) => throw new Exception(); } ";
+    [Fact]
+    public void Duplicate_Stream_Handler_Is_Diagnostic()
+    {
+        var result = Generate(StreamFixture + "public sealed class H2 : Meridian.Mediator.Streaming.IStreamRequestHandler<S,int> { public System.Collections.Generic.IAsyncEnumerable<int> Handle(S s,CancellationToken c) => throw new Exception(); } [GenerateMediatorRegistry(typeof(H),typeof(H2))] public partial class Registry {}");
+        Assert.Contains(result.Result.Diagnostics, d => d.Id == "MERIDIANMED002");
+    }
+    [Theory]
+    [InlineData("B<S,int>", "ClosedStream")]
+    [InlineData("B<,>", "OpenStream")]
+    public void Finite_Stream_Behavior_Emits_Closed_Factory_And_Wrapper(string selection, string phase)
+    {
+        var result = Generate(StreamFixture + "public sealed class B<Q,R> : Meridian.Mediator.Streaming.IStreamPipelineBehavior<Q,R> where Q : Meridian.Mediator.Streaming.IStreamRequest<R> { public System.Collections.Generic.IAsyncEnumerable<R> Handle(Q q, Meridian.Mediator.Streaming.StreamHandlerDelegate<R> next,CancellationToken c)=>next(); } [GenerateMediatorRegistry(typeof(H), StreamBehaviorTypes = new[]{typeof(" + selection + ")})] public partial class Registry {}", true);
+        var registry = Load(result);
+        Assert.NotNull(registry.FindStreamHandler(registry.StreamTypes.Single()));
+        var contribution = Assert.Single(((IGeneratedMediatorContributions)registry).Contributions.Where(c=>c.Category == GeneratedMediatorCategory.StreamBehavior));
+        Assert.Equal(phase, contribution.Phase.ToString());
+        var services = new ServiceCollection(); registry.RegisterServices(services,ServiceLifetime.Scoped);
+        using var provider = services.BuildServiceProvider();
+        Assert.NotNull(provider.GetRequiredService(contribution.ServiceType));
+        Assert.DoesNotContain("MakeGenericType", RegistrySource(result));
+        Assert.DoesNotContain("Activator", RegistrySource(result));
+    }
+    [Fact]
+    public void Stream_Marker_Constraint_Has_Distinct_Finite_Category()
+    {
+        var result = Generate(StreamFixture + "public interface Marker {} public sealed class B<Q,R> : Meridian.Mediator.Streaming.IStreamPipelineBehavior<Q,R> where Q : Meridian.Mediator.Streaming.IStreamRequest<R>, Marker { public System.Collections.Generic.IAsyncEnumerable<R> Handle(Q q,Meridian.Mediator.Streaming.StreamHandlerDelegate<R> next,CancellationToken c)=>next(); } [GenerateMediatorRegistry(typeof(H),StreamBehaviorTypes=new[]{typeof(B<,>)})] public partial class Registry {}", true);
+        var registry = Load(result);
+        var capability = Assert.Single(((IGeneratedMediatorBehaviorCapabilities)registry).BehaviorCapabilities);
+        Assert.Equal(GeneratedMediatorCategory.StreamBehavior, capability.Category);
+        Assert.False(capability.Applies);
+    }
+
     private const string Prefix = "using System; using System.Threading; using System.Threading.Tasks; using Meridian.Mediator; using Meridian.Mediator.Generated; ";
     private const string Handler = "public sealed class Q : IRequest<int> {} public sealed class H : IRequestHandler<Q,int> { public Task<int> Handle(Q q, CancellationToken c) => Task.FromResult(42); } ";
     private static readonly MetadataReference[] References = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator).Append(typeof(IRequest<>).Assembly.Location).Append(typeof(Microsoft.Extensions.DependencyInjection.IServiceCollection).Assembly.Location).Distinct().Select(p => MetadataReference.CreateFromFile(p)).ToArray();

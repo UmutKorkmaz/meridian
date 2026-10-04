@@ -11,12 +11,13 @@ namespace Meridian.Mediator.Generators.Emission;
 
 internal static class BehaviorRegistryEmitter
 {
-    internal sealed class Capability(INamedTypeSymbol request, ITypeSymbol response, INamedTypeSymbol definition, bool applies)
+    internal sealed class Capability(INamedTypeSymbol request, ITypeSymbol response, INamedTypeSymbol definition, bool applies, string category = "Behavior")
     {
         internal INamedTypeSymbol Request { get; } = request;
         internal ITypeSymbol Response { get; } = response;
         internal INamedTypeSymbol Definition { get; } = definition;
         internal bool Applies { get; } = applies;
+        internal string Category { get; } = category;
     }
 
     internal static List<Capability> Build(Compilation compilation, INamedTypeSymbol registry,
@@ -27,6 +28,8 @@ internal static class BehaviorRegistryEmitter
         var requests = entries.Where(e => e.Category == "RequestHandler")
             .Select(e => (INamedTypeSymbol)e.Contract.TypeArguments[0]).Distinct(SymbolEqualityComparer.Default).Cast<INamedTypeSymbol>().ToArray();
         var pairs = requests.Select(q => (Q: q, R: q.AllInterfaces.Single(i => Is(i, "Meridian.Mediator.IRequest`1")).TypeArguments[0])).ToArray();
+        var streamPairs = entries.Where(e => e.Category == "StreamHandler")
+            .Select(e => (Q: (INamedTypeSymbol)e.Contract.TypeArguments[0], R: e.Contract.TypeArguments[1])).ToArray();
         INamedTypeSymbol Close(string metadata, params ITypeSymbol[] types) => compilation.GetTypeByMetadataName(metadata)!.Construct(types);
         void Add(INamedTypeSymbol implementation, INamedTypeSymbol contract, string category, string phase = "Handler", string activation = "Declared", int order = 0, INamedTypeSymbol? definition = null, string? factory = null)
         {
@@ -44,6 +47,7 @@ internal static class BehaviorRegistryEmitter
         {
             var metadata = option.Key switch
             {
+                "StreamBehaviorTypes" => "Meridian.Mediator.Streaming.IStreamPipelineBehavior`2",
                 "BehaviorTypes" => "Meridian.Mediator.Pipeline.IPipelineBehavior`2",
                 "ValidatorTypes" => "Meridian.Mediator.Behaviors.IValidator`1",
                 "PreProcessorTypes" => "Meridian.Mediator.Pipeline.IRequestPreProcessor`1",
@@ -54,7 +58,7 @@ internal static class BehaviorRegistryEmitter
             };
             foreach (var selected in option.Value)
             {
-                if (metadata.Length == 0) { error(MediatorDiagnostics.Unsupported, location, option.Key, "stream behaviors require the D3 stream capability"); continue; }
+                if (metadata.Length == 0) { error(MediatorDiagnostics.Unsupported, location, option.Key, "unsupported contribution option"); continue; }
                 var definition = selected.OriginalDefinition;
                 var contracts = definition.AllInterfaces.Where(i => Is(i, metadata)).ToArray();
                 if (contracts.Length == 0) { error(MediatorDiagnostics.Invalid, location, TypeName(selected), "type does not implement the declared contribution contract"); continue; }
@@ -65,18 +69,18 @@ internal static class BehaviorRegistryEmitter
                         AddSelected(selected, contract, null);
                     continue;
                 }
-                if (option.Key != "BehaviorTypes") { error(MediatorDiagnostics.Unsupported, location, TypeName(selected), "only pipeline behaviors may be open; supply explicit closed types"); continue; }
+                if (option.Key is not ("BehaviorTypes" or "StreamBehaviorTypes")) { error(MediatorDiagnostics.Unsupported, location, TypeName(selected), "only pipeline behaviors may be open; supply explicit closed types"); continue; }
                 if (definition.Arity != 2 || definition.ContainingType is { Arity: > 0 } || contracts.Length != 1 ||
                     contracts[0].TypeArguments.Any(t => t is not ITypeParameterSymbol) ||
                     SymbolEqualityComparer.Default.Equals(contracts[0].TypeArguments[0], contracts[0].TypeArguments[1]))
                 { error(MediatorDiagnostics.Unsupported, location, TypeName(selected), "supported open behaviors map two distinct type parameters directly to request and response"); continue; }
-                foreach (var pair in pairs)
+                foreach (var pair in category == "StreamBehavior" ? streamPairs : pairs)
                 {
                     var arguments = definition.TypeParameters.Select(p => SymbolEqualityComparer.Default.Equals(p, contracts[0].TypeArguments[0]) ? pair.Q : pair.R).ToArray();
                     var closed = definition.Construct(arguments);
                     var applies = SatisfiesConstraints(compilation, registry, closed, out var constraintError);
                     if (constraintError != null) { error(MediatorDiagnostics.Unsupported, location, TypeName(closed), constraintError); continue; }
-                    capabilities.Add(new Capability(pair.Q, pair.R, definition, applies));
+                    capabilities.Add(new Capability(pair.Q, pair.R, definition, applies, category));
                     if (applies) AddSelected(closed, Close(metadata, pair.Q, pair.R), definition);
                 }
 
@@ -90,7 +94,7 @@ internal static class BehaviorRegistryEmitter
                         if (!declared) { error(MediatorDiagnostics.Unsupported, location, TypeName(implementation), "declare finite exception handlers or actions for this request before selecting the exception driver"); return; }
                         Add(Close("Meridian.Mediator.Generated.GeneratedRequestExceptionProcessorBehavior`2", q,r), contract, "Behavior", "Request", definition: implementation.OriginalDefinition, factory: "new global::Meridian.Mediator.Generated.GeneratedRequestExceptionProcessorBehavior<"+TypeName(q)+", "+TypeName(r)+">(sp)");
                     }
-                    else Add(implementation, contract, category, category == "Behavior" ? "Request" : "Handler", definition: open,
+                    else Add(implementation, contract, category, category == "Behavior" ? "Request" : category == "StreamBehavior" ? (open == null ? "ClosedStream" : "OpenStream") : "Handler", definition: open,
                         factory: Is(implementation, "Meridian.Mediator.Behaviors.AuditBehavior`2") ? AuditFactory(implementation) : null);
                 }
             }
@@ -171,7 +175,7 @@ internal static class BehaviorRegistryEmitter
         const string g = "global::Meridian.Mediator.Generated.";
         b.Append("public global::System.Collections.Generic.IReadOnlyList<").Append(g).Append("GeneratedMediatorBehaviorCapability> BehaviorCapabilities { get; } = global::System.Array.AsReadOnly(new ").Append(g).Append("GeneratedMediatorBehaviorCapability[] {\n");
         foreach (var c in capabilities)
-            b.Append("new ").Append(g).Append("GeneratedMediatorBehaviorCapability(typeof(").Append(TypeName(c.Request)).Append("), typeof(").Append(TypeName(c.Response)).Append("), typeof(").Append(TypeName(c.Definition.ConstructUnboundGenericType())).Append("), ").Append(g).Append("GeneratedMediatorCategory.Behavior, ").Append(c.Applies ? "true" : "false").Append("),\n");
+            b.Append("new ").Append(g).Append("GeneratedMediatorBehaviorCapability(typeof(").Append(TypeName(c.Request)).Append("), typeof(").Append(TypeName(c.Response)).Append("), typeof(").Append(TypeName(c.Definition.ConstructUnboundGenericType())).Append("), ").Append(g).Append("GeneratedMediatorCategory.").Append(c.Category).Append(", ").Append(c.Applies ? "true" : "false").Append("),\n");
         b.Append("});\n");
     }
 }

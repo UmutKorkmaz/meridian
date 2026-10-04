@@ -184,9 +184,7 @@ public class Mediator : IMediator
         ArgumentNullException.ThrowIfNull(request);
 
         var requestType = request.GetType();
-        if (_generated.RequireGeneratedDispatch) throw new NotSupportedException("Generated stream dispatch requires the stream capability (D3).");
-        var handler = (StreamRequestHandlerWrapper<TResponse>)_streamRequestHandlers.GetOrAdd(requestType,
-            static t => CreateStreamHandler(t));
+        var handler = (StreamRequestHandlerWrapper<TResponse>)FindStreamHandler(requestType);
 
         if (!ActivitySourceInstance.HasListeners())
         {
@@ -207,8 +205,7 @@ public class Mediator : IMediator
         ArgumentNullException.ThrowIfNull(request);
 
         var requestType = request.GetType();
-        if (_generated.RequireGeneratedDispatch) throw new NotSupportedException("Generated stream dispatch requires the stream capability (D3).");
-        var handler = _streamRequestHandlers.GetOrAdd(requestType, static t => CreateStreamHandler(t));
+        var handler = FindStreamHandler(requestType);
 
         if (!ActivitySourceInstance.HasListeners())
         {
@@ -225,9 +222,11 @@ public class Mediator : IMediator
 
     private Task PublishNotification(INotification notification, CancellationToken cancellationToken)
     {
-        if (_generated.RequireGeneratedDispatch) throw new NotSupportedException("Generated notification dispatch requires the notification capability (D3).");
         var notificationType = notification.GetType();
-        var handler = _notificationHandlers.GetOrAdd(notificationType,
+        var handler = _generated.FindNotificationHandler(notificationType);
+        if (handler == null && _generated.RequireGeneratedDispatch)
+            throw new InvalidOperationException($"No generated notification dispatch for {notificationType}. Declare its closed handler and register the matching generated registry.");
+        handler ??= _notificationHandlers.GetOrAdd(notificationType,
             static t =>
             {
                 var wrapperType = typeof(NotificationHandlerWrapperImpl<>).MakeGenericType(t);
@@ -235,6 +234,15 @@ public class Mediator : IMediator
             });
 
         return handler.Handle(notification, _serviceProvider, _publisher, cancellationToken);
+    }
+
+    private StreamRequestHandlerBase FindStreamHandler(Type requestType)
+    {
+        var generated = _generated.FindStreamHandler(requestType);
+        if (generated != null) return generated;
+        if (_generated.RequireGeneratedDispatch)
+            throw new InvalidOperationException($"No generated stream dispatch for {requestType}. Declare its closed handler and register the matching generated registry.");
+        return _streamRequestHandlers.GetOrAdd(requestType, static t => CreateStreamHandler(t));
     }
 
     private RequestHandlerBase FindRequestHandler(Type requestType)
