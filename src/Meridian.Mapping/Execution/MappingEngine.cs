@@ -369,6 +369,7 @@ public class MappingEngine
                 value = (propertyMap.AllowNull ?? _configurationProvider.AllowNullCollections)
                     ? null
                     : CreateEmptyCollection(destPropType, destElemType!);
+                declaredValueType = null;
             }
 
             if (value != null && propertyMap.UseDestinationValue == true)

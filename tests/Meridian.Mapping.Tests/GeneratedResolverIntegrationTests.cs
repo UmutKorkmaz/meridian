@@ -509,6 +509,123 @@ public class GeneratedResolverIntegrationTests
         }
     }
 
+    [Theory]
+    [InlineData(false, "default")]
+    [InlineData(true, "default")]
+    [InlineData(false, "global-null")]
+    [InlineData(true, "global-null")]
+    [InlineData(false, "member-null")]
+    [InlineData(true, "member-null")]
+    public void Null_Normalization_Collection_Does_Not_Dispatch_Original_Source_Pair(bool explicitMap, string policy)
+    {
+        var resolver = new NormalizationResolver(typeof(IEnumerable<NormalizationSource>), typeof(IEnumerable<NormalizationDto>),
+            value => ((IEnumerable<NormalizationSource>)value!).Select(x => new NormalizationDto { Value = x.Value }).ToList());
+        var actions = 0;
+        var configuration = new MapperConfiguration(c =>
+        {
+            c.UseGeneratedMappings(resolver);
+            c.AllowNullCollections = policy == "global-null";
+            var map = c.CreateMap<NormalizationParent, NormalizationParentDto>();
+            if (policy == "member-null") map.ForMember(d => d.Values, o => { o.MapFrom(s => s.Values); o.AllowNull(); });
+            if (explicitMap) c.CreateMap<IEnumerable<NormalizationSource>, IEnumerable<NormalizationDto>>()
+                .ConvertUsing(source => { actions++; return source.Select(x => new NormalizationDto { Value = x.Value }).ToList(); });
+        });
+        // Collection members are deliberately ineligible for the compiled fast path.
+        Assert.Null(configuration.FindTypeMap(typeof(NormalizationParent), typeof(NormalizationParentDto))!.CompiledFastPath);
+        var mapped = configuration.CreateMapper().Map<NormalizationParent, NormalizationParentDto>(new());
+        if (policy == "default") Assert.Empty(Assert.IsAssignableFrom<IEnumerable<NormalizationDto>>(mapped.Values));
+        else Assert.Null(mapped.Values);
+        Assert.Equal(0, actions);
+        Assert.Equal(0, resolver.Calls);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public void Null_Normalization_Value_Default_Does_Not_Dispatch_Original_Source_Pair(bool interpreter, bool explicitMap)
+    {
+        var resolver = new NormalizationResolver(typeof(int?), typeof(long), value => (long)(int)value!);
+        var actions = 0;
+        var configuration = new MapperConfiguration(c =>
+        {
+            c.UseGeneratedMappings(resolver);
+            if (explicitMap) c.CreateMap<int?, long>().ConvertUsing(source => { actions++; return source ?? 0; });
+            var map = c.CreateMap<NormalizationValueSource, NormalizationValueDto>();
+            if (interpreter) map.AfterMap((s, d) => { });
+        });
+        Assert.Equal(!interpreter, configuration.FindTypeMap(typeof(NormalizationValueSource), typeof(NormalizationValueDto))!.CompiledFastPath is not null);
+        Assert.Equal(0, configuration.CreateMapper().Map<NormalizationValueSource, NormalizationValueDto>(new()).Value);
+        Assert.Equal(0, actions);
+        Assert.Equal(0, resolver.Calls);
+    }
+
+    [Fact]
+    public void Null_Normalization_Preserves_Runtime_Pair_Descriptor_For_Synthesized_Value()
+    {
+        var resolver = new NormalizationResolver(typeof(List<NormalizationDto>), typeof(IEnumerable<NormalizationDto>),
+            value => ((List<NormalizationDto>)value!).Append(new NormalizationDto { Value = 77 }).ToList());
+        var configuration = new MapperConfiguration(c =>
+        { c.UseGeneratedMappings(resolver); c.CreateMap<NormalizationParent, NormalizationParentDto>(); });
+        var mapped = configuration.CreateMapper().Map<NormalizationParent, NormalizationParentDto>(new());
+        Assert.Equal(77, Assert.Single(mapped.Values!).Value);
+        Assert.Equal(1, resolver.Calls);
+    }
+
+    [Fact]
+    public void Null_Normalization_Preserves_Genuine_Nonnull_Declared_Descriptor_Fallback()
+    {
+        var resolver = new NormalizationResolver(typeof(IEnumerable<NormalizationDto>), typeof(IEnumerable<NormalizationDto>),
+            value => ((IEnumerable<NormalizationDto>)value!).Select(x => new NormalizationDto { Value = x.Value + 1 }).ToList());
+        var configuration = new MapperConfiguration(c =>
+        { c.UseGeneratedMappings(resolver); c.CreateMap<NormalizationParentDto, NormalizationParentDto>(); });
+        var source = new List<NormalizationDto> { new() { Value = 42 } };
+        var mapped = configuration.CreateMapper().Map<NormalizationParentDto, NormalizationParentDto>(new() { Values = source });
+        Assert.NotSame(source, mapped.Values);
+        Assert.Equal(43, Assert.Single(mapped.Values!).Value);
+        Assert.Equal(1, resolver.Calls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Null_Normalization_Existing_Destination_And_Reuse_Exclude_Declared_Descriptor(bool reuse)
+    {
+        var resolver = new NormalizationResolver(typeof(IEnumerable<NormalizationSource>), typeof(IEnumerable<NormalizationDto>),
+            value => throw new InvalidOperationException("Unexpected declared descriptor"));
+        var configuration = new MapperConfiguration(c =>
+        {
+            c.UseGeneratedMappings(resolver);
+            var map = c.CreateMap<NormalizationParent, NormalizationParentDto>();
+            if (reuse) map.ForMember(d => d.Values, o => { o.MapFrom(s => s.Values); o.UseDestinationValue(); });
+        });
+        var original = new List<NormalizationDto> { new() { Value = 42 } };
+        var destination = new NormalizationParentDto { Values = original };
+        var mapped = configuration.CreateMapper().Map(new NormalizationParent(), destination);
+        Assert.Same(destination, mapped);
+        if (reuse) Assert.Same(original, mapped.Values);
+        Assert.Empty(mapped.Values!);
+        Assert.Equal(0, resolver.Calls);
+    }
+
+    public sealed class NormalizationSource { public int Value { get; set; } }
+    public sealed class NormalizationDto { public int Value { get; set; } }
+    public sealed class NormalizationParent { public IEnumerable<NormalizationSource>? Values { get; set; } }
+    public sealed class NormalizationParentDto { public IEnumerable<NormalizationDto>? Values { get; set; } }
+    public sealed class NormalizationValueSource { public int? Value { get; set; } }
+    public sealed class NormalizationValueDto { public long Value { get; set; } }
+    private sealed class NormalizationResolver(Type sourceType, Type destinationType, Func<object?, object?> map) : IGeneratedMappingResolver
+    {
+        public int Calls;
+        public bool TryGetMapping(Type source, Type destination, out GeneratedMappingDescriptor? mapping)
+        {
+            mapping = source == sourceType && destination == destinationType
+                ? new GeneratedMappingDescriptor(source, destination, (value, context) => { Calls++; return map(value); }) : null;
+            return mapping is not null;
+        }
+    }
+
     private const string Fixture = """
         using System;
         using System.Collections.Generic;
