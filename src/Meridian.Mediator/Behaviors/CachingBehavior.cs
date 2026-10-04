@@ -49,6 +49,13 @@ public interface ICacheProvider
     Task RemoveAsync(string key, CancellationToken cancellationToken);
 }
 
+/// <summary>Controls optional cache-miss coalescing.</summary>
+public sealed record CachingBehaviorOptions
+{
+    /// <summary>Gets or sets whether misses use an optional concurrent provider. Defaults to false.</summary>
+    public bool EnableRequestCoalescing { get; init; }
+}
+
 /// <summary>
 /// Marker interface for requests that invalidate cache entries.
 /// Implement this on command-type requests that modify data which is cached by queries.
@@ -91,6 +98,11 @@ public class CachingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, 
             return typedValue;
         }
 
+        if (!found && _options.EnableRequestCoalescing && _cacheProvider is IConcurrentCacheProvider concurrentProvider)
+        {
+            return await HandleCoalescedAsync(request, next, key, concurrentProvider, cancellationToken);
+        }
+
         var response = await next();
 
         if (response is not null)
@@ -98,6 +110,38 @@ public class CachingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, 
             await _cacheProvider.SetAsync(request.CacheKey, response, request.CacheDuration, cancellationToken);
         }
 
+        return response;
+    }
+
+    private async Task<TResponse> HandleCoalescedAsync(TRequest request, RequestHandlerDelegate<TResponse> next,
+        string key, IConcurrentCacheProvider concurrentProvider, CancellationToken cancellationToken)
+    {
+        var factoryCompleted = false;
+        TResponse ownResponse = default!;
+        var shared = await concurrentProvider.GetOrCreateAsync(key, async _ =>
+        {
+            ownResponse = await next();
+            factoryCompleted = true;
+            return ownResponse;
+        }, request.CacheDuration, cancellationToken);
+
+        if (shared is TResponse compatible)
+        {
+            return compatible;
+        }
+        if (factoryCompleted)
+        {
+            // Our successful factory supplies provenance even when its response is null.
+            return ownResponse;
+        }
+
+        // Untyped shared null or an incompatible response is a typed miss for this caller.
+        // Do not re-enter coalescing: a second-read hit may stay incompatible indefinitely.
+        var response = await next();
+        if (response is not null)
+        {
+            await _cacheProvider.SetAsync(key, response, request.CacheDuration, cancellationToken);
+        }
         return response;
     }
 }
