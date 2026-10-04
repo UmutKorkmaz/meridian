@@ -79,3 +79,123 @@ Redis are separate integrations.
 
 See [Microsoft memory cache guidance](https://learn.microsoft.com/en-us/aspnet/core/performance/caching/memory?view=aspnetcore-10.0)
 and the [Memory 10.0.9 package metadata](https://www.nuget.org/packages/Microsoft.Extensions.Caching.Memory/10.0.9).
+
+Distributed caching uses a borrowed `IDistributedCache`; configure its transport
+separately. This package has no Redis client dependency. The Redis backend used by
+our provider tests is a test-only dependency. Register every local response type
+explicitly with stable contract IDs, positive schemas, and metadata that supports
+source-generated deserialization:
+
+```csharp
+using System.Text.Json.Serialization;
+
+var contracts = new CacheContractRegistry()
+    .RegisterContract("product.v1", 1, CacheJson.Default.Product);
+services.AddMeridianDistributedCaching(contracts, options =>
+{
+    options.ApplicationKeyPrefix = "catalog";
+    options.MaximumEntryBytes = 1024 * 1024; // Total framed entry; positive.
+});
+
+public sealed record Product(string Name);
+[JsonSerializable(typeof(Product))]
+internal partial class CacheJson : JsonSerializerContext { }
+```
+
+`ICacheValueSerializer` has exactly `GetContractId(Type)`,
+`Serialize(object?, string) -> byte[]`, and
+`Deserialize(ReadOnlyMemory<byte>, string) -> object?`. The built-in JSON serializer
+uses registered `JsonTypeInfo` exclusively; no assembly-qualified type name,
+`Type.GetType`, assembly scan or reflection fallback activates remote data.
+An exact runtime type selects the contract for an ordinary non-null cache write.
+One ID maps to one exact local type/schema/metadata, and each type has one ID.
+Exact repeated metadata registrations are idempotent before freeze; conflicts
+fail. Registration, serializer or codec construction freezes the registry and
+makes its metadata read-only. Use independently configured registries with the
+same stable IDs and schema versions across application instances.
+
+`CacheValueCodec` owns outer framing: ASCII `MRCV`, version byte 1, big-endian
+uint16 ID byte count (1–128), ASCII `[A-Za-z0-9._-]` ID, big-endian positive int32
+schema, then opaque serializer body. Default total size is 1 MiB. Header, lengths,
+version, ID, schema and local expected contract are validated before invoking a
+body serializer. Custom non-JSON serializers share this framing and explicit
+registry; they replace only the body format. Encode/local mapping/type/size
+failures propagate. `Decode(envelope, expectedContractId)` additionally verifies
+a known local expected contract, and can replay null for a reference or nullable
+contract. Ordinary cache always removes decoded null and misses; it never turns
+ambiguous C2 null into a typed response.
+
+Only `CacheValueDataException` means remote input rejection. Built-in JSON converts
+`JsonException` around deserialization into a redacted data exception; application
+converters must reserve `JsonException` for input rejection and use ordinary
+exceptions for programming faults. Custom serializers explicitly opt into this
+data boundary. Wrong returned CLR types and unrelated converter/configuration
+errors propagate. Corrupt, unknown, schema-incompatible or null ordinary entries
+increment `meridian.cache.entry_rejections` on the `Meridian.Mediator.Caching`
+meter with a finite `reason` label, await removal of the same key, and miss only
+if removal succeeds. No key, contract ID, payload, identity, raw exception message
+or per-key suppression state appears in these default diagnostics. Get/set/remove
+transport failures and cancellation propagate, including removal failures.
+`IDistributedCache` cannot compare-and-delete: corrupt-read removal racing a good
+writer can remove its fresh value and lose a cache hit. It never returns corrupted
+data and provides no fencing guarantee.
+
+Opt into authenticated partitioning explicitly:
+
+```csharp
+services.AddMeridianCacheScope<AuthenticatedPartition>();
+// Either memory or distributed registration may precede/follow this call.
+// AuthenticatedPartition : ICacheKeyScope is application supplied and scoped.
+```
+
+Authentication/authorization must complete before cache lookup. The application
+must return a stable nonempty partition throughout that DI scope. Missing,
+whitespace-only, invalid Unicode or changing identity fails before backend I/O;
+observed change during an owned factory fails before storage, and an observed change during a read fails before returning its response. Authentication identity itself must remain immutable; a change and revert between observations cannot be universally detected. Personalized responses
+require a tenant **and user** (and relevant authorization/version) partition,
+or a complete user-specific logical input key. Tenant-only scope is insufficient.
+Use `CacheKeyDecorator.Compose(userId, tenantId, authorizationVersion)` to build
+an unambiguous partition; the library invents no authenticated identity.
+
+`CacheKeyDecorator.Compose(key, applicationPrefix, scope)` preserves an
+undecorated logical key verbatim when both dimensions are absent. Decorated keys
+use `MRCKey1:` plus base64 of presence flags and big-endian lengths over strict
+UTF-8 segments (application/scope/key). Decorated inputs require well-formed
+Unicode: unpaired surrogates are rejected, never replacement-normalized.
+Delimiters, Unicode, absent dimensions, and marker-looking raw keys cannot
+collide. All get/set/remove and forwarded concurrent operations decorate once;
+backend providers accept effective keys. `ScopedCacheProvider.Create` supports
+explicit manual composition over a custom raw provider and preserves its actual
+concurrent capability. Wrapping an already decorated provider fails clearly.
+
+Repeated registrations expose one provider. First options win and all calls are
+validated; conflicting memory/distributed backend or scope choices fail clearly.
+Custom pre-registered providers remain preserved; automatic scope decoration of
+unowned providers fails and requires explicit manual composition. Default memory
+without decoration retains its C2 singleton identity. Prefix-only memory is a
+singleton concurrent wrapper. Authenticated memory has per-DI-scope raw providers
+and wrappers over the shared backend: warm values can be shared within the same
+partition, but active misses cannot join across scopes. Within one scope the C2
+owner/waiter cancellation, direct-await lifetime, reentry guard, cleanup and
+per-caller ambiguous-null fallback remain intact. Distributed raw providers,
+serializers and codecs are scoped by default, support scoped custom serializers,
+and advertise no distributed coalescing/lock. Providers and wrappers borrow and
+never dispose DI backends.
+
+Changing prefix, authenticated partition, decoration version, contract schema or
+request-type key names creates a cold cache namespace cutover. Let old values
+expire or remove only explicitly authorized old keys. Never dual-read unscoped
+private data into scoped entries or automatically clear a database. C4 owned
+idempotency records require coordinated retention/reconciliation migration:
+changing namespace can bypass replay protection. C4 reuses `CacheValueCodec`,
+`CacheContractRegistry.GetSchemaVersion` and `CacheKeyDecorator`; it must fail
+closed on data rejection, retain replay protection and never use C3 eviction as
+an idempotency recovery policy. A lease already carries an effective key and
+completion/release/renewal must use it verbatim; reconciliation starts from a
+logical key and decorates once.
+
+Ordinary unprovisioned tests use `--filter "Provider!=Redis"`; selecting
+`Provider=Redis` requires `MERIDIAN_TEST_REDIS` and fails if absent. CI provisions
+an isolated pinned Redis service and runs that required lane on all supported
+frameworks. The package consumer disables JSON reflection and uses separately
+configured registries and source-generated metadata; the fresh-package consumer also uses Redis when `MERIDIAN_TEST_REDIS` is explicitly supplied (set `MERIDIAN_TEST_REDIS_REQUIRED=1` to require this lane and fail on a missing endpoint) and otherwise uses `MemoryDistributedCache`. Its transport receipt is separate from the common assertion line. The Redis dependency belongs only to test projects/consumers, never the Caching/core packages.

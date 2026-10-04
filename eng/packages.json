@@ -204,6 +204,21 @@
         "legacy"
       ],
       "baselineComparison": false
+    },
+    {
+      "id": "Meridian.DistributedCachingConsumer",
+      "project": "tests/consumers/Meridian.DistributedCachingConsumer/Meridian.DistributedCachingConsumer.csproj",
+      "sourceFiles": [
+        "tests/consumers/Meridian.DistributedCachingConsumer/Meridian.DistributedCachingConsumer.csproj",
+        "tests/consumers/Meridian.DistributedCachingConsumer/Program.cs"
+      ],
+      "packageIds": [
+        "Meridian.Mediator.Caching"
+      ],
+      "variants": [
+        "legacy"
+      ],
+      "baselineComparison": false
     }
   ]
 }
