@@ -272,3 +272,59 @@ jobs:
             artifacts/redis-packages/**
             artifacts/redis-package-consumers/**
           retention-days: 14
+
+  ef-transactions:
+    name: EF transactions (${{ matrix.framework }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [net8.0, net9.0, net10.0]
+    services:
+      postgres:
+        image: postgres:16.4-alpine@sha256:5660c2cbfea50c7a9127d17dc4e48543eedd3d7a41a595a2dfa572471e37e64c
+        env:
+          POSTGRES_PASSWORD: meridian_test_only
+          POSTGRES_DB: meridian_ef_test
+        ports: ['5432/tcp']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d meridian_ef_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+      redis:
+        image: redis:7.4-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+        ports: ['6379/tcp']
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      DOTNET_ROLL_FORWARD: LatestPatch
+      DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
+      MERIDIAN_TEST_POSTGRES: Host=127.0.0.1;Port=${{ job.services.postgres.ports[5432] }};Database=meridian_ef_test;Username=postgres;Password=meridian_test_only
+      MERIDIAN_TEST_REDIS: 127.0.0.1:${{ job.services.redis.ports[6379] }}
+      MATRIX_FRAMEWORK: ${{ matrix.framework }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: |
+            8.0.421
+            9.0.318
+            10.0.300
+      - name: Execute required EF8 transactions and real provider contracts
+        run: >-
+          dotnet test tests/Meridian.Mediator.EntityFrameworkCore.Tests/Meridian.Mediator.EntityFrameworkCore.Tests.csproj
+          -c Release -f "$MATRIX_FRAMEWORK" --logger "trx;LogFileName=ef8.trx"
+          --results-directory artifacts/ef-transactions
+      - name: Pack all packages and execute isolated EF10 compatibility
+        if: matrix.framework == 'net10.0'
+        shell: pwsh
+        run: |
+          ./eng/pack-packages.ps1 -CandidateVersion 2.1.4-ci.ef -OutputDirectory artifacts/ef-feed
+          ./eng/verify-packages.ps1 -CandidateVersion 2.1.4-ci.ef -Feed artifacts/ef-feed -OutputDirectory artifacts/ef-consumers
+          ./eng/test-ef10-compatibility.ps1 -CandidateVersion 2.1.4-ci.ef -Feed artifacts/ef-feed
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ef-transactions-${{ matrix.framework }}
+          path: |
+            artifacts/ef-transactions/**
+            artifacts/ef10-compatibility/**
+            artifacts/ef-consumers/**

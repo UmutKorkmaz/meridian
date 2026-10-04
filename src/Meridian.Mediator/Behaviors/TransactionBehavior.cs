@@ -62,6 +62,23 @@ public class TransactionBehavior<TRequest, TResponse> : IPipelineBehavior<TReque
     /// <inheritdoc/>
     public async Task<TResponse> Handle(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken cancellationToken)
     {
+        if (_transactionProvider is ITransactionExecutionProvider executionProvider)
+        {
+            try
+            {
+                return await executionProvider.ExecuteAsync(token =>
+                {
+                    token.ThrowIfCancellationRequested();
+                    return next();
+                }, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception failure)
+            {
+                BehaviorFailure.SuppressRetry(failure);
+                throw;
+            }
+        }
+
         var transaction = await _transactionProvider.BeginAsync(cancellationToken).ConfigureAwait(false);
         TResponse response = default!;
         List<Exception>? failures = null;

@@ -133,6 +133,29 @@
         "Meridian.Mediator"
       ],
       "licenseExpression": "MIT"
+    },
+    {
+      "id": "Meridian.Mediator.EntityFrameworkCore",
+      "project": "src/Meridian.Mediator.EntityFrameworkCore/Meridian.Mediator.EntityFrameworkCore.csproj",
+      "kind": "runtime",
+      "versionSource": "Version",
+      "baselineVersion": null,
+      "targetFrameworks": [
+        "net8.0",
+        "net9.0",
+        "net10.0"
+      ],
+      "analyzerPaths": [],
+      "directPackageDependencies": [
+        {
+          "id": "Microsoft.EntityFrameworkCore.Relational",
+          "version": "8.0.20"
+        }
+      ],
+      "projectDependencies": [
+        "Meridian.Mediator"
+      ],
+      "licenseExpression": "MIT"
     }
   ],
   "compilerHosts": [
@@ -253,6 +276,21 @@
       ],
       "packageIds": [
         "Meridian.Mediator.Redis"
+      ],
+      "variants": [
+        "legacy"
+      ],
+      "baselineComparison": false
+    },
+    {
+      "id": "Meridian.EfTransactionsConsumer",
+      "project": "tests/consumers/Meridian.EfTransactionsConsumer/Meridian.EfTransactionsConsumer.csproj",
+      "sourceFiles": [
+        "tests/consumers/Meridian.EfTransactionsConsumer/Meridian.EfTransactionsConsumer.csproj",
+        "tests/consumers/Meridian.EfTransactionsConsumer/Program.cs"
+      ],
+      "packageIds": [
+        "Meridian.Mediator.EntityFrameworkCore"
       ],
       "variants": [
         "legacy"
