@@ -46,6 +46,17 @@ retry after retirement. Separate provider instances may run independent factorie
 even when they share the same memory cache. This is local coalescing, with no
 cross-process lock or hard concurrency/memory capacity guarantee.
 
+A factory or its logical descendant must not join a live ancestor owner operation.
+This includes direct same-key nesting and an A-key → B-key → A-key owner chain.
+Such a join fails immediately with a redacted `InvalidOperationException`; the
+original owner and legitimate waiters receive that failure, state retires, and a
+later request may retry. Context tracks inert operation identity tokens only and
+is restored when the owner settles. Retired inherited context does not block a
+new operation, and separate providers remain independent. For nested reads whose
+logical keys overlap, use distinct logical keys or disable request coalescing.
+This narrow policy does not detect arbitrary user-level deadlocks across separate
+execution flows. Ordinary cache hits require no join and remain valid.
+
 The behavior checks both ordinary and richer-provider results with `is TResponse`.
 Incompatible raw-key results execute that caller's own handler once and store its
 non-null response at the same key. An owner can return its own successful null;

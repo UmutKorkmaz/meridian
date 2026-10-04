@@ -69,6 +69,21 @@ using (var di = services.BuildServiceProvider(new ServiceProviderOptions { Valid
     catch (OperationCanceledException error) { Require(error.CancellationToken == ownerCancel.Token, "Owner token preserved"); }
     Require(!(await provider.GetAsync("owner-cancel", default)).Found, "Canceled value not stored");
     Require((int)(await provider.GetOrCreateAsync("owner-cancel", _ => Task.FromResult<object?>(11), null, default))! == 11, "Fresh owner retry");
+    var reentryCalls = 0;
+    const string privateReentryKey = "private-reentry-key";
+    Task<object?> InnerReentry(CancellationToken _) { reentryCalls++; return Task.FromResult<object?>(1); }
+    try
+    {
+        await provider.GetOrCreateAsync(privateReentryKey,
+            _ => provider.GetOrCreateAsync(privateReentryKey, InnerReentry, null, default), null, default);
+        throw new InvalidOperationException("Expected reentry rejection");
+    }
+    catch (InvalidOperationException error)
+    {
+        Require(error.Message == "Cache miss coalescing cannot join a live ancestor owner operation. Use distinct logical keys or disable coalescing for nested reads.", "Redacted reentry failure");
+    }
+    Require(reentryCalls == 0 && !(await provider.GetAsync(privateReentryKey, default)).Found, "Reentry cleanup");
+    Require((int)(await provider.GetOrCreateAsync(privateReentryKey, InnerReentry, null, default))! == 1 && reentryCalls == 1, "Fresh reentry retry");
     var disabled = new CachingBehavior<Query, int>(provider); var disabledRelease = Signal(); var disabledCalls = 0;
     async Task<int> DisabledFactory() { disabledCalls++; await disabledRelease.Task; return 1; }
     var disabledTasks = Enumerable.Range(0, 20).Select(_ => disabled.Handle(new("disabled", Signal(), Signal()), DisabledFactory, default)).ToArray();
@@ -80,26 +95,26 @@ foreach (var assembly in new[] { typeof(MemoryCacheProvider).Assembly, typeof(IM
     var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(assembly.Location))).ToLowerInvariant();
     Console.WriteLine($"LOADED assembly={assembly.GetName().Name} path={assembly.Location} sha256={hash}");
 }
-Console.WriteLine("COMMON caching backend=actual-memory expiry=fake-clock coalescing=20-to-1 default=disabled cancellation=isolated scoped=live invalidation=composed-and-raw types=checked null=per-caller registration=once borrowed=preserved isolatedNuGet=true");
+Console.WriteLine("COMMON caching backend=actual-memory expiry=fake-clock coalescing=20-to-1 default=disabled cancellation=isolated scoped=live invalidation=composed-and-raw types=checked null=per-caller registration=once borrowed=preserved reentry=fail-fast-and-retry isolatedNuGet=true");
 static void Require(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
 static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
 namespace Meridian.CachingConsumer
 {
-public sealed class Clock : ISystemClock
-{
-    public DateTimeOffset UtcNow { get; private set; } = new(2026, 10, 4, 0, 0, 0, TimeSpan.Zero);
-    public void Advance(TimeSpan duration) => UtcNow += duration;
-}
-public sealed record Query(string CacheKey, TaskCompletionSource Entered, TaskCompletionSource Release) : IRequest<string>, ICacheableQuery { public TimeSpan? CacheDuration => null; }
-public sealed record Invalidate(string[] CacheKeysToInvalidate) : IRequest<int>, ICacheInvalidatingRequest;
-public sealed class ScopeState : IDisposable { public int Calls { get; set; } public bool Disposed { get; private set; } public void Dispose() => Disposed = true; }
-public sealed class Handler(ScopeState state) : IRequestHandler<Query, string>
-{
-    public async Task<string> Handle(Query request, CancellationToken cancellationToken)
+    public sealed class Clock : ISystemClock
     {
-        state.Calls++; request.Entered.TrySetResult(); await request.Release.Task; if (state.Disposed) throw new InvalidOperationException("Disposed owner"); return "value";
+        public DateTimeOffset UtcNow { get; private set; } = new(2026, 10, 4, 0, 0, 0, TimeSpan.Zero);
+        public void Advance(TimeSpan duration) => UtcNow += duration;
     }
-}
-public sealed class InvalidationHandler : IRequestHandler<Invalidate, int> { public Task<int> Handle(Invalidate request, CancellationToken cancellationToken) => Task.FromResult(1); }
+    public sealed record Query(string CacheKey, TaskCompletionSource Entered, TaskCompletionSource Release) : IRequest<string>, ICacheableQuery { public TimeSpan? CacheDuration => null; }
+    public sealed record Invalidate(string[] CacheKeysToInvalidate) : IRequest<int>, ICacheInvalidatingRequest;
+    public sealed class ScopeState : IDisposable { public int Calls { get; set; } public bool Disposed { get; private set; } public void Dispose() => Disposed = true; }
+    public sealed class Handler(ScopeState state) : IRequestHandler<Query, string>
+    {
+        public async Task<string> Handle(Query request, CancellationToken cancellationToken)
+        {
+            state.Calls++; request.Entered.TrySetResult(); await request.Release.Task; if (state.Disposed) throw new InvalidOperationException("Disposed owner"); return "value";
+        }
+    }
+    public sealed class InvalidationHandler : IRequestHandler<Invalidate, int> { public Task<int> Handle(Invalidate request, CancellationToken cancellationToken) => Task.FromResult(1); }
 
 }

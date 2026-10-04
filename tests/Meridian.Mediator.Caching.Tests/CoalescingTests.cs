@@ -291,6 +291,164 @@ public sealed class CoalescingTests
         public void Dispose() { }
     }
 
+    [Theory]
+    [InlineData("direct")]
+    [InlineData("ancestor-chain")]
+    [InlineData("raw-typed-handler")]
+    public async Task Owner_Ancestor_Reentry_Fails_Fast_Retires_And_Allows_Fresh_Retry(string mode)
+    {
+        using var cache = MemoryCacheTests.CreateCache(out _);
+        var provider = new MemoryCacheProvider(cache);
+        var outerEntered = Signal();
+        var startNested = Signal();
+        var nestedAttempted = Signal();
+        using var cleanupGuard = new CancellationTokenSource();
+        var innerCalls = 0;
+        const string sensitiveKey = "private-key-for-redaction";
+        Task<object?> Inner(CancellationToken _) { innerCalls++; return Task.FromResult<object?>(7); }
+        Task<object?> JoinAncestor()
+        {
+            try { return provider.GetOrCreateAsync(sensitiveKey, Inner, null, cleanupGuard.Token); }
+            finally { nestedAttempted.TrySetResult(); }
+        }
+        async Task<object?> Outer(CancellationToken _)
+        {
+            outerEntered.SetResult();
+            await startNested.Task;
+            if (mode == "ancestor-chain")
+            {
+                return await provider.GetOrCreateAsync("middle-key", _ => JoinAncestor(), null, default);
+            }
+            if (mode == "raw-typed-handler")
+            {
+                var nestedBehavior = new CachingBehavior<RawNestedQuery, int>(provider, RawEnabled);
+                Task<int> Handler() { innerCalls++; return Task.FromResult(7); }
+                Task<int> nested;
+                try { nested = nestedBehavior.Handle(new(sensitiveKey), Handler, cleanupGuard.Token); }
+                finally { nestedAttempted.TrySetResult(); }
+                return await nested;
+            }
+            return await JoinAncestor();
+        }
+        Task<object?> owner;
+        if (mode == "raw-typed-handler")
+        {
+            var outerBehavior = new CachingBehavior<MemoryCacheTests.Query, string>(provider, RawEnabled);
+            async Task<string> OuterHandler() => (await Outer(default))!.ToString()!;
+            owner = Box(outerBehavior.Handle(new(sensitiveKey), OuterHandler, default));
+        }
+        else
+        {
+            owner = provider.GetOrCreateAsync(sensitiveKey, Outer, null, default);
+        }
+        await outerEntered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        var legitimateWaiter = provider.GetOrCreateAsync(sensitiveKey, _ => throw new InvalidOperationException("unused waiter"), null, default);
+        Assert.False(legitimateWaiter.IsCompleted);
+        startNested.SetResult();
+        await nestedAttempted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        // The previous implementation is deterministically stuck here. The test-only nested
+        // token releases its cycle, so RED fails semantically without leaving a hung runner.
+        var pendingBeforeGuard = !owner.IsCompleted;
+        var activeBeforeGuard = provider.ActiveOperationCount;
+        cleanupGuard.Cancel();
+        var error = await Record.ExceptionAsync(() => owner);
+        var waiterError = await Record.ExceptionAsync(() => legitimateWaiter);
+        Assert.True(error is InvalidOperationException,
+            $"Expected fail-fast reentry; observed {error?.GetType().Name}; pendingBeforeGuard={pendingBeforeGuard}; activeBeforeGuard={activeBeforeGuard}.");
+        Assert.Same(error, waiterError);
+        var reentry = Assert.IsType<InvalidOperationException>(error);
+        Assert.Equal("Cache miss coalescing cannot join a live ancestor owner operation. Use distinct logical keys or disable coalescing for nested reads.", reentry.Message);
+        Assert.DoesNotContain(sensitiveKey, reentry.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("middle-key", reentry.Message, StringComparison.Ordinal);
+        Assert.Equal(0, innerCalls);
+        Assert.Equal(0, provider.ActiveOperationCount);
+        Assert.False((await provider.GetAsync(sensitiveKey, default)).Found);
+        Assert.Equal(11, await provider.GetOrCreateAsync(sensitiveKey, _ => Task.FromResult<object?>(11), null, default));
+        static async Task<object?> Box(Task<string> value) => await value;
+    }
+
+    [Fact]
+    public async Task Disabled_Coalescing_Preserves_Finite_Raw_Typed_Nesting()
+    {
+        using var cache = MemoryCacheTests.CreateCache(out _);
+        var provider = new MemoryCacheProvider(cache);
+        var options = new CachingBehaviorOptions { UseRequestTypeNamespacedKeys = false };
+        var outer = new CachingBehavior<MemoryCacheTests.Query, string>(provider, options);
+        var inner = new CachingBehavior<RawNestedQuery, int>(provider, options);
+        var innerCalls = 0;
+        Task<int> Inner() { innerCalls++; return Task.FromResult(7); }
+        async Task<string> Outer() => (await inner.Handle(new("shared"), Inner, default)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        Assert.Equal("7", await outer.Handle(new("shared"), Outer, default));
+        Assert.Equal(1, innerCalls);
+        Assert.Equal(0, provider.ActiveOperationCount);
+    }
+
+    private sealed record RawNestedQuery(string CacheKey) : ICacheableQuery
+    {
+        public TimeSpan? CacheDuration => null;
+    }
+
+    [Fact]
+    public async Task Nested_Distinct_Keys_And_Provider_Instances_Remain_Independent()
+    {
+        using var cache = MemoryCacheTests.CreateCache(out _);
+        var a = new MemoryCacheProvider(cache);
+        var b = new MemoryCacheProvider(cache);
+        var calls = 0;
+        Task<object?> Inner(CancellationToken _) { calls++; return Task.FromResult<object?>(7); }
+        async Task<object?> Outer(CancellationToken _)
+        {
+            var otherKey = await a.GetOrCreateAsync("other", Inner, null, default);
+            var otherProvider = await b.GetOrCreateAsync("same", Inner, null, default);
+            return (int)otherKey! + (int)otherProvider!;
+        }
+        Assert.Equal(14, await a.GetOrCreateAsync("same", Outer, null, default));
+        Assert.Equal(2, calls);
+        Assert.Equal(0, a.ActiveOperationCount);
+        Assert.Equal(0, b.ActiveOperationCount);
+    }
+
+    [Fact]
+    public async Task Retired_Inherited_Context_Does_Not_Reject_A_Replacement_Operation()
+    {
+        using var cache = MemoryCacheTests.CreateCache(out _);
+        var provider = new MemoryCacheProvider(cache);
+        var inheritedContextReady = Signal();
+        var retiredOwnerReleased = Signal();
+        var joinReplacement = Signal();
+        var replacementRelease = Signal();
+        var descendantJoined = Signal();
+        Task<object?>? descendant = null;
+        async Task<object?> OldOwner(CancellationToken _)
+        {
+            descendant = Task.Run(async () =>
+            {
+                inheritedContextReady.SetResult();
+                await joinReplacement.Task;
+                Task<object?> waiting;
+                try { waiting = provider.GetOrCreateAsync("key", _ => throw new InvalidOperationException("unused descendant"), null, default); }
+                finally { descendantJoined.TrySetResult(); }
+                return await waiting;
+            });
+            await inheritedContextReady.Task;
+            await retiredOwnerReleased.Task;
+            return null;
+        }
+        var old = provider.GetOrCreateAsync("key", OldOwner, null, default);
+        await inheritedContextReady.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        retiredOwnerReleased.SetResult();
+        Assert.Null(await old);
+        async Task<object?> Replacement(CancellationToken _) { await replacementRelease.Task; return 9; }
+        var replacement = provider.GetOrCreateAsync("key", Replacement, null, default);
+        joinReplacement.SetResult();
+        await descendantJoined.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        try { Assert.False(descendant!.IsCompleted); Assert.Equal(1, provider.ActiveOperationCount); }
+        finally { replacementRelease.SetResult(); }
+        Assert.Equal(9, await descendant!);
+        Assert.Equal(9, await replacement);
+        Assert.Equal(0, provider.ActiveOperationCount);
+    }
+
     [MethodImpl(MethodImplOptions.NoInlining)]
     private static (Task<object?> Task, WeakReference Weak) StartUnusedWaiter(MemoryCacheProvider provider)
     {

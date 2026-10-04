@@ -9,6 +9,7 @@ namespace Meridian.Mediator.Caching;
 /// </summary>
 public sealed class MemoryCacheProvider : IConcurrentCacheProvider
 {
+    private static readonly AsyncLocal<OwnerContext?> CurrentOwner = new();
     private readonly IMemoryCache _cache;
     private readonly TimeSpan _defaultDuration;
     private readonly object _gate = new();
@@ -91,6 +92,11 @@ public sealed class MemoryCacheProvider : IConcurrentCacheProvider
                 operation = new Operation();
                 _operations.Add(key, operation);
             }
+            else if (HasAncestor(operation.Identity))
+            {
+                throw new InvalidOperationException(
+                    "Cache miss coalescing cannot join a live ancestor owner operation. Use distinct logical keys or disable coalescing for nested reads.");
+            }
         }
 
         // This method deliberately is not async: losing factories never enter a waiting frame.
@@ -107,6 +113,8 @@ public sealed class MemoryCacheProvider : IConcurrentCacheProvider
     {
         object? value = null;
         Exception? failure = null;
+        var previousOwner = CurrentOwner.Value;
+        CurrentOwner.Value = new OwnerContext(operation.Identity, previousOwner);
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -121,6 +129,10 @@ public sealed class MemoryCacheProvider : IConcurrentCacheProvider
         catch (Exception error)
         {
             failure = error;
+        }
+        finally
+        {
+            CurrentOwner.Value = previousOwner;
         }
 
         lock (_gate)
@@ -147,8 +159,28 @@ public sealed class MemoryCacheProvider : IConcurrentCacheProvider
         return await operation.Completion.Task.ConfigureAwait(false);
     }
 
+    private static bool HasAncestor(object identity)
+    {
+        for (var context = CurrentOwner.Value; context is not null; context = context.Parent)
+        {
+            if (ReferenceEquals(context.Identity, identity))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Context carries inert identity tokens only, never operations/completions or user state.
+    private sealed class OwnerContext(object identity, OwnerContext? parent)
+    {
+        internal object Identity { get; } = identity;
+        internal OwnerContext? Parent { get; } = parent;
+    }
+
     private sealed class Operation
     {
+        internal object Identity { get; } = new();
         internal TaskCompletionSource<object?> Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 }

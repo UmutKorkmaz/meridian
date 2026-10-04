@@ -100,7 +100,7 @@ public class CachingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, 
 
         if (!found && _options.EnableRequestCoalescing && _cacheProvider is IConcurrentCacheProvider concurrentProvider)
         {
-            return await HandleCoalescedAsync(request, next, key, concurrentProvider, cancellationToken);
+            return await HandleCoalescedAsync(request, next, key, concurrentProvider, cancellationToken).ConfigureAwait(false);
         }
 
         var response = await next();
@@ -120,10 +120,10 @@ public class CachingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, 
         TResponse ownResponse = default!;
         var shared = await concurrentProvider.GetOrCreateAsync(key, async _ =>
         {
-            ownResponse = await next();
+            ownResponse = await next().ConfigureAwait(false);
             factoryCompleted = true;
             return ownResponse;
-        }, request.CacheDuration, cancellationToken);
+        }, request.CacheDuration, cancellationToken).ConfigureAwait(false);
 
         if (shared is TResponse compatible)
         {
@@ -137,10 +137,10 @@ public class CachingBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, 
 
         // Untyped shared null or an incompatible response is a typed miss for this caller.
         // Do not re-enter coalescing: a second-read hit may stay incompatible indefinitely.
-        var response = await next();
+        var response = await next().ConfigureAwait(false);
         if (response is not null)
         {
-            await _cacheProvider.SetAsync(key, response, request.CacheDuration, cancellationToken);
+            await _cacheProvider.SetAsync(key, response, request.CacheDuration, cancellationToken).ConfigureAwait(false);
         }
         return response;
     }
