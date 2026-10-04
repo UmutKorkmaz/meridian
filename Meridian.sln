@@ -37,6 +37,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Meridian.Mapping.Generators
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Meridian.QuickStart", "samples\Meridian.QuickStart\Meridian.QuickStart.csproj", "{61CFC1C0-188F-42B1-9BB0-528F25668DF1}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Meridian.Mapping.EntityFramework.Tests", "tests\Meridian.Mapping.EntityFramework.Tests\Meridian.Mapping.EntityFramework.Tests.csproj", "{B71D5481-65B8-48CD-BF80-AC601FBCBBA7}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -203,11 +205,24 @@ Global
 		{61CFC1C0-188F-42B1-9BB0-528F25668DF1}.Release|x64.Build.0 = Release|Any CPU
 		{61CFC1C0-188F-42B1-9BB0-528F25668DF1}.Release|x86.ActiveCfg = Release|Any CPU
 		{61CFC1C0-188F-42B1-9BB0-528F25668DF1}.Release|x86.Build.0 = Release|Any CPU
+		{B71D5481-65B8-48CD-BF80-AC601FBCBBA7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B71D5481-65B8-48CD-BF80-AC601FBCBBA7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B71D5481-65B8-48CD-BF80-AC601FBCBBA7}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{B71D5481-65B8-48CD-BF80-AC601FBCBBA7}.Debug|x64.Build.0 = Debug|Any CPU
+		{B71D5481-65B8-48CD-BF80-AC601FBCBBA7}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{B71D5481-65B8-48CD-BF80-AC601FBCBBA7}.Debug|x86.Build.0 = Debug|Any CPU
+		{B71D5481-65B8-48CD-BF80-AC601FBCBBA7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B71D5481-65B8-48CD-BF80-AC601FBCBBA7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B71D5481-65B8-48CD-BF80-AC601FBCBBA7}.Release|x64.ActiveCfg = Release|Any CPU
+		{B71D5481-65B8-48CD-BF80-AC601FBCBBA7}.Release|x64.Build.0 = Release|Any CPU
+		{B71D5481-65B8-48CD-BF80-AC601FBCBBA7}.Release|x86.ActiveCfg = Release|Any CPU
+		{B71D5481-65B8-48CD-BF80-AC601FBCBBA7}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
+		{B71D5481-65B8-48CD-BF80-AC601FBCBBA7} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{D83397BB-41B1-401C-84D6-816A2BA3307A} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{C5AF0E88-C16F-4C85-9C6E-C2C6D6EA718C} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{9F7FAC26-0212-4373-BF29-4A576887EE24} = {0AB3BF05-4346-4AA6-1389-037BE0695223}

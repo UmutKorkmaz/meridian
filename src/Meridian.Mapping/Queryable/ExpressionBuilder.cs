@@ -25,10 +25,9 @@ public static class ExpressionBuilder
         params Expression<Func<TDestination, object>>[]? membersToExpand)
     {
         var sourceParam = Expression.Parameter(typeof(TSource), "src");
+        var newExpr = BuildConstruction(configurationProvider, typeof(TSource), typeof(TDestination), sourceParam, membersToExpand, out var consumed);
         var bindings = BuildMemberBindings(
-            configurationProvider, typeof(TSource), typeof(TDestination), sourceParam, membersToExpand);
-
-        var newExpr = Expression.New(typeof(TDestination));
+            configurationProvider, typeof(TSource), typeof(TDestination), sourceParam, membersToExpand, consumed);
         var memberInit = Expression.MemberInit(newExpr, bindings);
 
         return Expression.Lambda<Func<TSource, TDestination>>(memberInit, sourceParam);
@@ -47,14 +46,98 @@ public static class ExpressionBuilder
         Type destinationType)
     {
         var sourceParam = Expression.Parameter(sourceType, "src");
+        var newExpr = BuildConstruction(configurationProvider, sourceType, destinationType, sourceParam, null, out var consumed);
         var bindings = BuildMemberBindings(
-            configurationProvider, sourceType, destinationType, sourceParam, null);
-
-        var newExpr = Expression.New(destinationType);
+            configurationProvider, sourceType, destinationType, sourceParam, null, consumed);
         var memberInit = Expression.MemberInit(newExpr, bindings);
 
         var funcType = typeof(Func<,>).MakeGenericType(sourceType, destinationType);
         return Expression.Lambda(funcType, memberInit, sourceParam);
+    }
+
+    private static NewExpression BuildConstruction(
+        IConfigurationProvider configurationProvider, Type sourceType, Type destinationType, Expression source,
+        Expression[]? membersToExpand, out HashSet<string> consumed)
+    {
+        consumed = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var map = configurationProvider.FindTypeMap(sourceType, destinationType)
+            ?? throw new InvalidOperationException($"Missing mapping configuration for {sourceType.Name} -> {destinationType.Name}. Create a mapping using CreateMap<{sourceType.Name}, {destinationType.Name}>().");
+        if (map.ConstructUsing != null)
+            throw new InvalidOperationException($"Projection for '{destinationType.Name}' cannot use runtime ConstructUsing. Use ForCtorParam expressions instead.");
+        if (map.CustomConverter != null || map.TypeConverterType != null || map.CompiledTypeConverter != null)
+            throw new InvalidOperationException($"Projection for '{destinationType.Name}' cannot use a runtime type converter. Configure expression-based member mappings instead.");
+
+        // Retain existing mutable/value-type construction unless explicit constructor mappings select a constructor.
+        if (map.CtorParamMappings is not { Count: > 0 } &&
+            (destinationType.IsValueType || destinationType.GetConstructor(Type.EmptyTypes) != null))
+            return Expression.New(destinationType);
+
+        var expanded = GetExpandedMemberNames(membersToExpand);
+        var omittedRequired = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var candidates = new List<(NewExpression Expression, HashSet<string> Consumed)>();
+        foreach (var constructor in destinationType.GetConstructors().OrderByDescending(c => c.GetParameters().Length))
+        {
+            var parameters = constructor.GetParameters();
+            var arguments = new List<Expression>();
+            var consumedParameters = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var parameter in parameters)
+            {
+                Expression? value = null;
+                var destinationMember = map.PropertyMaps.FirstOrDefault(p =>
+                    string.Equals(p.DestinationProperty.Name, parameter.Name, StringComparison.OrdinalIgnoreCase));
+                var omitted = destinationMember != null && (destinationMember.Ignored ||
+                    (destinationMember.ExplicitExpansion && !IsExpanded(expanded, destinationMember.DestinationProperty.Name)));
+                if (omitted)
+                {
+                    if (!parameter.HasDefaultValue)
+                    {
+                        omittedRequired.Add(parameter.Name!);
+                        break;
+                    }
+                    value = parameter.DefaultValue == null
+                        ? Expression.Default(parameter.ParameterType)
+                        : Expression.Constant(parameter.DefaultValue, parameter.ParameterType);
+                }
+                else if (map.CtorParamMappings != null && map.CtorParamMappings.TryGetValue(parameter.Name!, out var configured))
+                {
+                    value = ReplaceParameter(configured.Body, configured.Parameters[0], source);
+                    consumedParameters.Add(parameter.Name!);
+                }
+                else
+                {
+                    var property = sourceType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                        .FirstOrDefault(p => p.GetMethod is { IsPublic: true } && p.GetIndexParameters().Length == 0 &&
+                            string.Equals(p.Name, parameter.Name, StringComparison.OrdinalIgnoreCase) &&
+                            (parameter.ParameterType.IsAssignableFrom(p.PropertyType) ||
+                             Nullable.GetUnderlyingType(parameter.ParameterType) == p.PropertyType));
+                    if (property != null)
+                    {
+                        value = Expression.Property(source, property);
+                        consumedParameters.Add(parameter.Name!);
+                    }
+                    else if (parameter.HasDefaultValue)
+                        value = parameter.DefaultValue == null
+                            ? Expression.Default(parameter.ParameterType)
+                            : Expression.Constant(parameter.DefaultValue, parameter.ParameterType);
+                }
+
+                if (value == null) break;
+                if (value.Type != parameter.ParameterType)
+                    value = Expression.Convert(value, parameter.ParameterType);
+                arguments.Add(value);
+            }
+            if (arguments.Count == parameters.Length)
+                candidates.Add((Expression.New(constructor, arguments), consumedParameters));
+        }
+
+        if (candidates.Count == 0 && omittedRequired.Count > 0)
+            throw new InvalidOperationException($"Projection for '{destinationType.Name}' has required constructor arguments for omitted members: {string.Join(", ", omittedRequired)}. Request explicit expansion, remove Ignore, or provide an optional constructor default.");
+        if (candidates.Count == 0)
+            throw new InvalidOperationException($"No public constructor on '{destinationType.Name}' has all required projection arguments mapped. Use ForCtorParam expressions to supply missing arguments.");
+        if (candidates.Count > 1 && candidates[0].Expression.Arguments.Count == candidates[1].Expression.Arguments.Count)
+            throw new InvalidOperationException($"Projection constructor selection for '{destinationType.Name}' is ambiguous. Use a DTO with a single fully resolved constructor of greatest arity.");
+        consumed = candidates[0].Consumed;
+        return candidates[0].Expression;
     }
 
     private static List<MemberBinding> BuildMemberBindings(
@@ -62,7 +145,8 @@ public static class ExpressionBuilder
         Type sourceType,
         Type destType,
         Expression sourceExpression,
-        Expression[]? membersToExpand)
+        Expression[]? membersToExpand,
+        HashSet<string> consumed)
     {
         var typeMap = configurationProvider.FindTypeMap(sourceType, destType);
         if (typeMap == null)
@@ -78,6 +162,11 @@ public static class ExpressionBuilder
         foreach (var propertyMap in typeMap.PropertyMaps)
         {
             if (propertyMap.Ignored)
+                continue;
+
+            // A record/init member already supplied by a constructor expression must not be
+            // overwritten by convention. Explicit member configuration still has final precedence.
+            if (!propertyMap.IsExplicitlyConfigured && consumed.Contains(propertyMap.DestinationProperty.Name))
                 continue;
 
             if (propertyMap.ExplicitExpansion && !IsExpanded(expandedMembers, propertyMap.DestinationProperty.Name))
@@ -112,6 +201,19 @@ public static class ExpressionBuilder
             {
                 // Simple property access: src.Name
                 valueExpression = Expression.Property(sourceExpression, propertyMap.SourceProperty);
+            }
+
+            // An expansion marker alone must not overwrite an explicitly bound constructor argument.
+            if (valueExpression == null && consumed.Contains(propertyMap.DestinationProperty.Name))
+                continue;
+
+            // Expansion-only configuration has no source metadata; preserve same-name convention.
+            if (valueExpression == null && propertyMap.ExplicitExpansion)
+            {
+                var sourceProperty = sourceType.GetProperty(propertyMap.DestinationProperty.Name,
+                    BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
+                if (sourceProperty?.GetMethod is { IsPublic: true } && sourceProperty.GetIndexParameters().Length == 0)
+                    valueExpression = Expression.Property(sourceExpression, sourceProperty);
             }
 
             if (valueExpression == null)
@@ -243,8 +345,8 @@ public static class ExpressionBuilder
         Type sourceType,
         Type destType)
     {
-        var nestedBindings = BuildMemberBindings(configurationProvider, sourceType, destType, sourceExpression, null);
-        var newExpr = Expression.New(destType);
+        var newExpr = BuildConstruction(configurationProvider, sourceType, destType, sourceExpression, null, out var consumed);
+        var nestedBindings = BuildMemberBindings(configurationProvider, sourceType, destType, sourceExpression, null, consumed);
         var memberInit = Expression.MemberInit(newExpr, nestedBindings);
 
         // Handle null source: src.Address == null ? null : new AddressDto { ... }
@@ -293,8 +395,8 @@ public static class ExpressionBuilder
     {
         // Build: src.Items.Select(x => new ItemDto { ... })
         var itemParam = Expression.Parameter(srcElementType, "item");
-        var nestedBindings = BuildMemberBindings(configurationProvider, srcElementType, destElementType, itemParam, null);
-        var newExpr = Expression.New(destElementType);
+        var newExpr = BuildConstruction(configurationProvider, srcElementType, destElementType, itemParam, null, out var consumed);
+        var nestedBindings = BuildMemberBindings(configurationProvider, srcElementType, destElementType, itemParam, null, consumed);
         var memberInit = Expression.MemberInit(newExpr, nestedBindings);
         var selectorLambda = Expression.Lambda(memberInit, itemParam);
 

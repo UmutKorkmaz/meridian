@@ -51,6 +51,7 @@ jobs:
         run: >
           dotnet test Meridian.sln
           -c Release --no-build
+          --filter "Provider!=PostgreSQL"
           --logger "trx;LogFilePrefix=$MATRIX_OS"
           --logger "console;verbosity=normal"
           --collect:"XPlat Code Coverage"
@@ -86,6 +87,54 @@ jobs:
         with:
           name: packages
           path: ./artifacts/*.*nupkg
+          retention-days: 14
+
+  projection-postgresql:
+    name: PostgreSQL projections (${{ matrix.framework }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        framework: [net8.0, net9.0, net10.0]
+    services:
+      postgres:
+        image: postgres:16.4-alpine@sha256:5660c2cbfea50c7a9127d17dc4e48543eedd3d7a41a595a2dfa572471e37e64c
+        env:
+          POSTGRES_USER: meridian_test
+          POSTGRES_PASSWORD: meridian_test_only
+          POSTGRES_DB: meridian_projection_test
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U meridian_test -d meridian_projection_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      DOTNET_ROLL_FORWARD: LatestPatch
+      DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
+      MERIDIAN_TEST_POSTGRES: Host=127.0.0.1;Port=${{ job.services.postgres.ports[5432] }};Database=meridian_projection_test;Username=meridian_test;Password=meridian_test_only
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+      - name: Execute required PostgreSQL contracts
+        env:
+          MATRIX_FRAMEWORK: ${{ matrix.framework }}
+        run: >-
+          dotnet test tests/Meridian.Mapping.EntityFramework.Tests/Meridian.Mapping.EntityFramework.Tests.csproj
+          -c Release -f "$MATRIX_FRAMEWORK" --filter "Provider=PostgreSQL"
+          --logger "trx;LogFileName=postgresql.trx" --logger "console;verbosity=normal"
+          --results-directory artifacts/projection-postgresql
+      - name: Retain SQL, provider versions and command evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: projection-postgresql-${{ matrix.framework }}
+          path: artifacts/projection-postgresql/**
           retention-days: 14
 
   package-compatibility:
