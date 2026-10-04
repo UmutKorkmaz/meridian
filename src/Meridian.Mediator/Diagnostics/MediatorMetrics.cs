@@ -622,13 +622,23 @@ public sealed class MediatorMetrics : IDisposable
         }
 
         var builder = new StringBuilder();
-        return Append(builder, type) ? builder.ToString() : null;
+        return Append(builder, type, type.GetGenericArguments()) ? builder.ToString() : null;
 
-        static bool Append(StringBuilder builder, Type type)
+        // 'arguments' holds every generic argument that applies to 'type', including those inherited from generic
+        // declaring types. The DeclaringType of a constructed nested type is the open generic definition, so the
+        // declaring chain is rendered from a prefix of the constructed type's own arguments and never from the
+        // definition's generic parameters (whose DeclaringType would lead back into the chain).
+        static bool Append(StringBuilder builder, Type type, Type[] arguments)
         {
+            if (type.IsGenericParameter)
+            {
+                return false;
+            }
+
             if (type.IsArray)
             {
-                if (!Append(builder, type.GetElementType()!))
+                var element = type.GetElementType()!;
+                if (!Append(builder, element, element.GetGenericArguments()))
                 {
                     return false;
                 }
@@ -640,10 +650,18 @@ public sealed class MediatorMetrics : IDisposable
             var name = type.Name;
             var tick = name.IndexOf('`', StringComparison.Ordinal);
             var baseName = tick < 0 ? name : name.Substring(0, tick);
+            var inherited = 0;
             var declaring = type.DeclaringType;
             if (declaring is not null)
             {
-                if (!Append(builder, declaring))
+                inherited = declaring.IsGenericTypeDefinition ? declaring.GetGenericArguments().Length : 0;
+                if (inherited > arguments.Length)
+                {
+                    return false;
+                }
+
+                var declaringArguments = declaring.IsGenericTypeDefinition ? arguments[..inherited] : declaring.GetGenericArguments();
+                if (!Append(builder, declaring, declaringArguments))
                 {
                     return false;
                 }
@@ -656,33 +674,29 @@ public sealed class MediatorMetrics : IDisposable
             }
 
             builder.Append(baseName);
-            if (type.IsGenericType)
+            var own = tick < 0 ? 0 : int.Parse(name.AsSpan(tick + 1), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture);
+            if (own > arguments.Length - inherited)
             {
-                var arguments = type.GetGenericArguments();
-                var own = tick < 0 ? 0 : int.Parse(name.AsSpan(tick + 1), System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture);
-                if (own > arguments.Length)
-                {
-                    return false;
-                }
+                return false;
+            }
 
-                if (own > 0)
+            if (own > 0)
+            {
+                builder.Append('<');
+                for (var i = arguments.Length - own; i < arguments.Length; i++)
                 {
-                    builder.Append('<');
-                    for (var i = arguments.Length - own; i < arguments.Length; i++)
+                    if (i > arguments.Length - own)
                     {
-                        if (i > arguments.Length - own)
-                        {
-                            builder.Append(',');
-                        }
-
-                        if (!Append(builder, arguments[i]))
-                        {
-                            return false;
-                        }
+                        builder.Append(',');
                     }
 
-                    builder.Append('>');
+                    if (!Append(builder, arguments[i], arguments[i].GetGenericArguments()))
+                    {
+                        return false;
+                    }
                 }
+
+                builder.Append('>');
             }
 
             return true;

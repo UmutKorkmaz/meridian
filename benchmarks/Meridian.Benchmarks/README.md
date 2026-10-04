@@ -91,7 +91,7 @@ dotnet run -c Release --project benchmarks/Meridian.Benchmarks -- \
   --launchCount 3 --warmupCount 8 --iterationCount 20 --memory
 ```
 
-### Result (2026-10-04, Apple M5 Pro, macOS 26.5.2, .NET SDK 10.0.300 / runtime 10.0.8, AC power)
+### Result (2026-10-04, Apple M5 Pro, macOS 26.5.2, .NET SDK 10.0.300 / runtime 10.0.8; INCONCLUSIVE, not a dedicated-host result)
 
 Fixed BenchmarkDotNet job: 3 launches, 8 warmup and 20 measured iterations per launch, `MemoryDiagnoser`. P0 is the
 mediator immediately before the metrics change, P1 the change; both were built from isolated source snapshots with a
@@ -99,6 +99,14 @@ byte-identical harness, and the segments were run in ABBA order. The host was an
 applications and containers running, load average about 4 to 8), **not** a dedicated or quiescent benchmark host, so
 treat sub-5% time differences as noise (the same-binary spread of the P0 rows was 1% to 6%). Allocation figures are
 deterministic.
+
+**Provenance and status.** No exclusive, quiescent host window was available, so time acceptance is
+**PENDING/INCONCLUSIVE**: the table below is indicative, not a dedicated-host pass. It combines four campaigns. The
+`Activity_Listener_Hot_Path` rows and the `MediatorBenchmarks` row use a P0 segment from an earlier campaign (c, AC power,
+identical P0 binary) because the P0 activity segment of the final campaign (d) ran while the host switched from AC to
+battery and was rejected; those P0 rows are therefore not paired with the P1 rows in the same campaign. Every other row
+is a same-campaign (d) ABBA pair. Exact allocation deltas are favorable (zero or negative) for the disabled and
+no-listener modes. Full history: `artifacts/D5/bench/comparison.md` in the task evidence.
 
 | Scenario | Mode | P0 mean | P1 mean | Delta | P0 B/op | P1 B/op | Delta B/op |
 |---|---|---:|---:|---:|---:|---:|---:|

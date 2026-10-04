@@ -259,6 +259,36 @@ public class MetricsPrivacyTests
     }
 
     [Fact]
+    public void Types_Nested_In_Generic_Types_Are_Described_Without_Unbounded_Recursion()
+    {
+        const string ns = "Meridian.Mediator.Tests.";
+        Assert.Equal(ns + "MxOuter<System.Int32>+Inner", MediatorMetrics.DescribeType(typeof(MxOuter<int>.Inner)));
+        Assert.Equal(ns + "MxOuter<System.Int32>+InnerG<System.String>", MediatorMetrics.DescribeType(typeof(MxOuter<int>.InnerG<string>)));
+        Assert.Equal(ns + "MxOuter<System.Int32>+Mid+Deep", MediatorMetrics.DescribeType(typeof(MxOuter<int>.Mid.Deep)));
+        Assert.Equal(ns + "MxOuter2<System.Int32,System.String>+Pair<System.Int64>", MediatorMetrics.DescribeType(typeof(MxOuter2<int, string>.Pair<long>)));
+        Assert.Equal(ns + "MxGeneric<" + ns + "MxOuter<System.Int32>+Inner>", MediatorMetrics.DescribeType(typeof(MxGeneric<MxOuter<int>.Inner>)));
+        Assert.Equal(ns + "MxOuter<System.Int32>+Inner[]", MediatorMetrics.DescribeType(typeof(MxOuter<int>.Inner[])));
+
+        // Open nested definitions and generic parameters are never described.
+        Assert.Null(MediatorMetrics.DescribeType(typeof(MxOuter<>.Inner)));
+        Assert.Null(MediatorMetrics.DescribeType(typeof(MxOuter<>.InnerG<>)));
+        Assert.Null(MediatorMetrics.DescribeType(typeof(MxOuter<>).GetGenericArguments()[0]));
+
+        var known = new[]
+        {
+            typeof(MxOuter<int>.Inner),
+            typeof(MxOuter<int>.InnerG<string>),
+            typeof(MxGeneric<MxOuter<int>.Inner>),
+            typeof(MxQuery),
+        };
+        using var metrics = new MediatorMetrics(Mx.On(), known);
+        Assert.Equal(known.Length, metrics.AdmittedTypeCount);
+        Assert.Equal(ns + "MxOuter<System.Int32>+Inner", metrics.LabelFor(typeof(MxOuter<int>.Inner)));
+        Assert.Equal(Mx.Label(typeof(MxQuery)), metrics.LabelFor(typeof(MxQuery)));
+        Assert.Equal(MediatorMetrics.OverflowLabel, metrics.LabelFor(typeof(MxOuter<long>.Inner)));
+    }
+
+    [Fact]
     public void Instruments_Have_Exact_Names_Units_And_Types()
     {
         using var provider = Mx.BuildStandard();
@@ -287,6 +317,31 @@ public class MetricsPrivacyTests
     }
 
     public sealed class Nested
+    {
+    }
+}
+
+public sealed class MxOuter<T>
+{
+    public sealed class Inner : IRequest<int>
+    {
+    }
+
+    public sealed class InnerG<TInner> : IRequest<int>
+    {
+    }
+
+    public static class Mid
+    {
+        public sealed class Deep : IRequest<int>
+        {
+        }
+    }
+}
+
+public sealed class MxOuter2<T1, T2>
+{
+    public sealed class Pair<TPair> : IRequest<int>
     {
     }
 }
