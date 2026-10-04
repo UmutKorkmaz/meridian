@@ -11,6 +11,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
+Console.WriteLine($"HOST runtime={Environment.Version} framework={System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription}");
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls("http://127.0.0.1:0"); builder.Logging.ClearProviders();
 builder.Services.AddMeridianProblemDetails().AddMeridianProblemDetails();
@@ -43,4 +44,4 @@ try
 finally { await app.StopAsync(); }
 foreach (var assembly in new[] { typeof(MeridianExceptionHandler).Assembly, typeof(ValidationException).Assembly })
     Console.WriteLine($"loadedHttp={assembly.GetName().Name} path={assembly.Location} sha256={Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(assembly.Location))).ToLowerInvariant()}");
-Console.WriteLine("httpStatus=400,403,500 correlation=true redacted=true registration=idempotent");
+Console.WriteLine("COMMON httpStatus=400,403,500 correlation=true redacted=true registration=idempotent");
