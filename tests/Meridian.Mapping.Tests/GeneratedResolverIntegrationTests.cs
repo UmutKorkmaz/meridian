@@ -297,6 +297,218 @@ public class GeneratedResolverIntegrationTests
         }
     }
 
+    [Theory]
+    [InlineData(false, "property")]
+    [InlineData(true, "property")]
+    [InlineData(false, "expression")]
+    [InlineData(true, "expression")]
+    public void Declared_Base_Explicit_Map_Precedes_Runtime_Descriptor(bool interpreter, string shape)
+    {
+        var resolver = new DeclaredResolver(typeof(DeclaredDerived));
+        var actions = 0;
+        var configuration = new MapperConfiguration(c =>
+        {
+            c.UseGeneratedMappings(resolver);
+            c.CreateMap<DeclaredBase, DeclaredBase>().AfterMap((s, d) => { actions++; d.Value = 88; });
+            var map = c.CreateMap<DeclaredParent, DeclaredDto>();
+            if (shape == "expression") map.ForMember(d => d.Item, o => o.MapFrom(s => s.Alternate));
+            if (interpreter) map.AfterMap((s, d) => { });
+        });
+        Assert.Equal(!interpreter, configuration.FindTypeMap(typeof(DeclaredParent), typeof(DeclaredDto))!.CompiledFastPath is not null);
+        var child = new DeclaredDerived { Value = 42 };
+        var mapped = configuration.CreateMapper().Map<DeclaredParent, DeclaredDto>(new()
+        { Item = child, Alternate = child, Envelope = new() { Item = child } });
+        Assert.NotSame(child, mapped.Item);
+        Assert.Equal(88, mapped.Item!.Value);
+        Assert.Equal(1, actions);
+        Assert.Equal(0, resolver.Calls);
+        mapped.Item.Value = 7;
+        Assert.Equal(42, child.Value);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Declared_Interface_Explicit_Map_Precedes_Runtime_Descriptor(bool interpreter)
+    {
+        var resolver = new DeclaredResolver(typeof(DeclaredDerived));
+        var actions = 0;
+        var configuration = new MapperConfiguration(c =>
+        {
+            c.UseGeneratedMappings(resolver);
+            c.CreateMap<IDeclaredChild, DeclaredBase>().AfterMap((s, d) => { actions++; d.Value = 88; });
+            var map = c.CreateMap<DeclaredParent, DeclaredDto>().ForMember(d => d.Item, o => o.MapFrom(s => s.Contract));
+            if (interpreter) map.AfterMap((s, d) => { });
+        });
+        Assert.Equal(!interpreter, configuration.FindTypeMap(typeof(DeclaredParent), typeof(DeclaredDto))!.CompiledFastPath is not null);
+        var child = new DeclaredDerived { Value = 42 };
+        var mapped = configuration.CreateMapper().Map<DeclaredParent, DeclaredDto>(new() { Contract = child });
+        Assert.NotSame(child, mapped.Item);
+        Assert.Equal(88, mapped.Item!.Value);
+        Assert.Equal(1, actions);
+        Assert.Equal(0, resolver.Calls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Declared_Base_Included_Map_Precedes_Runtime_Descriptor(bool interpreter)
+    {
+        var resolver = new DeclaredResolver(typeof(DeclaredDerived));
+        var actions = 0;
+        var configuration = new MapperConfiguration(c =>
+        {
+            c.UseGeneratedMappings(resolver);
+            c.CreateMap<DeclaredBase, DeclaredBase>().Include<DeclaredDerived, DeclaredDerivedDto>();
+            c.CreateMap<DeclaredDerived, DeclaredDerivedDto>().AfterMap((s, d) => { actions++; d.Value = 88; });
+            var map = c.CreateMap<DeclaredParent, DeclaredDto>();
+            if (interpreter) map.AfterMap((s, d) => { });
+        });
+        Assert.Equal(!interpreter, configuration.FindTypeMap(typeof(DeclaredParent), typeof(DeclaredDto))!.CompiledFastPath is not null);
+        var mapped = configuration.CreateMapper().Map<DeclaredParent, DeclaredDto>(new() { Item = new DeclaredDerived { Value = 42 } });
+        Assert.IsType<DeclaredDerivedDto>(mapped.Item);
+        Assert.Equal(88, mapped.Item.Value);
+        Assert.Equal(1, actions);
+        Assert.Equal(0, resolver.Calls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Declared_Base_Descriptor_Fallback_Preserves_Operation(bool interpreter)
+    {
+        var resolver = new DeclaredResolver(typeof(DeclaredBase));
+        var configuration = new MapperConfiguration(c =>
+        {
+            c.DefaultMaxDepth = 4;
+            c.DefaultMaxCollectionItems = 3;
+            c.UseGeneratedMappings(resolver);
+            var map = c.CreateMap<DeclaredParent, DeclaredDto>();
+            if (interpreter) map.AfterMap((s, d) => { });
+        });
+        Assert.Equal(!interpreter, configuration.FindTypeMap(typeof(DeclaredParent), typeof(DeclaredDto))!.CompiledFastPath is not null);
+        var child = new DeclaredDerived { Value = 42 };
+        var state = new object();
+        var mapped = configuration.CreateMapper().Map<DeclaredParent, DeclaredDto>(new() { Item = child }, o => o.State = state);
+        Assert.NotSame(child, mapped.Item);
+        Assert.Equal(999, mapped.Item!.Value);
+        Assert.Equal(1, resolver.Calls);
+        Assert.Same(state, resolver.Seen!.State);
+        Assert.Equal(1, resolver.Seen.Depth);
+        Assert.Equal(4, resolver.Seen.MaxDepth);
+        Assert.Equal(3, resolver.Seen.MaxCollectionItems);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Declared_Base_Runtime_Map_Still_Precedes_Declared_Map(bool interpreter)
+    {
+        var resolver = new DeclaredResolver(typeof(DeclaredDerived));
+        var runtimeActions = 0;
+        var baseActions = 0;
+        var configuration = new MapperConfiguration(c =>
+        {
+            c.UseGeneratedMappings(resolver);
+            c.CreateMap<DeclaredBase, DeclaredBase>().AfterMap((s, d) => { baseActions++; d.Value = 88; });
+            c.CreateMap<DeclaredDerived, DeclaredBase>().AfterMap((s, d) => { runtimeActions++; d.Value = 77; });
+            var map = c.CreateMap<DeclaredParent, DeclaredDto>();
+            if (interpreter) map.AfterMap((s, d) => { });
+        });
+        Assert.Equal(!interpreter, configuration.FindTypeMap(typeof(DeclaredParent), typeof(DeclaredDto))!.CompiledFastPath is not null);
+        var mapped = configuration.CreateMapper().Map<DeclaredParent, DeclaredDto>(new() { Item = new DeclaredDerived { Value = 42 } });
+        Assert.Equal(77, mapped.Item!.Value);
+        Assert.Equal(1, runtimeActions);
+        Assert.Equal(0, baseActions);
+        Assert.Equal(0, resolver.Calls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Declared_Flattened_Member_Preserves_Terminal_Type(bool interpreter)
+    {
+        var resolver = new DeclaredResolver(typeof(DeclaredDerived));
+        var actions = 0;
+        var configuration = new MapperConfiguration(c =>
+        {
+            c.UseGeneratedMappings(resolver);
+            c.CreateMap<DeclaredBase, DeclaredBase>().AfterMap((s, d) => { actions++; d.Value = 88; });
+            var map = c.CreateMap<DeclaredParent, DeclaredFlatDto>();
+            if (interpreter) map.AfterMap((s, d) => { });
+        });
+        Assert.Equal(!interpreter, configuration.FindTypeMap(typeof(DeclaredParent), typeof(DeclaredFlatDto))!.CompiledFastPath is not null);
+        var mapped = configuration.CreateMapper().Map<DeclaredParent, DeclaredFlatDto>(new()
+        { Envelope = new() { Item = new DeclaredDerived { Value = 42 } } });
+        Assert.Equal(88, mapped.EnvelopeItem!.Value);
+        Assert.Equal(1, actions);
+        Assert.Equal(0, resolver.Calls);
+    }
+
+    [Theory]
+    [InlineData("constant")]
+    [InlineData("function")]
+    [InlineData("converter")]
+    [InlineData("resolver")]
+    [InlineData("null-substitute")]
+    public void Declared_Unknown_Output_Does_Not_Reuse_Source_Property_Metadata(string kind)
+    {
+        var resolver = new DeclaredResolver(typeof(DeclaredDerived));
+        var actions = 0;
+        var child = new DeclaredDerived { Value = 42 };
+        var configuration = new MapperConfiguration(c =>
+        {
+            c.UseGeneratedMappings(resolver);
+            c.CreateMap<DeclaredBase, DeclaredBase>().AfterMap((s, d) => { actions++; d.Value = 88; });
+            c.CreateMap<DeclaredParent, DeclaredDto>().ForMember(d => d.Item, o =>
+            {
+                if (kind == "constant") o.UseValue(child);
+                if (kind == "function") o.MapFrom((s, d) => child);
+                if (kind == "converter") o.ConvertUsing((DeclaredBase? value) => child, s => s.Item);
+                if (kind == "resolver") o.MapFrom<DeclaredValueResolver>();
+                if (kind == "null-substitute") { o.MapFrom(s => s.Item); o.NullSubstitute(child); }
+            });
+        });
+        Assert.Null(configuration.FindTypeMap(typeof(DeclaredParent), typeof(DeclaredDto))!.CompiledFastPath);
+        var mapped = configuration.CreateMapper().Map<DeclaredParent, DeclaredDto>(new());
+        Assert.Equal(999, mapped.Item!.Value);
+        Assert.Equal(0, actions);
+        Assert.Equal(1, resolver.Calls);
+    }
+
+    public sealed class DeclaredFlatDto { public DeclaredBase? EnvelopeItem { get; set; } }
+    public sealed class DeclaredValueResolver : Meridian.Mapping.Converters.IValueResolver<DeclaredParent, DeclaredDto, DeclaredBase>
+    {
+        public DeclaredBase Resolve(DeclaredParent source, DeclaredDto destination, DeclaredBase destMember,
+            Meridian.Mapping.Execution.ResolutionContext context) => new DeclaredDerived { Value = 42 };
+    }
+
+    public interface IDeclaredChild { int Value { get; set; } }
+    public class DeclaredBase : IDeclaredChild { public int Value { get; set; } }
+    public sealed class DeclaredDerived : DeclaredBase { }
+    public sealed class DeclaredDerivedDto : DeclaredBase { }
+    public sealed class DeclaredParent
+    {
+        public DeclaredBase? Item { get; set; }
+        public DeclaredBase? Alternate { get; set; }
+        public IDeclaredChild? Contract { get; set; }
+        public DeclaredEnvelope? Envelope { get; set; }
+    }
+    public sealed class DeclaredEnvelope { public DeclaredBase? Item { get; set; } }
+    public sealed class DeclaredDto { public DeclaredBase? Item { get; set; } }
+    private sealed class DeclaredResolver(Type declaredType) : IGeneratedMappingResolver
+    {
+        public int Calls;
+        public Meridian.Mapping.Execution.ResolutionContext? Seen;
+        public bool TryGetMapping(Type source, Type destination, out GeneratedMappingDescriptor? mapping)
+        {
+            mapping = source == declaredType && destination == typeof(DeclaredBase)
+                ? new GeneratedMappingDescriptor(source, destination, (value, context) =>
+                { Calls++; Seen = context; return new DeclaredBase { Value = 999 }; }) : null;
+            return mapping is not null;
+        }
+    }
+
     private const string Fixture = """
         using System;
         using System.Collections.Generic;

@@ -287,6 +287,9 @@ public class MappingEngine
 
             // Resolve value
             object? value;
+            // Only getter metadata describes the selected output; custom resolvers,
+            // converters and constants can return a different type.
+            Type? declaredValueType = null;
 
             if (propertyMap.HasConstantValue)
             {
@@ -329,6 +332,8 @@ public class MappingEngine
             else if (propertyMap.CompiledGetter != null)
             {
                 value = propertyMap.CompiledGetter(source);
+                declaredValueType = propertyMap.CustomMapExpression?.ReturnType
+                    ?? (propertyMap.SourcePropertyChain is { Length: > 0 } chain ? chain[^1].PropertyType : propertyMap.SourceProperty?.PropertyType);
             }
             else
             {
@@ -337,7 +342,10 @@ public class MappingEngine
 
             // Null substitution
             if (value == null && propertyMap.HasNullSubstitute)
+            {
                 value = propertyMap.NullSubstitute;
+                declaredValueType = null;
+            }
 
             // Condition — typed wrapper.
             if (propertyMap.Condition != null)
@@ -370,11 +378,11 @@ public class MappingEngine
 
             if (value != null && !destPropType.IsAssignableFrom(value.GetType()))
             {
-                value = ConvertValue(value, destPropType, childContext);
+                value = ConvertValue(value, destPropType, childContext, declaredValueType);
             }
             else if (value != null && propertyMap.UseDestinationValue != true)
             {
-                value = ConvertAssignableValue(value, destPropType, childContext);
+                value = ConvertAssignableValue(value, declaredValueType ?? value.GetType(), destPropType, childContext);
             }
 
 
@@ -507,23 +515,24 @@ public class MappingEngine
         return destination;
     }
 
-    internal object? ConvertAssignableValue(object? value, Type destinationType, ResolutionContext context)
+    internal object? ConvertAssignableValue(object? value, Type declaredSourceType, Type destinationType, ResolutionContext context)
     {
         if (value is null || !context.AllowGeneratedAssignableMappings ||
             _configurationProvider is not IGeneratedMappingConfigurationProvider { GeneratedResolvers.Count: > 0 })
             return value;
 
-        var typeMap = ResolveTypeMap(value, value.GetType(), destinationType);
+        var typeMap = ResolveTypeMap(value, declaredSourceType, destinationType);
         if (typeMap is not null)
             return MapWithTypeMap(value, typeMap, context);
-        var generated = FindGeneratedMapping(value.GetType(), destinationType);
+        var generated = FindGeneratedMapping(value.GetType(), destinationType)
+            ?? (value.GetType() != declaredSourceType ? FindGeneratedMapping(declaredSourceType, destinationType) : null);
         if (generated is null) return value;
         return context.Depth >= context.MaxDepth
             ? (destinationType.IsValueType ? Activator.CreateInstance(destinationType) : null)
             : generated.Map(value, context);
     }
 
-    private object? ConvertValue(object value, Type destType, ResolutionContext context)
+    private object? ConvertValue(object value, Type destType, ResolutionContext context, Type? declaredSourceType = null)
     {
         var sourceType = value.GetType();
 
@@ -534,7 +543,7 @@ public class MappingEngine
 
         // Direct assignability
         if (destType.IsAssignableFrom(sourceType))
-            return ConvertAssignableValue(value, destType, context);
+            return ConvertAssignableValue(value, declaredSourceType ?? sourceType, destType, context);
 
         // Collection mapping
         if (IsCollectionMapping(sourceType, destType, out var srcElem, out var destElem))

@@ -30,6 +30,22 @@ foreach (var interpreted in new[] { false, true })
     Check(sameSource.Child.Value == 42, "generated child mutation isolation");
 }
 Console.WriteLine("sameTypeNested=42 interpreter=true compiled=true independent=true");
+foreach (var interpreted in new[] { false, true })
+{
+    var actions = 0;
+    var declaredResolver = new DeclaredChildResolver();
+    var declaredConfiguration = new MapperConfiguration(c =>
+    {
+        c.UseGeneratedMappings(declaredResolver);
+        c.CreateMap<DeclaredChild, DeclaredChild>().AfterMap((s, d) => { actions++; d.Value = 88; });
+        var map = c.CreateMap<DeclaredParent, DeclaredParentDto>();
+        if (interpreted) map.AfterMap((s, d) => { });
+    });
+    var child = new DerivedChild { Value = 42 };
+    var mapped = declaredConfiguration.CreateMapper().Map<DeclaredParent, DeclaredParentDto>(new() { Item = child });
+    Check(mapped.Item?.Value == 88 && actions == 1 && declaredResolver.Calls == 0 && !ReferenceEquals(child, mapped.Item), "declared base explicit priority");
+}
+Console.WriteLine("declaredBaseNested=88 interpreter=true compiled=true explicitActions=1 descriptorCalls=0");
 
 var inherited = Container.EnhancedMaps.MapToInitDto(new InheritedSource { Id = 42, Name = "init" });
 Check(inherited.Id == 42 && inherited.Name == "init", "inherited/init destination");
@@ -190,4 +206,21 @@ public static partial class BridgeMaps { }
 #if !BASELINE
 [GenerateMapper(typeof(Child),typeof(Child),Mode=GeneratedMappingMode.Structural,GenerateResolver=true)]
 public static partial class SameTypeMaps { }
+#endif
+
+#if !BASELINE
+public class DeclaredChild { public int Value { get; set; } }
+public sealed class DerivedChild : DeclaredChild { }
+public sealed class DeclaredParent { public DeclaredChild? Item { get; set; } }
+public sealed class DeclaredParentDto { public DeclaredChild? Item { get; set; } }
+public sealed class DeclaredChildResolver : IGeneratedMappingResolver
+{
+    public int Calls { get; private set; }
+    public bool TryGetMapping(Type source, Type destination, out GeneratedMappingDescriptor? mapping)
+    {
+        mapping = source == typeof(DerivedChild) && destination == typeof(DeclaredChild)
+            ? new GeneratedMappingDescriptor(source, destination, (value, context) => { Calls++; return new DeclaredChild { Value = 999 }; }) : null;
+        return mapping is not null;
+    }
+}
 #endif

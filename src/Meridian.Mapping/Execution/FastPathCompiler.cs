@@ -284,7 +284,8 @@ internal static class FastPathCompiler
             // Pass the source once; the dispatcher handles null without a second getter read.
             valueExpr = hasGeneratedMappings
                 ? Expression.Convert(Expression.Call(engineParam, _engineConvertAssignableValueMethod,
-                    Expression.Convert(sourceExpr, typeof(object)), Expression.Constant(destType, typeof(Type)),
+                    Expression.Convert(sourceExpr, typeof(object)), Expression.Constant(sourceExpr.Type, typeof(Type)),
+                    Expression.Constant(destType, typeof(Type)),
                     Expression.Call(ctxParam, _contextIncrementDepthMethod)), destType)
                 : sourceExpr;
         }
