@@ -6,9 +6,20 @@ param(
     [string] $SdkVersion,
     [string] $Manifest = 'eng/packages.json',
     [string] $BaselineFeed,
+    [string[]] $ExcludeConsumerIds = @(),
     [string] $OutputDirectory = 'artifacts/package-consumers'
 )
 $ErrorActionPreference = 'Stop'
+function Select-PackageConsumers([object[]] $Consumers, [string[]] $Excluded) {
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($id in $Excluded) {
+        if (-not $seen.Add($id)) { throw "Duplicate excluded consumer ID: $id" }
+        if (@($Consumers | Where-Object { $_.id -ceq $id }).Count -ne 1) { throw "Unknown excluded consumer ID: $id" }
+    }
+    $selected = @($Consumers | Where-Object { -not $seen.Contains($_.id) })
+    if ($Consumers.Count -and -not $selected.Count) { throw 'Consumer exclusion cannot empty the selected inventory' }
+    return [pscustomobject]@{ Consumers=$selected; SelectedIds=@($selected.id); OmittedIds=@($Consumers | Where-Object { $seen.Contains($_.id) } | ForEach-Object id); Scope=$(if ($seen.Count) { 'partial' } else { 'all' }) }
+}
 Import-Module (Join-Path $PSScriptRoot 'package-inventory.psm1') -Force -DisableNameChecking
 $repo = Split-Path -Parent $PSScriptRoot
 $Feed = [IO.Path]::GetFullPath($Feed)
@@ -19,7 +30,8 @@ if ([bool]$Framework -ne [bool]$SdkVersion) { throw 'Framework and SdkVersion mu
 $candidateLanes = if ($Framework) { @([pscustomobject]@{ framework=$Framework; sdkVersion=$SdkVersion }) } else { @($inventory.compilerHosts) }
 # Published 2.1.3 old-host failures remain A4 historical evidence. The baseline
 # operational comparison runs on SDK 10; all candidate compiler hosts must pass.
-$baselineConsumers = @($inventory.consumers | Where-Object baselineComparison)
+$selection = Select-PackageConsumers @($inventory.consumers) $ExcludeConsumerIds
+$baselineConsumers = @($selection.Consumers | Where-Object baselineComparison)
 $baselinePackages = @(Get-PackageClosure $inventory @($baselineConsumers.packageIds | Select-Object -Unique))
 $referenceLane = @($inventory.compilerHosts | Where-Object framework -EQ 'net10.0')
 if ($baselineConsumers.Count -and $referenceLane.Count -ne 1) { throw 'Exactly one SDK 10 reference lane is required' }
@@ -30,6 +42,7 @@ $common = @{}
 $dotnet = (Get-Command dotnet -CommandType Application | Select-Object -First 1).Source
 $run = Join-Path ([IO.Path]::GetFullPath($OutputDirectory)) "$CandidateVersion/$([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffffffZ'))"
 $null = New-Item -ItemType Directory -Force $run
+[ordered]@{ scope=$selection.Scope; selectedIds=$selection.SelectedIds; omittedIds=$selection.OmittedIds; archiveInspection='all-manifest-packages'; toolingInspection='all-manifest-producers' } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $run 'consumer-selection.json')
 '<Project />' | Set-Content (Join-Path $run 'Directory.Build.props')
 '<Project />' | Set-Content (Join-Path $run 'Directory.Build.targets')
 if ($baselinePackages.Count -and -not $BaselineFeed) {
@@ -87,7 +100,7 @@ foreach ($lane in $lanes) {
         if ($sdkLine.Count -ne 1 -or $sdkLine[0] -notmatch '\[(.+)\]$') { throw 'Cannot locate selected SDK compiler' }
         $compiler = Join-Path $Matches[1] "$sdk/Roslyn/bincore/csc.dll"
         $compilerVersion = (Execute @('exec',$compiler,'-version') (Join-Path $dir 'compiler.log')).Trim()
-        $consumers = if ($lane.baselineOnly) { $baselineConsumers } else { @($inventory.consumers) }
+        $consumers = if ($lane.baselineOnly) { $baselineConsumers } else { @($selection.Consumers) }
         foreach ($consumer in $consumers) {
             $closure = @(Get-PackageClosure $inventory $consumer.packageIds)
             $variants = if ($lane.baselineOnly) { @('baseline') } else { @($consumer.variants) }
@@ -159,6 +172,6 @@ foreach ($lane in $lanes) {
 $packageRecord = Get-Content -Raw (Join-Path $Feed "package-manifest.$CandidateVersion.json") | ConvertFrom-Json
 $buildTooling = @(Test-RecordedBuildTooling $inventory $packageRecord $CandidateVersion)
 # This is a Meridian schemaVersion1 SBOM inventory, not a claimed CycloneDX/SPDX document.
-$sbom = [ordered]@{schemaVersion=1;format='meridian-restored-package-inventory';manifestSha256=(Get-FileHash $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant();candidateVersion=$CandidateVersion;components=@($components.Values | Sort-Object id,version);consumerGraphs=$graphs;distributedPackages=$packageRecord.packages;buildTooling=$buildTooling;buildToolingScope='Private build tools are recorded separately from consumer distribution graphs'}
+$sbom = [ordered]@{consumerScope=$selection.Scope;selectedConsumerIds=$selection.SelectedIds;omittedConsumerIds=$selection.OmittedIds;schemaVersion=1;format='meridian-restored-package-inventory';manifestSha256=(Get-FileHash $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant();candidateVersion=$CandidateVersion;components=@($components.Values | Sort-Object id,version);consumerGraphs=$graphs;distributedPackages=$packageRecord.packages;buildTooling=$buildTooling;buildToolingScope='Private build tools are recorded separately from consumer distribution graphs'}
 $sbom | ConvertTo-Json -Depth 20 | Set-Content (Join-Path $run 'sbom-inventory.json')
 Write-Host "PASS packaged compiler consumers: $($results.Count); evidence=$run"

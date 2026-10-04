@@ -109,6 +109,30 @@
         "Meridian.Mediator"
       ],
       "licenseExpression": "MIT"
+    },
+    {
+      "id": "Meridian.Mediator.Redis",
+      "project": "src/Meridian.Mediator.Redis/Meridian.Mediator.Redis.csproj",
+      "kind": "runtime",
+      "versionSource": "Version",
+      "baselineVersion": null,
+      "targetFrameworks": [
+        "net8.0",
+        "net9.0",
+        "net10.0"
+      ],
+      "analyzerPaths": [],
+      "directPackageDependencies": [
+        {
+          "id": "StackExchange.Redis",
+          "version": "2.7.27"
+        }
+      ],
+      "projectDependencies": [
+        "Meridian.Mediator.Caching",
+        "Meridian.Mediator"
+      ],
+      "licenseExpression": "MIT"
     }
   ],
   "compilerHosts": [
@@ -214,6 +238,21 @@
       ],
       "packageIds": [
         "Meridian.Mediator.Caching"
+      ],
+      "variants": [
+        "legacy"
+      ],
+      "baselineComparison": false
+    },
+    {
+      "id": "Meridian.RedisIdempotencyConsumer",
+      "project": "tests/consumers/Meridian.RedisIdempotencyConsumer/Meridian.RedisIdempotencyConsumer.csproj",
+      "sourceFiles": [
+        "tests/consumers/Meridian.RedisIdempotencyConsumer/Meridian.RedisIdempotencyConsumer.csproj",
+        "tests/consumers/Meridian.RedisIdempotencyConsumer/Program.cs"
+      ],
+      "packageIds": [
+        "Meridian.Mediator.Redis"
       ],
       "variants": [
         "legacy"

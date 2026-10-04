@@ -173,6 +173,14 @@ jobs:
           -c Release -f "$MATRIX_FRAMEWORK" --filter "Provider=Redis"
           --logger "trx;LogFileName=redis.trx" --logger "console;verbosity=normal"
           --results-directory artifacts/caching-redis
+      - name: Execute required owned Redis leases and process restart proof
+        env:
+          MATRIX_FRAMEWORK: ${{ matrix.framework }}
+        run: >-
+          dotnet test tests/Meridian.Mediator.Redis.Tests/Meridian.Mediator.Redis.Tests.csproj
+          -c Release -f "$MATRIX_FRAMEWORK" --filter "Provider=Redis"
+          --logger "trx;LogFileName=leased-redis.trx" --logger "console;verbosity=normal"
+          --results-directory artifacts/caching-redis
       - name: Retain executed provider and binary evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -207,7 +215,7 @@ jobs:
         run: ./eng/pack-packages.ps1 -OutputDirectory artifacts/packages -CandidateVersion $env:CANDIDATE_VERSION
       - name: Run isolated native compiler consumers
         shell: pwsh
-        run: ./eng/verify-packages.ps1 -Feed artifacts/packages -CandidateVersion $env:CANDIDATE_VERSION -Framework '${{ matrix.host.framework }}' -SdkVersion '${{ matrix.host.sdk }}'
+        run: ./eng/verify-packages.ps1 -Feed artifacts/packages -CandidateVersion $env:CANDIDATE_VERSION -Framework '${{ matrix.host.framework }}' -SdkVersion '${{ matrix.host.sdk }}' -ExcludeConsumerIds Meridian.RedisIdempotencyConsumer
       - name: Retain package hashes and compiler evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -216,4 +224,51 @@ jobs:
           path: |
             artifacts/packages/**
             artifacts/package-consumers/**
+          retention-days: 14
+
+  redis-package-compatibility:
+    name: Required Redis all-package consumers (${{ matrix.host.framework }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        host:
+          - { framework: net8.0, sdk: 8.0.421 }
+          - { framework: net9.0, sdk: 9.0.318 }
+          - { framework: net10.0, sdk: 10.0.300 }
+    services:
+      redis:
+        image: redis:7.4-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+        ports:
+          - 6379/tcp
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      CANDIDATE_VERSION: 2.1.4-c4.${{ github.run_id }}.${{ github.run_attempt }}
+      DOTNET_ROLL_FORWARD: LatestPatch
+      DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
+      MERIDIAN_TEST_REDIS: 127.0.0.1:${{ job.services.redis.ports[6379] }},abortConnect=true,connectTimeout=5000
+      MERIDIAN_TEST_REDIS_REQUIRED: '1'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: |
+            10.0.300
+            ${{ matrix.host.sdk }}
+      - name: Pack every inventory archive
+        shell: pwsh
+        run: ./eng/pack-packages.ps1 -OutputDirectory artifacts/redis-packages -CandidateVersion $env:CANDIDATE_VERSION
+      - name: Require every selected compiler consumer with real Redis
+        shell: pwsh
+        run: ./eng/verify-packages.ps1 -Feed artifacts/redis-packages -CandidateVersion $env:CANDIDATE_VERSION -Framework '${{ matrix.host.framework }}' -SdkVersion '${{ matrix.host.sdk }}' -OutputDirectory artifacts/redis-package-consumers
+      - name: Retain all-package required provider evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: redis-package-compatibility-${{ matrix.host.framework }}
+          path: |
+            artifacts/redis-packages/**
+            artifacts/redis-package-consumers/**
           retention-days: 14
