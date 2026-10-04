@@ -12,6 +12,8 @@ import sys
 import uuid
 from datetime import datetime, timezone
 import unittest
+from unittest import mock
+import zipfile
 
 ROOT = Path(__file__).resolve().parents[2]
 PACK_SCRIPT = Path(
@@ -34,6 +36,9 @@ class PackageInventoryTests(unittest.TestCase):
             )
         )
         cls.artifacts.mkdir(parents=True, exist_ok=True)
+        # Inventory paths and fixture LICENSE includes use this fixed repository layout.
+        cls.fixture_root = ROOT / "artifacts/package-inventory-tests"
+        cls.fixture_root.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         cls.execution = (
             cls.artifacts / "test-runs" / f"{stamp}-{os.getpid()}-{uuid.uuid4().hex}"
@@ -55,7 +60,9 @@ class PackageInventoryTests(unittest.TestCase):
         print(f"Package test evidence: {cls.execution}", file=sys.stderr)
 
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix="inventory-", dir=self.artifacts)
+        self.temp = tempfile.TemporaryDirectory(
+            prefix="inventory-", dir=self.fixture_root
+        )
         self.addCleanup(self.temp.cleanup)
         self.work = Path(self.temp.name)
         self.manifest = json.loads((ROOT / "eng/packages.json").read_text())
@@ -672,6 +679,181 @@ class PackageInventoryTests(unittest.TestCase):
         self.assertIn(
             "Analyzer build provenance identity mismatch", result.stdout + result.stderr
         )
+
+    def write_nuspec_identity(self, source, destination, version=None, package_id=None):
+        with zipfile.ZipFile(source) as original, zipfile.ZipFile(
+            destination, "w"
+        ) as changed:
+            for entry in original.infolist():
+                content = original.read(entry.filename)
+                if entry.filename.endswith(".nuspec"):
+                    text = content.decode()
+                    if version is not None:
+                        text = text.replace(
+                            "<version>0.0.1</version>", f"<version>{version}</version>"
+                        )
+                    if package_id is not None:
+                        text = text.replace(
+                            "<id>Fixture.Tool</id>", f"<id>{package_id}</id>"
+                        )
+                    content = text.encode()
+                changed.writestr(entry, content)
+
+    def restored_component_fixture(self, version="0.0.1"):
+        tool = self.fixture("Tool")
+        project = ROOT / tool["project"]
+        original_feed = self.work / "private-feed"
+        result = self.run_command(
+            [
+                "dotnet",
+                "pack",
+                str(project),
+                "-c",
+                "Release",
+                "-o",
+                str(original_feed),
+                "-p:Version=0.0.1",
+                "-p:PackageVersion=0.0.1",
+            ],
+            "pack-restored-tool",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        original = original_feed / "Fixture.Tool.0.0.1.nupkg"
+        feed = self.work / "restored-tool-feed"
+        feed.mkdir()
+        self.write_nuspec_identity(original, feed / original.name, version=version)
+        probe = self.work / "Probe"
+        probe.mkdir()
+        project = probe / "Probe.csproj"
+        project.write_text(
+            '<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup><ItemGroup><PackageReference Include="Fixture.Tool" Version="[0.0.1]" /></ItemGroup></Project>'
+        )
+        config = probe / "NuGet.Config"
+        config.write_text(
+            f'<configuration><packageSources><clear/><add key="fixture" value="{feed}"/></packageSources></configuration>'
+        )
+        packages = self.work / "packages"
+        result = self.run_command(
+            [
+                "dotnet",
+                "restore",
+                str(project),
+                "--configfile",
+                str(config),
+                f"-p:RestorePackagesPath={packages}",
+            ],
+            "restore-normalized-tool",
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        assets = probe / "obj/project.assets.json"
+        self.assertEqual(
+            list(json.loads(assets.read_text())["libraries"]), ["Fixture.Tool/0.0.1"]
+        )
+        shutil.copy2(assets, self.last_evidence / "project.assets.json")
+        shutil.copy2(feed / original.name, self.last_evidence / original.name)
+        return assets, packages, original
+
+    def read_restored_components(self, assets, packages):
+        quoted_assets = str(assets).replace("'", "''")
+        quoted_packages = str(packages).replace("'", "''")
+        script = f"$ErrorActionPreference='Stop'; Import-Module ./eng/package-inventory.psm1 -Force -DisableNameChecking; $assets=Get-Content -Raw '{quoted_assets}' | ConvertFrom-Json; $components=@(Read-RestoredComponents $assets '{quoted_packages}'); $assembly=[NuGet.Versioning.NuGetVersion].Assembly; $sdk=(& dotnet --version) -join ''; $receipt=[ordered]@{{sdk=$sdk;runtime=[Environment]::Version.ToString();assemblyPath=$assembly.Location;assemblyVersion=$assembly.GetName().Version.ToString();assemblySha256=(Get-FileHash $assembly.Location -Algorithm SHA256).Hash.ToLowerInvariant()}}; [Console]::Error.WriteLine(('NuGet identity receipt: '+($receipt | ConvertTo-Json -Compress))); ConvertTo-Json -InputObject $components -Depth 10"
+        result = self.run_command(
+            [self.pwsh, "-NoProfile", "-Command", script], "read-restored-components"
+        )
+        shutil.copy2(assets, self.last_evidence / "project.assets.json")
+        for package in packages.glob("**/*.nupkg"):
+            shutil.copy2(package, self.last_evidence / package.name)
+        return result
+
+    def test_actual_restore_accepts_nuspec_fourth_zero_version_identity(self):
+        assets, packages, _ = self.restored_component_fixture("0.0.1.0")
+        result = self.read_restored_components(assets, packages)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        components = json.loads(result.stdout)
+        self.assertEqual(
+            [(item["id"], item["version"]) for item in components],
+            [("Fixture.Tool", "0.0.1")],
+        )
+        package = packages / "fixture.tool/0.0.1/fixture.tool.0.0.1.nupkg"
+        self.assertEqual(
+            components[0]["sha256"], hashlib.sha256(package.read_bytes()).hexdigest()
+        )
+
+    def test_actual_restore_accepts_nuspec_leading_zero_version_identity(self):
+        assets, packages, _ = self.restored_component_fixture("0.00.01")
+        result = self.read_restored_components(assets, packages)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_actual_restore_accepts_nuspec_build_metadata_version_identity(self):
+        assets, packages, _ = self.restored_component_fixture("0.0.1+fixture.1")
+        result = self.read_restored_components(assets, packages)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_restored_component_rejects_genuinely_different_version(self):
+        assets, packages, original = self.restored_component_fixture()
+        package = packages / "fixture.tool/0.0.1/fixture.tool.0.0.1.nupkg"
+        for version in ("0.0.2", "0.0.1.1", "0.0.1-beta.1"):
+            with self.subTest(nuspec_version=version):
+                self.write_nuspec_identity(original, package, version=version)
+                result = self.read_restored_components(assets, packages)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    "Restored nuspec identity mismatch", result.stdout + result.stderr
+                )
+
+    def test_restored_component_rejects_genuinely_different_package_id(self):
+        assets, packages, original = self.restored_component_fixture()
+        package = packages / "fixture.tool/0.0.1/fixture.tool.0.0.1.nupkg"
+        self.write_nuspec_identity(original, package, package_id="Fixture.Other")
+        result = self.read_restored_components(assets, packages)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "Restored nuspec identity mismatch", result.stdout + result.stderr
+        )
+
+    def test_evidence_root_is_independent_of_repository_fixture_layout(self):
+        for location in ("external", "nested"):
+            with self.subTest(evidence_root=location):
+                parent = None if location == "external" else self.work
+                with tempfile.TemporaryDirectory(
+                    prefix="meridian-evidence-", dir=parent
+                ) as evidence:
+                    evidence_root = Path(evidence) / "nested/evidence/depth"
+
+                    class EvidenceProbe(PackageInventoryTests):
+                        pass
+
+                    with mock.patch.dict(
+                        os.environ, E2_TEST_ARTIFACT_ROOT=str(evidence_root)
+                    ):
+                        EvidenceProbe.setUpClass()
+                    probe = EvidenceProbe(
+                        "test_current_core_inventory_validates_without_packing"
+                    )
+                    probe.setUp()
+                    try:
+                        self.assertTrue(
+                            probe.work.is_relative_to(
+                                ROOT / "artifacts/package-inventory-tests"
+                            )
+                        )
+                        entry = probe.fixture("EvidenceProbe")
+                        probe.manifest = dict(
+                            schemaVersion=1,
+                            packages=[entry],
+                            compilerHosts=self.manifest["compilerHosts"],
+                            consumers=[],
+                        )
+                        result = probe.invoke(validate=False)
+                        self.assertEqual(
+                            result.returncode, 0, result.stdout + result.stderr
+                        )
+                        self.assertTrue(probe.execution.is_relative_to(evidence_root))
+                        shutil.copytree(
+                            probe.execution, self.logs / f"{location}-evidence"
+                        )
+                    finally:
+                        probe.doCleanups()
 
 
 if __name__ == "__main__":

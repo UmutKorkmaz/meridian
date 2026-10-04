@@ -179,7 +179,23 @@ function Select-ReleasePackages($Inventory, [string] $Repo, [string] $Dotnet, [s
 }
 Export-ModuleMember -Function Select-ReleasePackages
 
+function Initialize-NuGetVersioning {
+    if ('NuGet.Versioning.NuGetVersion' -as [type]) { return }
+    # Use the active SDK's NuGet parser/comparer, matching restore identity semantics.
+    $dotnet = (Get-Command dotnet -CommandType Application | Select-Object -First 1).Source
+    $sdk = (& $dotnet --version) -join ''
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot resolve NuGet version identity SDK' }
+    $installed = & $dotnet --list-sdks
+    if ($LASTEXITCODE -ne 0) { throw 'Cannot locate NuGet version identity SDK' }
+    $sdkLine = @($installed | Where-Object { $_.StartsWith("$sdk ") })
+    if ($sdkLine.Count -ne 1 -or $sdkLine[0] -notmatch '\[(.+)\]$') { throw 'Cannot locate active SDK NuGet.Versioning assembly' }
+    $assembly = Join-Path $Matches[1] "$sdk/NuGet.Versioning.dll"
+    if (-not (Test-Path -LiteralPath $assembly -PathType Leaf)) { throw 'Active SDK has no NuGet.Versioning assembly' }
+    $null = [Reflection.Assembly]::LoadFrom($assembly)
+}
+
 function Read-RestoredComponents($Assets, [string] $Packages) {
+    Initialize-NuGetVersioning
     $components = @()
     foreach ($library in $Assets.libraries.PSObject.Properties | Where-Object { $_.Value.type -eq 'package' }) {
         $identity = $library.Name.Split('/')
@@ -190,7 +206,9 @@ function Read-RestoredComponents($Assets, [string] $Packages) {
             $entry = @($archive.Entries | Where-Object FullName -Like '*.nuspec')
             if ($entry.Count -ne 1) { throw "Missing restored nuspec: $id" }
             [xml] $nuspec = Read-ArchiveText $archive $entry[0].FullName
-            if ($nuspec.package.metadata.id -ne $id -or $nuspec.package.metadata.version -ne $version) { throw "Restored nuspec identity mismatch: $id/$version" }
+            $nuspecVersion = [NuGet.Versioning.NuGetVersion]::Parse([string]$nuspec.package.metadata.version)
+            $restoredVersion = [NuGet.Versioning.NuGetVersion]::Parse($version)
+            if ($nuspec.package.metadata.id -ne $id -or -not [NuGet.Versioning.VersionComparer]::VersionRelease.Equals($nuspecVersion, $restoredVersion)) { throw "Restored nuspec identity mismatch: $id/$version" }
             $license = $nuspec.package.metadata.license
             $licenseFileHash = if ($license -and $license.type -eq 'file') { Get-ArchiveHash $archive.GetEntry($license.InnerText) } else { $null }
             $components += [ordered]@{ id=$id; version=$version; sha256=(Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant(); nuspecSha256=(Get-ArchiveHash $entry[0]); restoreSha512=$library.Value.sha512; licenseType=if ($license) {$license.type} else {$null}; license=if ($license) {$license.InnerText} else {$null}; licenseFileSha256=$licenseFileHash; path=$path }
