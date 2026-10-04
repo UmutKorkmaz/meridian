@@ -106,12 +106,12 @@ internal static class MemberConfigurationBuilder
                  NeedsStructuralSupport(target.Type) || pairs.Any(p => SymbolEqualityComparer.Default.Equals(p.ConstructorArguments[0].Value as ITypeSymbol, property.Type) &&
                     SymbolEqualityComparer.Default.Equals(p.ConstructorArguments[1].Value as ITypeSymbol, target.Type)))));
         }
-        foreach (var converter in configurations.Where(a => a.AttributeClass!.Name == "MapWithAttribute"))
+        foreach (var configuration in configurations.Where(a => a.AttributeClass!.Name is "MapWithAttribute" or "MapMemberAttribute"))
         {
-            var name = (string)converter.ConstructorArguments[0].Value!;
+            var name = (string)configuration.ConstructorArguments[0].Value!;
             var applicable = result.Where(m => Matches(m.DestinationName, name, m.IsInitializer)).ToArray();
             if (applicable.Length > 0 && applicable.All(m => m.Expression is null) && applicable.All(m => !m.IsInitializer))
-                Invalid(applicable[0].Failure ?? "no constructor can bind the configured static converter");
+                Invalid(applicable[0].Failure ?? "no constructor can bind the explicitly configured member");
         }
         return result.ToImmutable();
         void Invalid(string reason) => report(MapperDiagnostics.InvalidConfiguration, new object[] { reason });

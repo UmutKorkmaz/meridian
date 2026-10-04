@@ -112,6 +112,50 @@ public class GeneratedConstructionTests
         Assert.DoesNotContain(result.Compilation.GetDiagnostics(), d => d.Severity == DiagnosticSeverity.Error);
     }
 
+    [Fact]
+    public void Optional_Different_Type_Parameter_Does_Not_Consume_String_Initializer() => AssertValue(
+        "public class Dto { public string Name { get; init; } = \"ctor\"; public Dto(int name = 73) {} }", "Ada",
+        "return MapToDto(new Source { Name = \"Ada\" }).Name;");
+
+    [Fact]
+    public void Optional_Different_Type_Parameter_Does_Not_Consume_Integer_Initializer() => AssertValue(
+        "public class Dto { public int Age { get; init; } public Dto(string age = \"ctor\") { Age = 7; } }", "42",
+        "return MapToDto(new Source { Age = 42 }).Age.ToString();");
+
+    [Fact]
+    public void Bound_Different_Type_Parameter_Does_Not_Consume_Initializer() => AssertValue(
+        "public class Dto { public string Name { get; init; } = \"ctor\"; public Dto(object name) {} }", "Ada",
+        "return MapToDto(new Source { Name = \"Ada\" }).Name;");
+
+    [Fact]
+    public void Different_Source_Binding_Does_Not_Consume_Initializer()
+    {
+        var result = GeneratorTestHarness.Compile("""
+            using Meridian.Mapping;
+            public class Source { public string Name { get; set; } = "Ada"; public string Other { get; set; } = "constructor"; }
+            public class Dto { public string Name { get; init; } = "ctor"; public string Observed { get; } public Dto(string name) { Observed = name; } }
+            [GenerateMapper(typeof(Source), typeof(Dto), Mode = GeneratedMappingMode.Structural)]
+            [MapMember("name", "Other")]
+            public static partial class Maps { public static string Proof() { var dto = MapToDto(new Source()); return dto.Name + ":" + dto.Observed; } }
+            """);
+        Assert.DoesNotContain(result.Diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+        Assert.Equal("Ada:constructor", GeneratorTestHarness.InvokeStatic<string>(result, "Maps", "Proof"));
+    }
+
+    [Fact]
+    public void Optional_Absent_Record_Property_Is_Satisfied_By_Default() => AssertValue(
+        "public record Dto(string Name, int Missing = 73);", "Ada:73",
+        "var dto = MapToDto(new Source { Name = \"Ada\" }); return dto.Name + \":\" + dto.Missing;");
+
+    [Fact]
+    public void Optional_Default_Does_Not_Satisfy_Required_Initializer()
+    {
+        var result = GeneratorTestHarness.Compile(Fixture(
+            "public class Dto { public required int Missing { get; init; } public Dto(int missing = 73) {} }", ""));
+        Assert.Contains(result.Diagnostics, d => d.Id == "MERIDIANGEN002");
+        Assert.DoesNotContain(result.Compilation.GetDiagnostics(), d => d.Severity == DiagnosticSeverity.Error);
+    }
+
     private static void AssertConstructionError(string destination)
     {
         var result = GeneratorTestHarness.Compile(Fixture(destination, ""));

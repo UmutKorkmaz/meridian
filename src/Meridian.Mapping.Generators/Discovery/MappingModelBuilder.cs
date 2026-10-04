@@ -118,6 +118,8 @@ internal static class MappingModelBuilder
                 : new ConstructorModel(true, SetsRequiredMembers: failure is null);
             if (!constructor.IsSupported)
                 Report(MapperDiagnostics.UnsupportedConstruction, destination.ToDisplayString(), constructor.Failure!);
+            if (constructor.HasUnfulfilledConfiguration)
+                Report(MapperDiagnostics.InvalidConfiguration, "no eligible constructor satisfies every explicitly configured constructor-only member");
             if (!constructor.Arguments.IsDefault && constructor.Arguments.Any(argument => argument.RequiresStructuralSupport))
                 Report(MapperDiagnostics.UnsupportedStructural, "constructor parameters require nullable, collection, enum or nested mapping support that is not implemented yet");
             var finalMembers = ImmutableArray.CreateBuilder<MemberModel>();
@@ -136,8 +138,15 @@ internal static class MappingModelBuilder
             {
                 if (!member.IsInitializer) continue;
                 var consumed = !constructor.Arguments.IsDefault && constructor.Arguments.Any(a =>
-                    string.Equals(a.DestinationMember, member.DestinationName, StringComparison.OrdinalIgnoreCase));
-                if (consumed && (!member.IsRequired || constructor.SetsRequiredMembers)) continue;
+                    a.Binding is { } binding && string.Equals(binding.DestinationName, member.DestinationName, StringComparison.OrdinalIgnoreCase) &&
+                    binding.DestinationTypeIdentity == member.DestinationTypeIdentity && binding.SourceName == member.SourceName &&
+                    binding.SourceTypeIdentity == member.SourceTypeIdentity &&
+                    (binding.Expression == member.Expression || member.Expression is null && binding.Expression == "source.@" + member.SourceName));
+                // A default can satisfy an absent optional property, but never consumes a source-backed assignment.
+                var defaultSatisfied = !member.IsConfigured && member.SourceTypeIdentity.Length == 0 && !constructor.Arguments.IsDefault &&
+                    constructor.Arguments.Any(a => a.Binding is null && a.ParameterTypeIdentity == member.DestinationTypeIdentity &&
+                        string.Equals(a.ParameterName, member.DestinationName, StringComparison.OrdinalIgnoreCase));
+                if ((consumed || defaultSatisfied) && (!member.IsRequired || constructor.SetsRequiredMembers)) continue;
                 if (member.IsIgnored)
                 {
                     if (member.IsRequired && !constructor.SetsRequiredMembers)

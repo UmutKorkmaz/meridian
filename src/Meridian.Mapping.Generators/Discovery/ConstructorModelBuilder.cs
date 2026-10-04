@@ -15,6 +15,10 @@ internal static class ConstructorModelBuilder
     {
         if (destination.TypeKind is not (TypeKind.Class or TypeKind.Struct) || destination.IsAbstract || destination.IsStatic)
             return new ConstructorModel(false, Failure: "the destination is not a concrete class or struct");
+        var configuredConstructorTargets = members.Where(m => !m.IsInitializer && m.IsConfigured && !m.IsIgnored &&
+            !members.Any(initializer => initializer.IsInitializer && initializer.IsConfigured &&
+                string.Equals(initializer.DestinationName, m.DestinationName, StringComparison.OrdinalIgnoreCase)))
+            .Select(m => m.DestinationName).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var candidates = new List<ConstructorModel>();
         var bestCount = -1;
         foreach (var constructor in destination.InstanceConstructors.Where(c => c.DeclaredAccessibility == Accessibility.Public))
@@ -29,18 +33,21 @@ internal static class ConstructorModelBuilder
                     m.DestinationTypeIdentity == parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat));
                 var type = parameter.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
                 if (member?.Expression is not null && !member.IsIgnored)
-                    arguments.Add(new ConstructorArgumentModel(parameter.Name, "(" + type + ")(" + member.Expression + ")", member.DestinationName, member.RequiresStructuralSupport));
+                    arguments.Add(new ConstructorArgumentModel(parameter.Name, type, "(" + type + ")(" + member.Expression + ")", member));
                 else if (parameter.HasExplicitDefaultValue && (member is null || !member.IsConfigured || member.IsIgnored))
-                    arguments.Add(new ConstructorArgumentModel(parameter.Name, DefaultExpression(parameter), parameter.Name));
+                    arguments.Add(new ConstructorArgumentModel(parameter.Name, type, DefaultExpression(parameter)));
                 else { eligible = false; break; }
             }
-            if (!eligible || constructor.Parameters.Length < bestCount) continue;
+            if (!eligible || configuredConstructorTargets.Any(name => !arguments.Any(argument =>
+                argument.Binding is { IsConfigured: true } binding && string.Equals(binding.DestinationName, name, StringComparison.OrdinalIgnoreCase))) ||
+                constructor.Parameters.Length < bestCount) continue;
             if (constructor.Parameters.Length > bestCount) { candidates.Clear(); bestCount = constructor.Parameters.Length; }
             candidates.Add(new ConstructorModel(true, arguments.ToImmutable(), constructor.GetAttributes().Any(a =>
                 a.AttributeClass?.ToDisplayString() == "System.Diagnostics.CodeAnalysis.SetsRequiredMembersAttribute")));
         }
         return candidates.Count == 1 ? candidates[0] : new ConstructorModel(false, Failure: candidates.Count == 0
-            ? "no public constructor has resolvable required parameters" : "multiple public constructors have the same best resolved parameter count");
+            ? "no public constructor has resolvable required parameters" : "multiple public constructors have the same best resolved parameter count",
+            HasUnfulfilledConfiguration: candidates.Count == 0 && configuredConstructorTargets.Length > 0);
     }
 
     private static string DefaultExpression(IParameterSymbol parameter)

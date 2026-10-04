@@ -255,6 +255,34 @@ public class GeneratedMemberMappingTests
         Error(Fixture("[MapWith(\"Name\", typeof(Convert), \"Apply\")]", "public int Name { get; init; }", "", "Structural")
             .Replace("public class Convert", "file class Convert"));
 
+    [Fact]
+    public void Unbindable_Constructor_Rename_Cannot_Vanish_Through_Parameterless_Fallback() =>
+        Error(Fixture("[MapMember(\"Name\", \"Other\")]", "public Dto() {} public Dto(int name) {}", "", "Structural"));
+
+    [Fact]
+    public void Bindable_Constructor_Rename_With_Unresolved_Sibling_Cannot_Vanish_Through_Fallback() =>
+        Error(Fixture("[MapMember(\"Name\", \"Other\")]", "public Dto() {} public Dto(string name, int missing) {}", "", "Structural"));
+
+    [Fact]
+    public void Constructor_Rename_Uses_Valid_Overload_Despite_Incompatible_Candidate()
+    {
+        var result = GeneratorTestHarness.Compile(Fixture("[MapMember(\"Name\", \"Other\")]",
+            "public string Name { get; } public Dto() { Name = \"wrong\"; } public Dto(int name) { Name = \"wrong\"; } public Dto(string name) { Name = name; }",
+            "public static string Proof() => MapToDto(new Source()).Name;", "Structural"));
+        Assert.DoesNotContain(result.Diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+        Assert.Equal("explicit", GeneratorTestHarness.InvokeStatic<string>(result, "Maps", "Proof"));
+    }
+
+    [Fact]
+    public void Configured_Constructor_Rename_Is_Not_Discarded_For_Wider_Unrelated_Constructor()
+    {
+        var result = GeneratorTestHarness.Compile(Fixture("[MapMember(\"Name\", \"Other\")]",
+            "public string Name { get; } public Dto(string name) { Name = name; } public Dto(int unrelated = 7, int another = 8) { Name = \"wrong\"; }",
+            "public static string Proof() => MapToDto(new Source()).Name;", "Structural"));
+        Assert.DoesNotContain(result.Diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+        Assert.Equal("explicit", GeneratorTestHarness.InvokeStatic<string>(result, "Maps", "Proof"));
+    }
+
     private static void Error(string source)
     {
         var result = GeneratorTestHarness.Compile(source);

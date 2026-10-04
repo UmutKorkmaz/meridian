@@ -26,6 +26,9 @@ Check(immutable.Name == "Ada" && immutable.Age == 37 && immutable.Score == 3 && 
 var explicitLegacy = Container.ExplicitLegacyMaps.MapToExplicitDto(new MemberSource { Original = "Ada", Age = 37 });
 Check(explicitLegacy.Name == "Ada" && explicitLegacy.Score == 3 && explicitLegacy.Note == "kept", "legacy explicit member configuration");
 Console.WriteLine("CANDIDATE generated immutable=Ada:37 seed=73 converter=3 ignore=kept explicitLegacy=true");
+var independentInitializer = Container.IndependentInitializerMaps.MapToIndependentInitializerDto(new MemberSource { Original = "Ada", Age = 42 });
+Check(independentInitializer.Original == "Ada" && independentInitializer.Age == 42, "optional different-type parameter preserves mapped initializer");
+Console.WriteLine("CANDIDATE generated independentInitializer=Ada:42");
 #endif
 static void Check(bool result, string name) { if (!result) throw new InvalidOperationException(name); }
 public sealed class Child { public int Value { get; set; } }
@@ -52,6 +55,8 @@ public partial class Container
     [MapWith("Score", typeof(MemberConverters), "Length")]
     [IgnoreMapMember("Note")]
     public static partial class ImmutableMaps { }
+    [GenerateMapper(typeof(MemberSource), typeof(IndependentInitializerDto), Mode = GeneratedMappingMode.Structural)]
+    public static partial class IndependentInitializerMaps { }
     [GenerateMapper(typeof(MemberSource), typeof(ExplicitDto))]
     [MapMember("Name", "Original", SourceType = typeof(MemberSource), DestinationType = typeof(ExplicitDto))]
     [MapMember("Score", "Original")]
@@ -66,6 +71,12 @@ public sealed record ImmutableDto(string Name, int Age, int Seed = 73)
 {
     public required int Score { get; init; }
     public string Note { get; init; } = "kept";
+}
+public sealed class IndependentInitializerDto
+{
+    public IndependentInitializerDto(int original = 73, string age = "ctor") { }
+    public string Original { get; init; } = "ctor";
+    public int Age { get; init; } = 7;
 }
 public sealed class ExplicitDto
 {
