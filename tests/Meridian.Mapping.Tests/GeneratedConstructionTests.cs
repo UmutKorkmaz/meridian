@@ -156,6 +156,38 @@ public class GeneratedConstructionTests
         Assert.DoesNotContain(result.Compilation.GetDiagnostics(), d => d.Severity == DiagnosticSeverity.Error);
     }
 
+    [Theory]
+    [InlineData("public record Dto(string Name);")]
+    [InlineData("public readonly record struct Dto(string Name);")]
+    public void Lowercase_Source_Maps_Positional_Record_Through_Constructor(string destination)
+    {
+        var result = GeneratorTestHarness.Compile($$"""
+            using Meridian.Mapping;
+            public class Source { public string name { get; set; } = "Ada"; }
+            {{destination}}
+            [GenerateMapper(typeof(Source), typeof(Dto), Mode = GeneratedMappingMode.Structural)]
+            public static partial class Maps { public static string Proof() => MapToDto(new Source()).Name; }
+            """);
+        Assert.DoesNotContain(result.Diagnostics, d => d.Severity == DiagnosticSeverity.Error);
+        Assert.Equal("Ada", GeneratorTestHarness.InvokeStatic<string>(result, "Maps", "Proof"));
+    }
+
+    [Theory]
+    [InlineData("public class Dto { public required string Name { get; init; } public Dto(string Name) {} }")]
+    [InlineData("public class Dto { public int Name { get; init; } public Dto(string Name) {} }")]
+    public void Lowercase_Constructor_Binding_Does_Not_Bypass_Required_Or_Different_Type_Initializer(string destination)
+    {
+        var result = GeneratorTestHarness.Compile($$"""
+            using Meridian.Mapping;
+            public class Source { public string name { get; set; } = "Ada"; }
+            {{destination}}
+            [GenerateMapper(typeof(Source), typeof(Dto), Mode = GeneratedMappingMode.Structural)]
+            public static partial class Maps {}
+            """);
+        Assert.Contains(result.Diagnostics, d => d.Id == "MERIDIANGEN002");
+        Assert.DoesNotContain(result.Compilation.GetDiagnostics(), d => d.Severity == DiagnosticSeverity.Error);
+    }
+
     private static void AssertConstructionError(string destination)
     {
         var result = GeneratorTestHarness.Compile(Fixture(destination, ""));
