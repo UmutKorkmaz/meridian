@@ -393,6 +393,22 @@ class NativeAotWorkflowTests(unittest.TestCase):
         pack_steps = json.dumps(pack["steps"])
         self.assertIn("steps.version.outputs.candidate", pack_steps)
 
+    def test_native_artifact_uploads_overwrite_so_reruns_do_not_collide(self):
+        # upload-artifact@v4 names are immutable within a run and artifacts of earlier attempts stay on the run.
+        # "Re-run failed jobs" re-uploads the lane evidence (if: always()) under the same name and "Re-run all jobs"
+        # re-uploads native-aot-feed; without overwrite the upload step fails with 409 and a passing lane goes red.
+        jobs = self.workflow["jobs"]
+        seen = []
+        for name in ("native-aot-pack", "native-aot"):
+            for step in jobs[name]["steps"]:
+                if str(step.get("uses", "")).startswith("actions/upload-artifact"):
+                    seen.append(step["with"]["name"])
+                    overwrite = step["with"].get("overwrite")
+                    self.assertIn(
+                        overwrite, (True, "true"), f"{name} upload '{step['with']['name']}' must set overwrite: true"
+                    )
+        self.assertEqual(seen, ["native-aot-feed", "native-aot-${{ matrix.rid }}-${{ matrix.host.framework }}"])
+
     def test_existing_required_jobs_are_preserved(self):
         for name in ("build", "projection-postgresql", "caching-redis", "package-compatibility", "redis-package-compatibility", "ef-transactions", "http-integration"):
             self.assertIn(name, self.workflow["jobs"])

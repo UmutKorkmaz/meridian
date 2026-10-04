@@ -394,6 +394,9 @@ jobs:
         with:
           name: native-aot-feed
           path: artifacts/native-feed/**
+          # Artifact names are immutable within a run and earlier attempts' artifacts stay on it; without overwrite a
+          # "Re-run all jobs" attempt would fail this upload with a name conflict.
+          overwrite: true
           retention-days: 14
           if-no-files-found: error
 
@@ -461,4 +464,6 @@ jobs:
             artifacts/native-aot-mapping/**
             !artifacts/native-aot/**/packages/**
             !artifacts/native-aot-mapping/**/packages/**
+          # A re-run lane uploads under the same name as its first attempt; replace instead of failing with a conflict.
+          overwrite: true
           retention-days: 14

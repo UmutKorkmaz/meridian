@@ -5,7 +5,7 @@ has not, and how to reproduce it. A row is PASS only when a **packaged consumer 
 trimming from the exact packed feed and its native executable was run on a matching real host, exiting zero with every
 self-check recorded**. Publishing alone, compiling, archive inspection, emulation and cross-publication never count.
 
-Run date of the evidence below: 2026-10-04 (fix round 1 re-run). Candidate packages `2.1.4-d4fix1.20261004.1` (local feed, never published). Evidence receipts are under `artifacts/D4-fix1/final/`.
+Run date of the evidence below: 2026-10-04 (fix round 2 re-run). Candidate packages `2.1.4-d4fix2.20261004.1` (local feed, never published). Evidence receipts are under `artifacts/D4-fix2/final/`.
 
 ## Supported-configuration table
 
@@ -21,9 +21,9 @@ Run date of the evidence below: 2026-10-04 (fix round 1 re-run). Candidate packa
 * osx-arm64 evidence: Apple Silicon macOS 26.5.2 (Darwin 25.5.0), Apple clang 21.0.0, Xcode SDK 26.5, `ld` 1267. The
   runner checked OS, machine and process architecture, rejected translated (Rosetta) processes and read the Mach-O
   header (`macho-arm64`) before executing. Receipts per row are under
-  `artifacts/D4-fix1/final/aot-combined/2.1.4-d4fix1.20261004.1/combined-<tfm>-<sdk>-osx-arm64-*/` (`native-result.json`,
+  `artifacts/D4-fix2/final/aot-combined/2.1.4-d4fix2.20261004.1/combined-<tfm>-<sdk>-osx-arm64-*/` (`native-result.json`,
   `warnings.json`, `restore-receipt.json`, `generated-sources.json`, `fixture-hashes.json`, `toolchain.json`,
-  `publish.log`, `publish.binlog`, `execute.log`) and `artifacts/D4-fix1/final/aot-mapping/...` for the unchanged mapping-only runs.
+  `publish.log`, `publish.binlog`, `execute.log`) and `artifacts/D4-fix2/final/aot-mapping/...` for the unchanged mapping-only runs.
 * **linux-x64 is PENDING, not PASS, and D4 is not fully accepted until these three rows are filled.** The development
   machine is Apple Silicon with an aarch64 Docker daemon; there is no linux-x64 runner. The CI jobs `native-aot-pack`
   and `native-aot` in `.github/workflows/ci.yml` build the three linux-x64 rows on `ubuntu-24.04` and the three
@@ -39,7 +39,11 @@ Run date of the evidence below: 2026-10-04 (fix round 1 re-run). Candidate packa
   `NATIVE` marker and the ELF/Mach-O header check. Unit cases cover the Linux branch with recorded process trees; an
   actual emulated Linux environment was not available to execute.
 * The CI candidate version is derived once by `native-aot-pack` and passed to the lanes as a job output, so re-running
-  only failed lanes keeps using the feed and manifest from the first attempt.
+  only failed lanes keeps using the feed and manifest from the first attempt. Both artifact uploads (`native-aot-feed`
+  and the per-lane `native-aot-<rid>-<tfm>` evidence) set `overwrite: true`: upload-artifact v4 names are immutable within
+  a run and artifacts of earlier attempts stay on it, so without overwrite a re-run lane (evidence upload is
+  `if: always()`) or a "Re-run all jobs" pack upload would fail with a name conflict even when the native execution
+  passed. A structural test asserts this; the workflow itself has still not run on GitHub.
 * Unverified and not claimed: linux-arm64, linux-musl, win-x64, win-arm64, osx-x64, .NET 11 preview, other Linux
   distributions/libc versions and macOS deployment targets. A native binary is only claimed for the rows above.
 
