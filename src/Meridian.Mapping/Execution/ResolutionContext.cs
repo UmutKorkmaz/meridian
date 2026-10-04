@@ -18,6 +18,14 @@ public class ResolutionContext
     // Share the operation root, not a snapshot of its lazily allocated dictionary.
     // A child may be the first map that enables PreserveReferences.
     private readonly ResolutionContext _cacheOwner;
+    internal int? InheritedMaxDepth { get; }
+    internal int? InheritedMaxCollectionItems { get; }
+
+    /// <summary>Gets the effective global depth boundary, including inherited generated limits.</summary>
+    public int MaxDepth => Math.Min(Mapper.ConfigurationProvider.DefaultMaxDepth, InheritedMaxDepth ?? int.MaxValue);
+
+    /// <summary>Gets the effective collection boundary, including inherited generated limits.</summary>
+    public int MaxCollectionItems => Math.Min(Mapper.ConfigurationProvider.DefaultMaxCollectionItems, InheritedMaxCollectionItems ?? int.MaxValue);
 
     /// <summary>
     /// Gets the mapper instance, available for nested/child mappings.
@@ -76,7 +84,9 @@ public class ResolutionContext
         IServiceProvider? serviceProvider,
         ResolutionContext cacheOwner,
         IDictionary<string, object?> items,
-        object? state)
+        object? state,
+        int? maxDepth = null,
+        int? maxCollectionItems = null)
     {
         Mapper = mapper;
         Depth = depth;
@@ -84,6 +94,8 @@ public class ResolutionContext
         _cacheOwner = cacheOwner;
         Items = items;
         State = state;
+        InheritedMaxDepth = maxDepth;
+        InheritedMaxCollectionItems = maxCollectionItems;
     }
 
     /// <summary>
@@ -92,7 +104,27 @@ public class ResolutionContext
     /// <returns>A new resolution context one level deeper.</returns>
     public ResolutionContext IncrementDepth()
     {
-        return new ResolutionContext(Mapper, Depth + 1, ServiceProvider, _cacheOwner, Items, State);
+        return new ResolutionContext(Mapper, Depth + 1, ServiceProvider, _cacheOwner, Items, State, InheritedMaxDepth, InheritedMaxCollectionItems);
+    }
+
+    /// <summary>
+    /// Maps an explicitly configured nested pair using this operation's services, state and cache.
+    /// The relative depth is measured from this context. A custom IMapper must use its own context bridge;
+    /// this method throws rather than silently starting a fresh operation.
+    /// </summary>
+    public bool TryMapConfigured(object source, Type sourceType, Type destinationType, int relativeDepth, out object? destination, int? maxDepth = null, int? maxCollectionItems = null)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(sourceType);
+        ArgumentNullException.ThrowIfNull(destinationType);
+        ArgumentOutOfRangeException.ThrowIfNegative(relativeDepth);
+        if (Mapper is not global::Meridian.Mapping.Mapper mapper)
+            throw new NotSupportedException("Context-preserving configured mapping requires Meridian's Mapper implementation.");
+        if (maxDepth is <= 0) throw new ArgumentOutOfRangeException(nameof(maxDepth));
+        if (maxCollectionItems is <= 0) throw new ArgumentOutOfRangeException(nameof(maxCollectionItems));
+        var nested = new ResolutionContext(Mapper, checked(Depth + relativeDepth), ServiceProvider, _cacheOwner, Items, State,
+            Math.Min(MaxDepth, maxDepth ?? int.MaxValue), Math.Min(MaxCollectionItems, maxCollectionItems ?? int.MaxValue));
+        return mapper.TryMapConfigured(source, sourceType, destinationType, nested, out destination);
     }
 
     /// <summary>

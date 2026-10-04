@@ -151,12 +151,12 @@ public class GeneratorDiagnosticTests
         AssertCompiles(result);
     }
 
-    [Theory]
-    [InlineData("GenerateResolver = true")]
-    public void Structural_Pending_Options_Are_Diagnosed(string option)
+    [Fact]
+    public void Structural_Resolver_Is_Emitted()
     {
-        var result = GeneratorTestHarness.Compile(Fixture(", Mode = GeneratedMappingMode.Structural, " + option));
-        AssertDiagnostic(result, "MERIDIANGEN005", DiagnosticSeverity.Error);
+        var result = GeneratorTestHarness.Compile(Fixture(", Mode = GeneratedMappingMode.Structural, GenerateResolver = true"));
+        Assert.DoesNotContain(result.Diagnostics, diagnostic => diagnostic.Severity == DiagnosticSeverity.Error);
+        Assert.Contains("class GeneratedResolver", result.GeneratedSource);
         AssertCompiles(result);
     }
 

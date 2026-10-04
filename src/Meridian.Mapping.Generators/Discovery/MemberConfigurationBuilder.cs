@@ -146,7 +146,7 @@ internal static class MemberConfigurationBuilder
                 conversion, expression,
                 target.Initializer, target.Required, ignored, failure, configs.Length > 0,
                 requiresTraversal, helper, skipNull, cannotSkip,
-                target.Initializer && writable[target.Name].SetMethod!.IsInitOnly, traversalPairs));
+                target.Initializer && writable[target.Name].SetMethod!.IsInitOnly, traversalPairs, target.Type.IsReferenceType));
         }
         foreach (var configuration in configurations.Where(a => a.AttributeClass!.Name is "MapWithAttribute" or "MapMemberAttribute" or "ConvertMapMemberAttribute"))
         {

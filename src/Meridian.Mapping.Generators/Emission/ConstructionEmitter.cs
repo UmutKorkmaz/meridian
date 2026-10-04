@@ -34,7 +34,9 @@ internal static class ConstructionEmitter
             var local = "__meridianValue" + index++;
             builder.Append(indent).Append("    var ").Append(local).Append(" = ").Append(member.Expression).AppendLine(";");
             builder.Append(indent).Append("    ");
-            if (member.SkipNullAssignment) builder.Append("if (").Append(local).Append(" is not null) ");
+            if (structural && member.DestinationReference)
+                builder.Append("if ((context.AllowNullDestinationValues ?? ").Append(pair.Options.AllowNullDestinationValues ? "true" : "false").Append(") || ").Append(local).Append(" is not null) ");
+            else if (member.SkipNullAssignment) builder.Append("if (").Append(local).Append(" is not null) ");
             builder.Append("result.@").Append(member.DestinationName).Append(" = ").Append(local).AppendLine(";");
         }
         var bindings = pair.Constructor.Arguments.IsDefault ? pair.Members : pair.Members.Concat(pair.Constructor.Arguments.Where(a => a.Binding is not null).Select(a => a.Binding!));

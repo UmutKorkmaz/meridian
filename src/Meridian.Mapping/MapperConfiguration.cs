@@ -13,7 +13,7 @@ namespace Meridian.Mapping;
 /// and register as a singleton. Provides <see cref="IConfigurationProvider"/>
 /// and creates <see cref="IMapper"/> instances.
 /// </summary>
-public class MapperConfiguration : IConfigurationProvider
+public class MapperConfiguration : IConfigurationProvider, IGeneratedMappingConfigurationProvider
 {
     /// <summary>
     /// Frozen dictionary for all statically-compiled type maps. ~40% faster lookups
@@ -26,6 +26,9 @@ public class MapperConfiguration : IConfigurationProvider
     /// These are compiled on first access and cached for subsequent calls.
     /// </summary>
     private readonly ConcurrentDictionary<(Type, Type), TypeMap> _dynamicTypeMaps = new();
+
+    /// <inheritdoc />
+    public IReadOnlyList<IGeneratedMappingResolver> GeneratedResolvers { get; }
 
     private readonly Dictionary<(Type, Type), object> _openGenericMappings = new();
     private readonly bool _allowNullCollections;
@@ -45,6 +48,7 @@ public class MapperConfiguration : IConfigurationProvider
         var expression = new MapperConfigurationExpression();
         configure(expression);
 
+        GeneratedResolvers = Array.AsReadOnly(expression.GeneratedResolvers.ToArray());
         _allowNullCollections = expression.AllowNullCollections;
         _allowNullDestinationValues = expression.AllowNullDestinationValues;
         _defaultMaxDepth = ValidatePositive(expression.DefaultMaxDepth, nameof(expression.DefaultMaxDepth));
@@ -68,6 +72,7 @@ public class MapperConfiguration : IConfigurationProvider
     {
         ArgumentNullException.ThrowIfNull(expression);
 
+        GeneratedResolvers = Array.AsReadOnly(expression.GeneratedResolvers.ToArray());
         _allowNullCollections = expression.AllowNullCollections;
         _allowNullDestinationValues = expression.AllowNullDestinationValues;
         _defaultMaxDepth = ValidatePositive(expression.DefaultMaxDepth, nameof(expression.DefaultMaxDepth));
@@ -154,6 +159,7 @@ public class MapperConfiguration : IConfigurationProvider
     /// <inheritdoc />
     public void AssertConfigurationIsValid()
     {
+        GeneratedMappingExtensions.Validate(GeneratedResolvers);
         var errors = new StringBuilder();
         var warnings = new StringBuilder();
 

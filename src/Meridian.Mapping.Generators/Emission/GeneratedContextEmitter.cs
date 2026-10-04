@@ -12,6 +12,11 @@ internal static class GeneratedContextEmitter
             internal readonly int MaxCollectionItems;
             internal readonly global::System.Threading.CancellationToken CancellationToken;
             internal readonly object? State;
+            internal bool? AllowNullCollections = null;
+            internal bool? AllowNullDestinationValues = null;
+            internal global::System.Func<object, global::System.Type, global::System.Type, int, (bool Found, object? Value)>? ConfiguredMap = null;
+            internal global::System.Func<object, global::System.Type, object?>? GetReference = null;
+            internal global::System.Action<object, global::System.Type, object>? SetReference = null;
             private global::System.Collections.Generic.Dictionary<(object Source, global::System.Type Destination), object>? references;
             internal GeneratedMappingContext(global::Meridian.Mapping.GeneratedMappingOptions? options, int maxDepth, int maxCollectionItems)
             {
@@ -25,11 +30,13 @@ internal static class GeneratedContextEmitter
             }
             internal bool TryGet(object source, global::System.Type destination, out object? value)
             {
-                value = null;
+                value = GetReference?.Invoke(source, destination);
+                if (value is not null) return true;
                 return references is not null && references.TryGetValue((source, destination), out value);
             }
             internal void Cache(object source, global::System.Type destination, object value)
             {
+                SetReference?.Invoke(source, destination, value);
                 (references ??= new global::System.Collections.Generic.Dictionary<(object, global::System.Type), object>(new ReferenceComparer()))[(source, destination)] = value;
             }
             internal void CheckCount(int count, global::System.Type source, global::System.Type destination)

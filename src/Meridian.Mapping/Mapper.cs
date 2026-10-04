@@ -199,6 +199,9 @@ public class Mapper : IMapper
         return QueryableExtensions.ProjectTo(source, ConfigurationProvider, membersToExpand);
     }
 
+    internal bool TryMapConfigured(object source, Type sourceType, Type destinationType, ResolutionContext context, out object? destination) =>
+        _engine.TryMapConfigured(source, sourceType, destinationType, context, out destination);
+
     private ResolutionContext CreateContext(IMappingOperationOptions? options = null)
     {
         return new ResolutionContext(this, depth: 0, _serviceProvider, options);

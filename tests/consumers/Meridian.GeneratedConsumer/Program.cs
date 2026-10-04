@@ -10,6 +10,11 @@ var optional = Container.OptionalMaps.MapToOptionalDto(new OptionalSource { Valu
 Check(optional.Value == 42 && optional.ConstructorSeed == 7 && optional.Seed == 99, "optional constructor default and legacy member assignments");
 Console.WriteLine("COMMON generated optional=49 constructorSeed=7 copiedSeed=99");
 #if !BASELINE
+var bridgeConfiguration = new MapperConfiguration(c => c.UseGeneratedMappings(new BridgeMaps.GeneratedResolver()));
+bridgeConfiguration.AssertConfigurationIsValid();
+if (bridgeConfiguration.CreateMapper().Map<ValueSource, ValueClassDto>(new ValueSource {Value=42}).Value != 42)
+    throw new InvalidOperationException("generated resolver bridge failed");
+Console.WriteLine("resolverBridge=42");
 var inherited = Container.EnhancedMaps.MapToInitDto(new InheritedSource { Id = 42, Name = "init" });
 Check(inherited.Id == 42 && inherited.Name == "init", "inherited/init destination");
 Check(Container.RequiredMaps.MapToRequiredDto(new Source { Value = 42 }).Value == 42, "SetsRequiredMembers zero constructor");
@@ -160,3 +165,8 @@ public sealed class OptionalDto
     public int Seed { get; set; }
     public int Value { get; set; }
 }
+
+#if !BASELINE
+[GenerateMapper(typeof(ValueSource),typeof(ValueClassDto),Mode=GeneratedMappingMode.Structural,GenerateResolver=true)]
+public static partial class BridgeMaps { }
+#endif

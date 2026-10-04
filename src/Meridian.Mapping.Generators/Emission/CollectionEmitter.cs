@@ -9,7 +9,8 @@ internal static class CollectionEmitter
     {
         var storage = dictionaryKey is null ? "global::System.Collections.Generic.List<" + destinationElement + ">" :
             "global::System.Collections.Generic.Dictionary<" + dictionaryKey + ", " + dictionaryValue + ">";
-        var empty = allowNull ? "default!" : array ? "global::System.Array.Empty<" + destinationElement + ">()" : "new " + storage + "()";
+        var empty = "(context.AllowNullCollections ?? " + (allowNull ? "true" : "false") + ") ? default! : " +
+            (array ? "global::System.Array.Empty<" + destinationElement + ">()" : "new " + storage + "()");
         var add = dictionaryKey is null ? "result.Add(" + expression + ");" : "result[" + keyExpression + "] = " + expression + ";";
         return $$"""
             static {{destination}} {{name}}({{source}}? value, GeneratedMappingContext context)

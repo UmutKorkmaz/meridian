@@ -72,11 +72,11 @@ internal static class MappingModelBuilder
                 !HasAccessibleSignature(source, destination, context, cancellationToken))
                 Report(MapperDiagnostics.InvalidConfiguration, "source and destination must be accessible, closed, nameable types usable in a public mapping method");
 
-            if (options.Mode == 1 && (container.Name == "GeneratedMappingContext" || container.Name.StartsWith("__MeridianMap", StringComparison.Ordinal) ||
+            if ((options.Mode == 1 || options.GenerateResolver) && (container.Name == "GeneratedMappingContext" || container.Name.StartsWith("__MeridianMap", StringComparison.Ordinal) ||
                 container.GetMembers().Any(m => m.Name == "GeneratedMappingContext" || m.Name.StartsWith("__MeridianMap", StringComparison.Ordinal))))
                 Report(MapperDiagnostics.MethodCollision, "generated traversal helpers", "the container uses a reserved generated helper name");
             var method = options.MethodName ?? "MapTo" + destination.Name;
-            if (declarations.Any(d => ReadOptions(d).Mode == 1) && (method == "GeneratedMappingContext" || method.StartsWith("__MeridianMap", StringComparison.Ordinal)))
+            if (declarations.Any(d => ReadOptions(d).Mode == 1 || ReadOptions(d).GenerateResolver) && (method == "GeneratedMappingContext" || method.StartsWith("__MeridianMap", StringComparison.Ordinal)))
                 Report(MapperDiagnostics.MethodCollision, method, "this name is reserved for generated traversal helpers");
             if (method == container.Name || container.GetMembers(method).Any(member =>
                 options.MethodName is not null || member is not IMethodSymbol existing ||
@@ -109,8 +109,9 @@ internal static class MappingModelBuilder
                 ((ClassDeclarationSyntax)context.TargetNode).CloseBraceToken.SpanStart);
             if (failure is not null)
                 Report(MapperDiagnostics.UnsupportedConstruction, destination.ToDisplayString(SymbolDisplayFormat.CSharpErrorMessageFormat), failure);
-            if (options.GenerateResolver)
-                Report(MapperDiagnostics.UnsupportedStructural, "GenerateResolver is not implemented yet");
+            if (options.GenerateResolver && (container.Name == "GeneratedResolver" || container.GetMembers("GeneratedResolver").Length > 0 ||
+                declarations.Any(d => (ReadOptions(d).MethodName ?? "MapTo" + ((ITypeSymbol)d.ConstructorArguments[1].Value!).Name) == "GeneratedResolver")))
+                Report(MapperDiagnostics.MethodCollision, "GeneratedResolver", "this name is reserved for the companion resolver");
             var members = MemberConfigurationBuilder.Build(container, source, destination,
                 context.SemanticModel.Compilation, options, declarations, Report);
             var constructor = options.Mode == 1

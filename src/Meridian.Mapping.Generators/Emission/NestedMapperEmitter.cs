@@ -25,6 +25,11 @@ internal static class NestedMapperEmitter
         builder.AppendLine(indent + "{");
         builder.AppendLine(indent + "    context.CancellationToken.ThrowIfCancellationRequested();");
         builder.AppendLine(indent + "    if (context.Depth >= context.MaxDepth" + (pair.SourceCanBeNull ? " || source is null" : "") + ") return default!;");
+        builder.AppendLine($"{indent}    if (context.ConfiguredMap is {{ }} configured)");
+        builder.AppendLine(indent + "    {");
+        builder.AppendLine($"{indent}        var mapped = configured(source!, typeof({source}), typeof({destination}), context.Depth);");
+        builder.AppendLine($"{indent}        if (mapped.Found) return ({destination})mapped.Value!;");
+        builder.AppendLine(indent + "    }");
         if (pair.Options.Mode == 0)
             builder.AppendLine($"{indent}    return {method}(source);");
         else

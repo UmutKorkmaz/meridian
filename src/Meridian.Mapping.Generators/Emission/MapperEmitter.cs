@@ -50,7 +50,7 @@ internal static class MapperEmitter
         EmitTypeDeclarationOpen(sb, indent, model.TargetType);
         indent += "    ";
 
-        var structural = model.Pairs.Any(pair => pair.Options.Mode == 1 && pair.Constructor.IsSupported);
+        var structural = model.Pairs.Any(pair => (pair.Options.Mode == 1 || pair.Options.GenerateResolver) && pair.Constructor.IsSupported);
         if (structural) GeneratedContextEmitter.Emit(sb);
         for (var index = 0; index < model.Pairs.Length; index++)
         {
@@ -61,6 +61,7 @@ internal static class MapperEmitter
             sb.AppendLine();
         }
 
+        ResolverEmitter.Emit(sb, model);
         indent = indent.Substring(0, indent.Length - 4);
         EmitTypeDeclarationClose(sb, indent);
 

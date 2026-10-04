@@ -50,6 +50,12 @@ public class MappingEngine
 
         if (typeMap == null)
         {
+            var generated = FindGeneratedMapping(source.GetType(), destinationType)
+                ?? (source.GetType() != sourceType ? FindGeneratedMapping(sourceType, destinationType) : null);
+            if (generated is not null)
+                return context.Depth >= context.MaxDepth
+                    ? (destinationType.IsValueType ? Activator.CreateInstance(destinationType) : null)
+                    : generated.Map(source, context);
             sourceType = source.GetType();
 
             // Handle assignable types (same type, base type, etc.)
@@ -109,6 +115,17 @@ public class MappingEngine
         return MapProperties(source, destination, typeMap, context);
     }
 
+    internal bool TryMapConfigured(object source, Type sourceType, Type destinationType, ResolutionContext context, out object? destination)
+    {
+        var typeMap = ResolveTypeMap(source, sourceType, destinationType);
+        destination = typeMap is null ? null : MapWithTypeMap(source, typeMap, context);
+        return typeMap is not null;
+    }
+
+    private GeneratedMappingDescriptor? FindGeneratedMapping(Type source, Type destination) =>
+        _configurationProvider is IGeneratedMappingConfigurationProvider generated
+            ? GeneratedMappingExtensions.Resolve(generated.GeneratedResolvers, source, destination) : null;
+
     private TypeMap? ResolveTypeMap(object source, Type declaredSourceType, Type destinationType)
     {
         var runtimeSourceType = source.GetType();
@@ -154,7 +171,7 @@ public class MappingEngine
         // Hitting the cap returns default(TDestination) instead of throwing,
         // mirroring AutoMapper's MaxDepth semantics. The only difference vs
         // AutoMapper v14 is that the cap is ALWAYS active — no opt-in required.
-        var effectiveMaxDepth = typeMap.MaxDepth ?? _configurationProvider.DefaultMaxDepth;
+        var effectiveMaxDepth = Math.Min(typeMap.MaxDepth ?? _configurationProvider.DefaultMaxDepth, context.InheritedMaxDepth ?? int.MaxValue);
         if (context.Depth >= effectiveMaxDepth)
             return typeMap.DestinationType.IsValueType ? Activator.CreateInstance(typeMap.DestinationType) : null;
 
@@ -455,10 +472,10 @@ public class MappingEngine
         if (source is not IEnumerable enumerable || destination is not IList destinationList || destination is Array)
             return null;
 
-        EnforceCollectionLimit(source, sourceCollectionType, destinationCollectionType);
+        EnforceCollectionLimit(source, sourceCollectionType, destinationCollectionType, context);
 
         destinationList.Clear();
-        var maxItems = _configurationProvider.DefaultMaxCollectionItems;
+        var maxItems = context.MaxCollectionItems;
         var count = 0;
         foreach (var item in enumerable)
         {
@@ -516,6 +533,11 @@ public class MappingEngine
         var typeMap = _configurationProvider.FindTypeMap(sourceType, destType);
         if (typeMap != null)
             return MapWithTypeMap(value, typeMap, context);
+        var generated = FindGeneratedMapping(sourceType, destType);
+        if (generated is not null)
+            return context.Depth >= context.MaxDepth
+                ? (destType.IsValueType ? Activator.CreateInstance(destType) : null)
+                : generated.Map(value, context);
 
         // IConvertible
         if (IsConvertible(sourceType) && IsConvertible(destType))
@@ -541,10 +563,10 @@ public class MappingEngine
             return CreateEmptyCollection(destType, destElementType);
         }
 
-        EnforceCollectionLimit(source, sourceType, destType);
+        EnforceCollectionLimit(source, sourceType, destType, context);
 
         var items = new List<object?>();
-        var maxItems = _configurationProvider.DefaultMaxCollectionItems;
+        var maxItems = context.MaxCollectionItems;
         var count = 0;
         foreach (var item in enumerable)
         {
@@ -682,9 +704,9 @@ public class MappingEngine
                 "Register it with the DI container or ensure it has a parameterless constructor.");
     }
 
-    private void EnforceCollectionLimit(object source, Type sourceType, Type destType)
+    private static void EnforceCollectionLimit(object source, Type sourceType, Type destType, ResolutionContext context)
     {
-        var maxItems = _configurationProvider.DefaultMaxCollectionItems;
+        var maxItems = context.MaxCollectionItems;
 
         // Fast path: ICollection/ICollection<T>/array expose Count cheaply,
         // so we can reject oversized input before touching a single element.
