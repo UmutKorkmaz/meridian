@@ -151,9 +151,19 @@ public static class GeneratedMediatorRegistration
                 plan.Add((match.Contribution,entry.Lifetime,entry.Order,index,entry.ServiceType == typeof(IPipelineBehavior<,>) ? entry.Order : null));
             index++;
         }
+        var fallbackPre = !strict && configurations.SelectMany(c => c.Pre).Any(processor =>
+            !all.Any(c => c.Contribution.Category == GeneratedMediatorCategory.PreProcessor && c.Contribution.ImplementationType == processor));
+        var fallbackPost = !strict && configurations.SelectMany(c => c.Post).Any(processor =>
+            !all.Any(c => c.Contribution.Category == GeneratedMediatorCategory.PostProcessor && c.Contribution.ImplementationType == processor));
         foreach(var behavior in behaviors)
         {
             if (behavior.Contribution.DefinitionType != null && legacyOpenDefinitions.Contains(behavior.Contribution.DefinitionType)) continue;
+            // An open fallback driver enumerates the same processors for known and plugin requests.
+            // Suppress only the automatic closed occurrence; explicit ordered occurrences remain intact.
+            if (behavior.Contribution.Phase == GeneratedMediatorPhase.AutomaticProcessor &&
+                behavior.Contribution.ImplementationType.IsConstructedGenericType &&
+                (fallbackPre && behavior.Contribution.ImplementationType.GetGenericTypeDefinition() == typeof(RequestPreProcessorBehavior<,>) ||
+                 fallbackPost && behavior.Contribution.ImplementationType.GetGenericTypeDefinition() == typeof(RequestPostProcessorBehavior<,>))) continue;
             if (!behavior.Active || plan.Any(p=>p.Item.ServiceType == behavior.Contribution.ServiceType && p.Item.ImplementationType == behavior.Contribution.ImplementationType)) continue;
             plan.Add((behavior.Contribution,behavior.Contribution.Lifetime == GeneratedMediatorLifetime.Transient ? ServiceLifetime.Transient : behavior.Contribution.Lifetime == GeneratedMediatorLifetime.Singleton ? ServiceLifetime.Singleton : behavior.Lifetime,behavior.Contribution.Order,index++,null));
         }

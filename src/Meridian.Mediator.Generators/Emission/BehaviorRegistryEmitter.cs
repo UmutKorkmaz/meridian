@@ -106,10 +106,15 @@ internal static class BehaviorRegistryEmitter
                     standard.Name == "AuditBehavior" ? AuditFactory(implementation) : null);
                 capabilities.Add(new Capability(pair.Q,pair.R,implementation.OriginalDefinition,true));
             }
-            if (entries.Any(e => e.Category == "PreProcessor" && SymbolEqualityComparer.Default.Equals(e.Contract.TypeArguments[0],pair.Q)))
-                Add(Close("Meridian.Mediator.Pipeline.RequestPreProcessorBehavior`2",pair.Q,pair.R),pipeline,"Behavior","AutomaticProcessor");
-            if (entries.Any(e => e.Category == "PostProcessor" && SymbolEqualityComparer.Default.Equals(e.Contract.TypeArguments[0],pair.Q) && SymbolEqualityComparer.Default.Equals(e.Contract.TypeArguments[1],pair.R)))
-                Add(Close("Meridian.Mediator.Pipeline.RequestPostProcessorBehavior`2",pair.Q,pair.R),pipeline,"Behavior","AutomaticProcessor");
+        }
+        foreach (var processor in entries.Where(e => e.Category is "PreProcessor" or "PostProcessor").ToArray())
+        {
+            var q = processor.Contract.TypeArguments[0];
+            var response = OrdinaryResponse(q, processor.Category == "PostProcessor" ? processor.Contract.TypeArguments[1] : null);
+            if (response == null) continue;
+            var driver = processor.Category == "PreProcessor" ? "RequestPreProcessorBehavior" : "RequestPostProcessorBehavior";
+            Add(Close("Meridian.Mediator.Pipeline." + driver + "`2", q, response),
+                Close("Meridian.Mediator.Pipeline.IPipelineBehavior`2", q, response), "Behavior", "AutomaticProcessor");
         }
         foreach (var exception in entries.Where(e => e.Category is "ExceptionHandler" or "ExceptionAction").ToArray())
         {
@@ -121,9 +126,23 @@ internal static class BehaviorRegistryEmitter
             var adapter = isHandler ? Close("Meridian.Mediator.Generated.GeneratedExceptionHandlerInvoker`3",args.ToArray()) : Close("Meridian.Mediator.Generated.GeneratedExceptionActionInvoker`2",args.ToArray());
             var contract = isHandler ? Close("Meridian.Mediator.Generated.GeneratedExceptionHandlerInvoker`2",args[0],args[1]) : Close("Meridian.Mediator.Generated.GeneratedExceptionActionInvoker`1",q);
             Add(adapter,contract,"Infrastructure",factory:"new "+TypeName(adapter)+"("+depth+")");
-            var responses = isHandler ? new[] {args[1]} : pairs.Where(p=>SymbolEqualityComparer.Default.Equals(p.Q,q)).Select(p=>p.R).ToArray();
+            var response = isHandler ? args[1] : OrdinaryResponse(q, null);
+            var responses = response == null ? Array.Empty<ITypeSymbol>() : new[] { response };
             foreach(var r in responses)
                 Add(Close("Meridian.Mediator.Generated.GeneratedRequestExceptionProcessorBehavior`2",q,r),Close("Meridian.Mediator.Pipeline.IPipelineBehavior`2",q,r),"Behavior","Request", definition: compilation.GetTypeByMetadataName("Meridian.Mediator.Pipeline.RequestExceptionProcessorBehavior`2"), factory:"new global::Meridian.Mediator.Generated.GeneratedRequestExceptionProcessorBehavior<"+TypeName(q)+", "+TypeName(r)+">(sp)");
+        }
+        ITypeSymbol? OrdinaryResponse(ITypeSymbol request, ITypeSymbol? declaredResponse)
+        {
+            var responses = request.AllInterfaces.Where(i => Is(i, "Meridian.Mediator.IRequest`1"))
+                .Select(i => i.TypeArguments[0]).Distinct<ITypeSymbol>(SymbolEqualityComparer.Default).ToArray();
+            if (responses.Length != 1 || !Closed(request) ||
+                declaredResponse != null && !SymbolEqualityComparer.Default.Equals(responses[0], declaredResponse))
+            {
+                error(MediatorDiagnostics.Unsupported, location, TypeName(request),
+                    "automatic processor/action dispatch requires one exact closed ordinary IRequest<TResponse> contract matching the declared response");
+                return null;
+            }
+            return responses[0];
         }
         return capabilities;
     }

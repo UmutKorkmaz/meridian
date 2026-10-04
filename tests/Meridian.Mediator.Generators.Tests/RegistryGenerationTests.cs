@@ -11,6 +11,38 @@ namespace Meridian.Mediator.Generators.Tests;
 
 public class RegistryGenerationTests
 {
+    [Theory]
+    [InlineData("PreProcessorTypes", "IRequestPreProcessor<Q>", "public Task Process(Q request,CancellationToken cancellationToken)=>Task.CompletedTask;")]
+    [InlineData("ExceptionActionTypes", "IRequestExceptionAction<Q,Exception>", "public Task Execute(Q request,Exception exception,CancellationToken cancellationToken)=>Task.CompletedTask;")]
+    public void Pipeline_Only_Ambiguous_Ordinary_Response_Is_Diagnosed(string option, string contract, string method)
+    {
+        var result = Generate("public sealed class Q : IRequest<int>, IRequest<string> {} public sealed class P : Meridian.Mediator.Pipeline." + contract + " { " + method + " } [GenerateMediatorRegistry(" + option + "=new[]{typeof(P)})] public partial class Registry {}");
+        Assert.Contains(result.Result.Diagnostics, d => d.Id == "MERIDIANMED005");
+    }
+
+    [Theory]
+    [InlineData("PreProcessorTypes", "IRequestPreProcessor<Q>", "public Task Process(Q request,CancellationToken cancellationToken)=>Task.CompletedTask;")]
+    [InlineData("PostProcessorTypes", "IRequestPostProcessor<Q,int>", "public Task Process(Q request,int response,CancellationToken cancellationToken)=>Task.CompletedTask;")]
+    [InlineData("ExceptionActionTypes", "IRequestExceptionAction<Q,Exception>", "public Task Execute(Q request,Exception exception,CancellationToken cancellationToken)=>Task.CompletedTask;")]
+    public void Pipeline_Only_Registry_Emits_Driver_Without_Handler_Ownership(string option, string contract, string method)
+    {
+        var registry = Load(Generate("public sealed class Q : IRequest<int> {} public sealed class P : Meridian.Mediator.Pipeline." + contract + " { " + method + " } [GenerateMediatorRegistry(" + option + "=new[]{typeof(P)})] public partial class Registry {}"));
+        Assert.Empty(registry.RequestTypes);
+        var driver = Assert.Single(((IGeneratedMediatorContributions)registry).Contributions.Where(c => c.Category == GeneratedMediatorCategory.Behavior && c.Activation == GeneratedMediatorActivation.Declared));
+        var services = new ServiceCollection(); registry.RegisterServices(services, ServiceLifetime.Transient);
+        using var provider = services.BuildServiceProvider();
+        Assert.NotNull(provider.GetRequiredService(driver.ServiceType));
+    }
+
+    [Theory]
+    [InlineData("public sealed class Q {}")]
+    [InlineData("public sealed class Q : IRequest<string> {}")]
+    public void Pipeline_Only_PostProcessor_Unsupported_Response_Is_Diagnosed(string request)
+    {
+        var result = Generate(request + " public sealed class P : Meridian.Mediator.Pipeline.IRequestPostProcessor<Q,int> { public Task Process(Q request,int response,CancellationToken cancellationToken)=>Task.CompletedTask; } [GenerateMediatorRegistry(PostProcessorTypes=new[]{typeof(P)})] public partial class Registry {}");
+        Assert.Contains(result.Result.Diagnostics, d => d.Id == "MERIDIANMED005");
+    }
+
     private const string Prefix = "using System; using System.Threading; using System.Threading.Tasks; using Meridian.Mediator; using Meridian.Mediator.Generated; ";
     private const string Handler = "public sealed class Q : IRequest<int> {} public sealed class H : IRequestHandler<Q,int> { public Task<int> Handle(Q q, CancellationToken c) => Task.FromResult(42); } ";
     private static readonly MetadataReference[] References = ((string)AppContext.GetData("TRUSTED_PLATFORM_ASSEMBLIES")!).Split(Path.PathSeparator).Append(typeof(IRequest<>).Assembly.Location).Append(typeof(Microsoft.Extensions.DependencyInjection.IServiceCollection).Assembly.Location).Distinct().Select(p => MetadataReference.CreateFromFile(p)).ToArray();

@@ -322,3 +322,88 @@ public sealed class ExceptionAction(ExceptionTrace trace) : IRequestExceptionAct
 [GenerateMediatorRegistry(typeof(ExceptionQueryHandler),ExceptionHandlerTypes=new[]{typeof(DeclineExceptionHandler),typeof(SecondExceptionHandler),typeof(BaseExceptionHandler)},ExceptionActionTypes=new[]{typeof(ExceptionAction)})] public partial class ExceptionRegistry;
 
 public sealed class ExtraTraceBehavior(PipelineTrace trace) : IPipelineBehavior<PipelineQuery,int> { public Task<int> Handle(PipelineQuery q,RequestHandlerDelegate<int> next,CancellationToken ct) {trace.Events.Add("extra");return next();} }
+
+public class GeneratedProcessorCompositionTests
+{
+    [Theory]
+    [InlineData(true, false)] [InlineData(false, false)]
+    [InlineData(true, true)] [InlineData(false, true)]
+    public async Task Mixed_Processors_Run_Once_And_Retain_Unknown_Request_Fallback(bool pre, bool repeated)
+    {
+        var services = new ServiceCollection().AddSingleton<PipelineTrace>()
+            .AddTransient<IRequestHandler<PlainQuery, int>, PlainHandler>();
+        void Configure(MeridianMediatorConfiguration configuration)
+        {
+            configuration.AddGeneratedRegistry<PipelineRegistry>();
+            configuration.AddOpenBehavior(typeof(TraceBehavior<,>), -10);
+            configuration.AddOpenBehavior(typeof(TraceBehavior<,>), 10);
+            if (pre) configuration.AddRequestPreProcessor(typeof(ExtraCompositionPre<>));
+            else configuration.AddRequestPostProcessor(typeof(ExtraCompositionPost<,>));
+        }
+        services.AddMeridianMediator(Configure);
+        if (repeated) services.AddMeridianMediator(Configure);
+        using var provider = services.BuildServiceProvider();
+        var mediator = provider.GetRequiredService<IMediator>();
+        var trace = provider.GetRequiredService<PipelineTrace>();
+        Assert.Equal(7, await mediator.Send(new PipelineQuery()));
+        Assert.Equal(1, trace.Events.Count(e => e == "pre"));
+        Assert.Equal(1, trace.Events.Count(e => e == "post"));
+        Assert.Equal(1, trace.Events.Count(e => e == "extra-processor"));
+        Assert.Equal(1, trace.Events.Count(e => e == "handler"));
+        Assert.Equal(2, trace.Events.Count(e => e == "open"));
+        Assert.Equal(new[] { "open", "closed", "open" }, trace.Events.Take(3));
+        trace.Events.Clear();
+        Assert.Equal(8, await mediator.Send(new PlainQuery()));
+        Assert.Equal(pre ? new[] { "open", "open", "extra-processor", "plain" } : new[] { "open", "open", "plain", "extra-processor" }, trace.Events);
+    }
+
+    [Theory]
+    [InlineData(false, false)] [InlineData(false, true)]
+    [InlineData(true, false)] [InlineData(true, true)]
+    public async Task Split_Processor_Registry_Executes_Once_In_Either_Order(bool strict, bool processorsFirst)
+    {
+        var services = new ServiceCollection().AddSingleton<PipelineTrace>();
+        void Handlers(MeridianMediatorConfiguration c) { c.RequireGeneratedDispatch = strict; c.AddGeneratedRegistry<DormantStandardRegistry>(); }
+        void Processors(MeridianMediatorConfiguration c) { c.RequireGeneratedDispatch = strict; c.AddGeneratedRegistry<ProcessorOnlyRegistry>(); c.AddGeneratedRegistry<RepeatedPreOnlyRegistry>(); }
+        services.AddMeridianMediator(processorsFirst ? Processors : Handlers);
+        services.AddMeridianMediator(processorsFirst ? Handlers : Processors);
+        services.AddMeridianMediator(Processors);
+        using var provider = services.BuildServiceProvider();
+        Assert.Equal(7, await provider.GetRequiredService<IMediator>().Send(new PipelineQuery()));
+        Assert.Equal(new[] { "pre", "handler", "post" }, provider.GetRequiredService<PipelineTrace>().Events);
+        Assert.Empty(new ProcessorOnlyRegistry().RequestTypes);
+    }
+
+    [Theory]
+    [InlineData(false, false)] [InlineData(false, true)]
+    [InlineData(true, false)] [InlineData(true, true)]
+    public async Task Split_Action_Registry_Executes_Once_In_Either_Order(bool strict, bool actionsFirst)
+    {
+        var trace = new ExceptionTrace();
+        var services = new ServiceCollection().AddSingleton(trace);
+        void Handlers(MeridianMediatorConfiguration c) { c.RequireGeneratedDispatch = strict; c.AddGeneratedRegistry<ExceptionHandlerOnlyRegistry>(); }
+        void Actions(MeridianMediatorConfiguration c) { c.RequireGeneratedDispatch = strict; c.AddGeneratedRegistry<ActionOnlyRegistry>(); }
+        services.AddMeridianMediator(actionsFirst ? Actions : Handlers);
+        services.AddMeridianMediator(actionsFirst ? Handlers : Actions);
+        services.AddMeridianMediator(Actions);
+        using var provider = services.BuildServiceProvider();
+        var error = await Record.ExceptionAsync(() => provider.GetRequiredService<IMediator>().Send(new ExceptionQuery()));
+        Assert.Same(trace.Original, error);
+        Assert.Equal(new[] { "action" }, trace.Events);
+        Assert.Empty(new ActionOnlyRegistry().RequestTypes);
+    }
+}
+public sealed class ExtraCompositionPre<TRequest>(PipelineTrace trace) : IRequestPreProcessor<TRequest> where TRequest : notnull
+{
+    public Task Process(TRequest request, CancellationToken cancellationToken) { trace.Events.Add("extra-processor"); return Task.CompletedTask; }
+}
+public sealed class ExtraCompositionPost<TRequest, TResponse>(PipelineTrace trace) : IRequestPostProcessor<TRequest, TResponse> where TRequest : notnull
+{
+    public Task Process(TRequest request, TResponse response, CancellationToken cancellationToken) { trace.Events.Add("extra-processor"); return Task.CompletedTask; }
+}
+[GenerateMediatorRegistry(PreProcessorTypes = new[] { typeof(TracePre) }, PostProcessorTypes = new[] { typeof(TracePost) })]
+public partial class ProcessorOnlyRegistry;
+[GenerateMediatorRegistry(typeof(ExceptionQueryHandler))] public partial class ExceptionHandlerOnlyRegistry;
+[GenerateMediatorRegistry(ExceptionActionTypes = new[] { typeof(ExceptionAction) })] public partial class ActionOnlyRegistry;
+
+[GenerateMediatorRegistry(PreProcessorTypes = new[] { typeof(TracePre) })] public partial class RepeatedPreOnlyRegistry;
