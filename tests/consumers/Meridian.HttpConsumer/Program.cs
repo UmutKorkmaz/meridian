@@ -23,10 +23,10 @@ app.Use((context, next) =>
     return next(context);
 });
 app.UseExceptionHandler();
-app.MapGet("/{shape}", (Func<string, IResult>)(shape => throw shape switch
+app.Run(context => Task.FromException(context.Request.Path.Value switch
 {
-    "validation" => new ValidationException(new[] { new ValidationError("secret-property", "secret-value") }),
-    "denied" => new UnauthorizedException("secret-value"),
+    "/validation" => new ValidationException(new[] { new ValidationError("secret-property", "secret-value") }),
+    "/denied" => new UnauthorizedException("secret-value"),
     _ => new IOException("secret-value")
 }));
 await app.StartAsync();
