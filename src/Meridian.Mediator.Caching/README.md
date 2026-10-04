@@ -162,11 +162,22 @@ undecorated logical key verbatim when both dimensions are absent. Decorated keys
 use `MRCKey1:` plus base64 of presence flags and big-endian lengths over strict
 UTF-8 segments (application/scope/key). Decorated inputs require well-formed
 Unicode: unpaired surrogates are rejected, never replacement-normalized.
-Delimiters, Unicode, absent dimensions, and marker-looking raw keys cannot
-collide. All get/set/remove and forwarded concurrent operations decorate once;
+Among decorated tuples, delimiters, Unicode, dimension presence and
+marker-looking logical inputs remain unambiguous. Raw passthrough is a separate
+compatibility mode: for any decorated output `e`, `Compose(e, null, null) == e`.
+An undecorated client sharing the physical key namespace can read, overwrite or
+invalidate that effective key. Private scoped values require trusted uniformly
+decorated clients with excluded untrusted raw access, or an independently isolated
+physical backend namespace. An application prefix is not access control and cannot
+reserve its outputs against arbitrary raw keys. All get/set/remove and forwarded concurrent operations decorate once;
 backend providers accept effective keys. `ScopedCacheProvider.Create` supports
 explicit manual composition over a custom raw provider and preserves its actual
 concurrent capability. Wrapping an already decorated provider fails clearly.
+
+Provider factories snapshot their selected scope when registered. Building one
+container, reusing its service collection to select scope for another container,
+and resolving the original provider later does not change the first container's
+prefix-only composition.
 
 Repeated registrations expose one provider. First options win and all calls are
 validated; conflicting memory/distributed backend or scope choices fail clearly.
@@ -187,7 +198,9 @@ request-type key names creates a cold cache namespace cutover. Let old values
 expire or remove only explicitly authorized old keys. Never dual-read unscoped
 private data into scoped entries or automatically clear a database. C4 owned
 idempotency records require coordinated retention/reconciliation migration:
-changing namespace can bypass replay protection. C4 reuses `CacheValueCodec`,
+changing namespace can bypass replay protection. The same raw/decorated namespace
+trust boundary applies to C4 owned records: exclude untrusted raw access or isolate
+the physical backend namespace; a prefix alone cannot protect effective owned keys. C4 reuses `CacheValueCodec`,
 `CacheContractRegistry.GetSchemaVersion` and `CacheKeyDecorator`; it must fail
 closed on data rejection, retain replay protection and never use C3 eviction as
 an idempotency recovery policy. A lease already carries an effective key and

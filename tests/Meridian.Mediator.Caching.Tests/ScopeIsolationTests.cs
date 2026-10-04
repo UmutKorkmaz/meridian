@@ -18,6 +18,55 @@ public sealed class ScopeIsolationTests
     [Fact] public async Task Identity_Changes_Inside_Forwarded_Factory_Fail_Without_Storing() { using var di=Services().BuildServiceProvider();using var a=di.CreateScope();var identity=(Identity)a.ServiceProvider.GetRequiredService<ICacheKeyScope>();var p=(IConcurrentCacheProvider)a.ServiceProvider.GetRequiredService<ICacheProvider>();await Assert.ThrowsAsync<InvalidOperationException>(()=>p.GetOrCreateAsync("key",_=>{identity.Value="changed";return Task.FromResult<object?>(42);},null,default));Assert.False((await a.ServiceProvider.GetRequiredService<MemoryCacheProvider>().GetAsync(CacheKeyDecorator.Compose("key",null,"public"),default)).Found); }
     [Fact] public void Custom_Providers_Preserved_And_Conflicting_Backend_Or_Scope_Reject() { var s=new ServiceCollection();s.AddSingleton<ICacheProvider,CountingProvider>();s.AddMeridianMemoryCaching();Assert.Single(s,x=>x.ServiceType==typeof(ICacheProvider));Assert.Throws<InvalidOperationException>(()=>s.AddMeridianCacheScope<Identity>());Assert.Throws<InvalidOperationException>(()=>new ServiceCollection().AddMeridianMemoryCaching().AddMeridianDistributedCaching(SerializationContractTests.Registry()));Assert.Throws<InvalidOperationException>(()=>new ServiceCollection().AddMeridianCacheScope<Identity>().AddMeridianCacheScope<OtherIdentity>()); }
     [Fact] public void Distributed_Supports_Scoped_Serializer_And_Does_Not_Advertise_Coalescing() { var s=new ServiceCollection();s.AddSingleton<IDistributedCache,newBackend>();s.AddScoped<ICacheValueSerializer,ScopedSerializer>();s.AddMeridianDistributedCaching(SerializationContractTests.Registry(),o=>o.ApplicationKeyPrefix="a");using var di=s.BuildServiceProvider(new ServiceProviderOptions{ValidateScopes=true,ValidateOnBuild=true});using var scope=di.CreateScope();Assert.False(scope.ServiceProvider.GetRequiredService<ICacheProvider>() is IConcurrentCacheProvider); }
+    [Fact]
+    public void Raw_Passthrough_Can_Equal_A_Decorated_Output_While_Decorated_Marker_Keys_Remain_Separate()
+    {
+        var decorated = CacheKeyDecorator.Compose("key", "app", "tenant");
+        Assert.Equal(decorated, CacheKeyDecorator.Compose(decorated, null, null));
+        Assert.NotEqual(decorated, CacheKeyDecorator.Compose(decorated, "app", "tenant"));
+        Assert.NotEqual(CacheKeyDecorator.Compose("key", "app", "tenant"), CacheKeyDecorator.Compose("key", "app", "other"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Provider_Factories_Snapshot_Scope_Selection_When_Collection_Is_Reused(bool distributed)
+    {
+        using var memory = new Microsoft.Extensions.Caching.Memory.MemoryCache(new Microsoft.Extensions.Caching.Memory.MemoryCacheOptions());
+        var backend = new Microsoft.Extensions.Caching.Distributed.MemoryDistributedCache(
+            Microsoft.Extensions.Options.Options.Create(new Microsoft.Extensions.Caching.Memory.MemoryDistributedCacheOptions()));
+        var services = new ServiceCollection();
+        services.AddSingleton<Microsoft.Extensions.Caching.Memory.IMemoryCache>(memory);
+        services.AddSingleton<IDistributedCache>(backend);
+        if (distributed) services.AddMeridianDistributedCaching(SerializationContractTests.Registry(), o => o.ApplicationKeyPrefix = "app");
+        else services.AddMeridianMemoryCaching(o => o.ApplicationKeyPrefix = "app");
+        var validation = new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true };
+        using var a = services.BuildServiceProvider(validation);
+        // Intentionally leave A's cache provider unresolved until B's scope registration mutates the collection.
+        services.AddMeridianCacheScope<Identity>();
+        using var b = services.BuildServiceProvider(validation);
+        using var scopeA = a.CreateScope();
+        using var scopeB = b.CreateScope();
+        var providerA = scopeA.ServiceProvider.GetRequiredService<ICacheProvider>();
+        var providerB = scopeB.ServiceProvider.GetRequiredService<ICacheProvider>();
+        Assert.Null(scopeA.ServiceProvider.GetService<ICacheKeyScope>());
+        Assert.IsType<Identity>(scopeB.ServiceProvider.GetRequiredService<ICacheKeyScope>());
+        Assert.Same(providerA, scopeA.ServiceProvider.GetRequiredService<ICacheProvider>());
+        if (!distributed) Assert.Same(providerA, a.GetRequiredService<ICacheProvider>());
+        await providerA.SetAsync("key", new Reply("prefix-only", 1), null, default);
+        await providerB.SetAsync("key", new Reply("scoped", 2), null, default);
+        Assert.Equal(new Reply("prefix-only", 1), (await providerA.GetAsync("key", default)).Value);
+        Assert.Equal(new Reply("scoped", 2), (await providerB.GetAsync("key", default)).Value);
+        var rawA = distributed ? (ICacheProvider)scopeA.ServiceProvider.GetRequiredService<DistributedCacheProvider>()
+            : scopeA.ServiceProvider.GetRequiredService<MemoryCacheProvider>();
+        Assert.Equal(new Reply("prefix-only", 1), (await rawA.GetAsync(CacheKeyDecorator.Compose("key", "app", null), default)).Value);
+        Assert.Equal(new Reply("scoped", 2), (await rawA.GetAsync(CacheKeyDecorator.Compose("key", "app", "public"), default)).Value);
+        await providerA.RemoveAsync("key", default);
+        Assert.False((await providerA.GetAsync("key", default)).Found);
+        Assert.Equal(new Reply("scoped", 2), (await providerB.GetAsync("key", default)).Value);
+        await providerB.RemoveAsync("key", default);
+    }
+
     private static ServiceCollection Services() {var s=new ServiceCollection();s.AddMeridianMemoryCaching();s.AddMeridianCacheScope<Identity>();return s;}
     public sealed class Identity : ICacheKeyScope { public string Value{get;set;}="public";public string GetScope()=>Value; }
     public sealed class OtherIdentity : ICacheKeyScope { public string GetScope()=>"other"; }

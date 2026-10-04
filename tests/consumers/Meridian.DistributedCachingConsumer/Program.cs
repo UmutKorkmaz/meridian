@@ -34,11 +34,42 @@ await pa.RemoveAsync("same",default);Require(!(await pb.GetAsync("same",default)
 var codec=scopeA.ServiceProvider.GetRequiredService<CacheValueCodec>();Require(codec.Decode(codec.Encode(null,"consumer.reply.v1"),"consumer.reply.v1") is null,"Known null codec replay");
 var effective=CacheKeyDecorator.Compose("null",applicationPrefix,"tenant-a");await backend.SetAsync(effective,codec.Encode(null,"consumer.reply.v1"));Require(!(await pa.GetAsync("null",default)).Found && await backend.GetAsync(effective) is null,"Ordinary null removed");
 Require(CacheKeyDecorator.Compose("raw",null,null)=="raw","Raw preserved");Require(CacheKeyDecorator.Compose("a:b","c","d")!=CacheKeyDecorator.Compose("a","b:c","d"),"Injective dimensions");
+await VerifyCollectionReuse(false);
+await VerifyCollectionReuse(true);
 foreach(var assembly in new[]{typeof(DistributedCacheProvider).Assembly,typeof(ICacheProvider).Assembly,backend.GetType().Assembly,typeof(ConsumerJson).Assembly})Console.WriteLine($"LOADED assembly={assembly.GetName().Name} path={assembly.Location} sha256={Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(assembly.Location))).ToLowerInvariant()}");
 await other.RemoveAsync("same",default);
 Console.WriteLine($"PROVIDER transport={(backend is RedisCache ? "Redis" : "MemoryDistributedCache")} reflectionDisabled=true independentRegistries=2 clients=2 actualDeserialize=true scopeInvalidation=true");
-Console.WriteLine("COMMON distributed sourceGenerated=true reflectionDisabled=true independentRegistries=2 clients=2 roundtrip=both-directions tenant=isolated invalidation=scoped ordinaryNull=removed codecNull=replayed serializer=allowlisted decorated=once isolatedNuGet=true");
+Console.WriteLine("COMMON distributed sourceGenerated=true reflectionDisabled=true independentRegistries=2 clients=2 roundtrip=both-directions tenant=isolated invalidation=scoped ordinaryNull=removed codecNull=replayed serializer=allowlisted decorated=once twoBuild=memory-and-distributed isolatedNuGet=true");
 ServiceCollection Services(CacheContractRegistry r,IDistributedCache cache){var s=new ServiceCollection();s.AddSingleton<IDistributedCache>(cache);s.AddMeridianCacheScope<Identity>();s.AddMeridianDistributedCaching(r,o=>o.ApplicationKeyPrefix=applicationPrefix);return s;}
+async Task VerifyCollectionReuse(bool distributed)
+{
+    using var memory = new MemoryCache(new MemoryCacheOptions());
+    var collection = new ServiceCollection();
+    collection.AddSingleton<IMemoryCache>(memory);
+    collection.AddSingleton<IDistributedCache>(backend);
+    var prefix = applicationPrefix + (distributed ? "-distributed-reuse" : "-memory-reuse");
+    if (distributed) collection.AddMeridianDistributedCaching(new CacheContractRegistry().RegisterContract("consumer.reply.v1",1,ConsumerJson.Default.Reply),o=>o.ApplicationKeyPrefix=prefix);
+    else collection.AddMeridianMemoryCaching(o=>o.ApplicationKeyPrefix=prefix);
+    var validation = new ServiceProviderOptions { ValidateScopes=true,ValidateOnBuild=true };
+    using var first = collection.BuildServiceProvider(validation);
+    collection.AddMeridianCacheScope<Identity>();
+    using var second = collection.BuildServiceProvider(validation);
+    using var firstScope = first.CreateScope();
+    using var secondScope = second.CreateScope();
+    var prefixOnly = firstScope.ServiceProvider.GetRequiredService<ICacheProvider>();
+    var scoped = secondScope.ServiceProvider.GetRequiredService<ICacheProvider>();
+    Require(firstScope.ServiceProvider.GetService<ICacheKeyScope>() is null,"First container has no scope descriptor");
+    await prefixOnly.SetAsync("reuse",new Reply("prefix-only",1),null,default);
+    await scoped.SetAsync("reuse",new Reply("scoped",2),null,default);
+    Require((await prefixOnly.GetAsync("reuse",default)).Value is Reply { Value:"prefix-only",Number:1 },"Delayed first container remains prefix-only");
+    Require((await scoped.GetAsync("reuse",default)).Value is Reply { Value:"scoped",Number:2 },"Second container is scoped");
+    var raw = distributed ? (ICacheProvider)firstScope.ServiceProvider.GetRequiredService<DistributedCacheProvider>() : firstScope.ServiceProvider.GetRequiredService<MemoryCacheProvider>();
+    Require((await raw.GetAsync(CacheKeyDecorator.Compose("reuse",prefix,null),default)).Value is Reply { Number:1 },"First effective key is prefix-only");
+    Require((await raw.GetAsync(CacheKeyDecorator.Compose("reuse",prefix,"tenant-a"),default)).Value is Reply { Number:2 },"Second effective key includes scope");
+    await prefixOnly.RemoveAsync("reuse",default);
+    Require(!(await prefixOnly.GetAsync("reuse",default)).Found && (await scoped.GetAsync("reuse",default)).Found,"Independent effective-key invalidation");
+    await scoped.RemoveAsync("reuse",default);
+}
 static void Require(bool condition,string message){if(!condition)throw new InvalidOperationException(message);}
 public sealed record Reply(string Value,int Number);
 public sealed class Identity : ICacheKeyScope { public string Partition{get;set;}="tenant-a";public string GetScope()=>Partition; }

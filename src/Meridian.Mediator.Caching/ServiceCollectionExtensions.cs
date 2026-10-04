@@ -73,15 +73,16 @@ public static class ServiceCollectionExtensions
         var optionsDescriptor = services.Single(d => d.ServiceType == typeof(CacheProviderOptions));
         if (optionsDescriptor.Lifetime != ServiceLifetime.Singleton || optionsDescriptor.ImplementationInstance is not CacheProviderOptions options)
             throw new InvalidOperationException("Cache options must be a singleton configuration snapshot.");
-        var decorated = options.ApplicationKeyPrefix is not null || state.ScopeType is not null;
-        var lifetime = state.ScopeType is not null || state.Backend == Backend.Distributed ? ServiceLifetime.Scoped : ServiceLifetime.Singleton;
+        var hasScope = state.ScopeType is not null;
+        var decorated = options.ApplicationKeyPrefix is not null || hasScope;
+        var lifetime = hasScope || state.Backend == Backend.Distributed ? ServiceLifetime.Scoped : ServiceLifetime.Singleton;
         var rawType = state.Backend == Backend.Memory ? typeof(MemoryCacheProvider) : typeof(DistributedCacheProvider);
         if (services.Any(d => d.ServiceType == rawType)) throw new InvalidOperationException("A concrete cache provider already has an unowned registration; register a custom ICacheProvider explicitly.");
         Add(ServiceDescriptor.Describe(rawType, rawType, lifetime));
         Add(ServiceDescriptor.Describe(typeof(ICacheProvider), sp =>
         {
             var raw = (ICacheProvider)sp.GetRequiredService(rawType);
-            return decorated ? ScopedCacheProvider.Create(raw, options, state.ScopeType is null ? null : sp.GetRequiredService<ICacheKeyScope>()) : raw;
+            return decorated ? ScopedCacheProvider.Create(raw, options, hasScope ? sp.GetRequiredService<ICacheKeyScope>() : null) : raw;
         }, lifetime));
         void Add(ServiceDescriptor descriptor) { services.Add(descriptor); state.Owned.Add(descriptor); }
     }

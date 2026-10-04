@@ -3,11 +3,12 @@ using System.Text;
 
 namespace Meridian.Mediator.Caching;
 
-/// <summary>Injective versioned key tuples. Call only at logical entry boundaries; effective keys are used verbatim inside backends.</summary>
+/// <summary>Versioned injective encoding among decorated key tuples. Raw passthrough does not reserve a separate backend namespace.</summary>
 public static class CacheKeyDecorator
 {
     private static readonly UTF8Encoding Utf8 = new(false, true);
     /// <summary>Composes application/scope/key with explicit presence and byte lengths. With neither dimension, returns the raw key verbatim.</summary>
+    /// <remarks>Raw clients can address any decorated output verbatim. Private scoped values require trusted uniformly decorated clients with excluded untrusted raw access, or an isolated physical backend namespace; a prefix is not access control.</remarks>
     public static string Compose(string key, string? applicationPrefix, string? scope)
     {
         ArgumentNullException.ThrowIfNull(key);
