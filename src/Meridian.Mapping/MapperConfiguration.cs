@@ -528,7 +528,7 @@ public class MapperConfiguration : IConfigurationProvider, IGeneratedMappingConf
         }
     }
 
-    private TypeMap CompileOpenGenericTypeMap(Type closedSourceType, Type closedDestType)
+    private static TypeMap CompileOpenGenericTypeMap(Type closedSourceType, Type closedDestType)
     {
         // Create a default MappingExpression for the closed types (auto-mapping only)
         var exprType = typeof(MappingExpression<,>).MakeGenericType(closedSourceType, closedDestType);
@@ -536,7 +536,7 @@ public class MapperConfiguration : IConfigurationProvider, IGeneratedMappingConf
         return CompileTypeMap(closedSourceType, closedDestType, expression);
     }
 
-    private void CompileTypeMaps(MapperConfigurationExpression expression, Dictionary<(Type, Type), TypeMap> typeMaps)
+    private static void CompileTypeMaps(MapperConfigurationExpression expression, Dictionary<(Type, Type), TypeMap> typeMaps)
     {
         // First pass: auto-register any Include<> derived pairs that don't already exist
         AutoRegisterIncludedDerivedMaps(expression);
@@ -552,7 +552,7 @@ public class MapperConfiguration : IConfigurationProvider, IGeneratedMappingConf
     /// Scans all mapping expressions for Include and IncludeAllDerived
     /// and auto-registers derived maps that don't already exist.
     /// </summary>
-    private void AutoRegisterIncludedDerivedMaps(MapperConfigurationExpression expression)
+    private static void AutoRegisterIncludedDerivedMaps(MapperConfigurationExpression expression)
     {
         var toAdd = new List<(Type, Type, object)>();
 
@@ -606,7 +606,7 @@ public class MapperConfiguration : IConfigurationProvider, IGeneratedMappingConf
     /// - IncludeBase: copies base config into derived
     /// - Include/IncludeAllDerived: wires derived maps for polymorphic dispatch
     /// </summary>
-    private void ApplyInheritance(MapperConfigurationExpression expression, Dictionary<(Type, Type), TypeMap> typeMaps)
+    private static void ApplyInheritance(MapperConfigurationExpression expression, Dictionary<(Type, Type), TypeMap> typeMaps)
     {
         foreach (var (key, mappingExpr) in expression.MappingExpressions)
         {
@@ -749,7 +749,7 @@ public class MapperConfiguration : IConfigurationProvider, IGeneratedMappingConf
     /// Builds the polymorphic dispatch lookup: for each type map, finds all
     /// derived type maps so the engine can pick the most specific one at runtime.
     /// </summary>
-    private void BuildPolymorphicDispatch(Dictionary<(Type, Type), TypeMap> typeMaps)
+    private static void BuildPolymorphicDispatch(Dictionary<(Type, Type), TypeMap> typeMaps)
     {
         foreach (var (key, typeMap) in typeMaps)
         {
@@ -769,7 +769,7 @@ public class MapperConfiguration : IConfigurationProvider, IGeneratedMappingConf
         }
     }
 
-    private TypeMap CompileTypeMap(Type sourceType, Type destType, object mappingExpression)
+    private static TypeMap CompileTypeMap(Type sourceType, Type destType, object mappingExpression)
     {
         var typeMap = new TypeMap(sourceType, destType);
 
@@ -789,7 +789,7 @@ public class MapperConfiguration : IConfigurationProvider, IGeneratedMappingConf
     /// Fast path: compiles a TypeMap using the ICompiledMappingExpression interface.
     /// No reflection calls — all config is accessed via direct interface method calls.
     /// </summary>
-    private TypeMap CompileTypeMapFast(Type sourceType, Type destType, ICompiledMappingExpression expr, TypeMap typeMap)
+    private static TypeMap CompileTypeMapFast(Type sourceType, Type destType, ICompiledMappingExpression expr, TypeMap typeMap)
     {
         // Custom converter
         var customConverter = expr.GetCustomConverter();
@@ -1032,7 +1032,7 @@ public class MapperConfiguration : IConfigurationProvider, IGeneratedMappingConf
     /// <summary>
     /// Reflection fallback for CompileTypeMap (used for open generic on-demand compilation).
     /// </summary>
-    private TypeMap CompileTypeMapReflection(Type sourceType, Type destType, object mappingExpression, TypeMap typeMap)
+    private static TypeMap CompileTypeMapReflection(Type sourceType, Type destType, object mappingExpression, TypeMap typeMap)
     {
         var exprType = mappingExpression.GetType();
 

@@ -455,7 +455,7 @@ public class MappingEngine
         return value;
     }
 
-    private object? GetCurrentDestinationValue(object destination, PropertyMap propertyMap)
+    private static object? GetCurrentDestinationValue(object destination, PropertyMap propertyMap)
     {
         if (propertyMap.DestinationPropertyChain == null || propertyMap.DestinationPropertyChain.Length <= 1)
             return propertyMap.DestinationProperty.GetValue(destination);
@@ -791,7 +791,7 @@ public class MappingEngine
         return list;
     }
 
-    private object? ResolveWithValueResolver(object source, object destination, PropertyMap propertyMap, ResolutionContext context)
+    private static object? ResolveWithValueResolver(object source, object destination, PropertyMap propertyMap, ResolutionContext context)
     {
         var resolver = ResolveService(propertyMap.ValueResolverType!, context);
         var resolveMethod = MethodLookupCache.GetInvocableMethod(propertyMap.ValueResolverType!, "Resolve")
@@ -805,7 +805,7 @@ public class MappingEngine
         return resolveMethod.Invoke(resolver, [source, destination, destDefault, context]);
     }
 
-    private object? ResolveWithMemberValueResolver(object source, object destination, PropertyMap propertyMap, ResolutionContext context)
+    private static object? ResolveWithMemberValueResolver(object source, object destination, PropertyMap propertyMap, ResolutionContext context)
     {
         var resolver = ResolveService(propertyMap.MemberValueResolverType!, context);
         var resolveMethod = MethodLookupCache.GetInvocableMethod(propertyMap.MemberValueResolverType!, "Resolve")
@@ -824,7 +824,7 @@ public class MappingEngine
         return resolveMethod.Invoke(resolver, [source, destination, sourceMember, destMember, context]);
     }
 
-    private object ResolveService(Type serviceType, ResolutionContext context)
+    private static object ResolveService(Type serviceType, ResolutionContext context)
     {
         if (context.ServiceProvider != null)
         {

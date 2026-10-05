@@ -31,4 +31,10 @@
     </PackageReference>
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Analyzer release tracking (RS2008): shipped history plus the current unshipped rules. -->
+    <AdditionalFiles Include="AnalyzerReleases.Shipped.md" />
+    <AdditionalFiles Include="AnalyzerReleases.Unshipped.md" />
+  </ItemGroup>
+
 </Project>

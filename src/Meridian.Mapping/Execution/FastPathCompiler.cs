@@ -209,7 +209,7 @@ internal static class FastPathCompiler
     /// Emits <c>new TDest()</c> plus every member assignment for <paramref name="map"/>, typed as its
     /// destination. <paramref name="level"/> is how many inlined maps deep this body sits (0 for the root).
     /// </summary>
-    private static Expression? BuildMapBody(TypeMap map, ParameterExpression srcTyped, int level, BuildState state)
+    private static BlockExpression? BuildMapBody(TypeMap map, ParameterExpression srcTyped, int level, BuildState state)
     {
         var parameterlessCtor = map.DestinationType.GetConstructor(
             BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
@@ -374,7 +374,7 @@ internal static class FastPathCompiler
             || def == typeof(IReadOnlyDictionary<,>);
     }
 
-    private static Expression? TryBuildAssignment(
+    private static BinaryExpression? TryBuildAssignment(
         PropertyMap pm,
         ParameterExpression srcTyped,
         ParameterExpression dst,
@@ -454,7 +454,7 @@ internal static class FastPathCompiler
     /// levels below the root: one level deeper than that map's own context. The root keeps the public
     /// <see cref="ResolutionContext.IncrementDepth"/> call; deeper levels create the final context directly.
     /// </summary>
-    private static Expression ChildContext(int level, BuildState state) => level == 0
+    private static MethodCallExpression ChildContext(int level, BuildState state) => level == 0
         ? Expression.Call(state.Context, _contextIncrementDepthMethod)
         : Expression.Call(state.Context, _contextAtRelativeDepthMethod, Expression.Constant(level + 1));
 

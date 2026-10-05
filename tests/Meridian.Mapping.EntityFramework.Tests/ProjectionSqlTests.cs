@@ -1,10 +1,9 @@
 using System.Data.Common;
 using System.Reflection;
 using System.Security.Cryptography;
-using Meridian.Mapping.Converters;
 using Meridian.Mapping.Configuration;
+using Meridian.Mapping.Converters;
 using Meridian.Mapping.Execution;
-
 using Meridian.Mapping.Queryable;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
@@ -289,14 +288,14 @@ public abstract class ProjectionSqlTests(ProjectionFixture fixture, ITestOutputH
         output.WriteLine($"Rejected before execution: {error.Message}; commands=0");
     }
 
-    private IConfigurationProvider GetterConfig<T>(bool reflection, Action<IMappingExpression<Person, T>> configure)
+    private static ProjectionTestProvider GetterConfig<T>(bool reflection, Action<IMappingExpression<Person, T>> configure)
     {
         IMappingExpression<Person, T>? expression = null;
         var config = new MapperConfiguration(c => { expression = c.CreateMap<Person, T>(); configure(expression); });
         var map = config.FindTypeMap(typeof(Person), typeof(T))!;
         if (reflection)
-            map = (TypeMap)typeof(MapperConfiguration).GetMethod("CompileTypeMapReflection", BindingFlags.NonPublic | BindingFlags.Instance)!
-                .Invoke(config, [typeof(Person), typeof(T), expression, new TypeMap(typeof(Person), typeof(T))])!;
+            map = (TypeMap)typeof(MapperConfiguration).GetMethod("CompileTypeMapReflection", BindingFlags.NonPublic | BindingFlags.Static)!
+                .Invoke(null, [typeof(Person), typeof(T), expression, new TypeMap(typeof(Person), typeof(T))])!;
         Assert.Empty(map.PropertyMaps); // Getter-only projection metadata must never become runtime assignments.
         return new ProjectionTestProvider(config, map);
     }

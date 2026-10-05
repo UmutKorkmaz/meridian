@@ -12,9 +12,15 @@ internal static class MapperDiagnostics
     internal static readonly DiagnosticDescriptor LegacyUnmapped = new(
         "MERIDIANGEN002", "Destination member is not mapped", "Destination member '{0}' is not mapped: {1}",
         Category, DiagnosticSeverity.Info, true);
+    // MERIDIANGEN002 intentionally has one ID with a mode-dependent severity: Info in Legacy mapping mode and Error in
+    // Structural mode. Release tracking records the Legacy severity (AnalyzerReleases.Unshipped.md) and cannot express a
+    // second severity for the same ID, so RS2001 is suppressed for exactly this descriptor. Changing the ID, severity or
+    // opt-in rules would change consumer diagnostics and warnings-as-errors outcomes.
+#pragma warning disable RS2001
     internal static readonly DiagnosticDescriptor StructuralUnmapped = new(
         "MERIDIANGEN002", "Destination member is not mapped", "Destination member '{0}' is not mapped: {1}",
         Category, DiagnosticSeverity.Error, true);
+#pragma warning restore RS2001
     internal static readonly DiagnosticDescriptor UnsupportedConstruction = new(
         "MERIDIANGEN003", "Destination construction is not supported",
         "Meridian cannot generate a mapper for destination '{0}': {1}. Use a concrete destination with a supported constructor and satisfy its required members. Structural mode supports public constructor parameter mapping; runtime IMapper supports runtime-only construction configuration.",

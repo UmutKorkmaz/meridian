@@ -396,7 +396,7 @@ internal static class MappingModelBuilder
         return false;
     }
 
-    private static IEnumerable<INamedTypeSymbol> GetContainingTypes(INamedTypeSymbol symbol)
+    private static Stack<INamedTypeSymbol> GetContainingTypes(INamedTypeSymbol symbol)
     {
         var stack = new Stack<INamedTypeSymbol>();
         for (var current = symbol.ContainingType; current is not null; current = current.ContainingType)

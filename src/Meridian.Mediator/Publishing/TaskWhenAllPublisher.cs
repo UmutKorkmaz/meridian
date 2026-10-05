@@ -61,7 +61,7 @@ public class TaskWhenAllPublisher : INotificationPublisher
         {
             foreach (var handler in handlerExecutors)
             {
-                tasks.Add(RunBounded(handler, notification, cancellationToken, limiter, exceptions));
+                tasks.Add(RunBounded(handler, notification, limiter, exceptions, cancellationToken));
             }
         }
 
@@ -113,9 +113,9 @@ public class TaskWhenAllPublisher : INotificationPublisher
     private static async Task RunBounded(
         NotificationHandlerExecutor handler,
         INotification notification,
-        CancellationToken cancellationToken,
         SemaphoreSlim limiter,
-        List<Exception> exceptions)
+        List<Exception> exceptions,
+        CancellationToken cancellationToken)
     {
         await limiter.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -195,14 +195,14 @@ public class ResilientTaskWhenAllPublisher : INotificationPublisher
         {
             foreach (var handler in handlerExecutors)
             {
-                tasks.Add(RunResilient(handler, notification, cancellationToken, exceptions));
+                tasks.Add(RunResilient(handler, notification, exceptions, cancellationToken));
             }
         }
         else
         {
             foreach (var handler in handlerExecutors)
             {
-                tasks.Add(RunBoundedResilient(handler, notification, cancellationToken, limiter, exceptions));
+                tasks.Add(RunBoundedResilient(handler, notification, limiter, exceptions, cancellationToken));
             }
         }
 
@@ -219,8 +219,8 @@ public class ResilientTaskWhenAllPublisher : INotificationPublisher
     private static async Task RunResilient(
         NotificationHandlerExecutor handler,
         INotification notification,
-        CancellationToken cancellationToken,
-        List<Exception> exceptions)
+        List<Exception> exceptions,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -238,14 +238,14 @@ public class ResilientTaskWhenAllPublisher : INotificationPublisher
     private static async Task RunBoundedResilient(
         NotificationHandlerExecutor handler,
         INotification notification,
-        CancellationToken cancellationToken,
         SemaphoreSlim limiter,
-        List<Exception> exceptions)
+        List<Exception> exceptions,
+        CancellationToken cancellationToken)
     {
         await limiter.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await RunResilient(handler, notification, cancellationToken, exceptions).ConfigureAwait(false);
+            await RunResilient(handler, notification, exceptions, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
