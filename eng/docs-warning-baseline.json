@@ -4,48 +4,6 @@
   "key": "project + file + diagnostic code + message (line numbers and TFM repetitions ignored)",
   "warnings": [
     {
-      "project": "src/Meridian.Mapping.Generators/Meridian.Mapping.Generators.csproj",
-      "file": "src/Meridian.Mapping.Generators/Diagnostics/MapperDiagnostics.cs",
-      "code": "RS2008",
-      "message": "Enable analyzer release tracking for the analyzer project containing rule 'MERIDIANGEN001'"
-    },
-    {
-      "project": "src/Meridian.Mapping.Generators/Meridian.Mapping.Generators.csproj",
-      "file": "src/Meridian.Mapping.Generators/Diagnostics/MapperDiagnostics.cs",
-      "code": "RS2008",
-      "message": "Enable analyzer release tracking for the analyzer project containing rule 'MERIDIANGEN002'"
-    },
-    {
-      "project": "src/Meridian.Mapping.Generators/Meridian.Mapping.Generators.csproj",
-      "file": "src/Meridian.Mapping.Generators/Diagnostics/MapperDiagnostics.cs",
-      "code": "RS2008",
-      "message": "Enable analyzer release tracking for the analyzer project containing rule 'MERIDIANGEN003'"
-    },
-    {
-      "project": "src/Meridian.Mapping.Generators/Meridian.Mapping.Generators.csproj",
-      "file": "src/Meridian.Mapping.Generators/Diagnostics/MapperDiagnostics.cs",
-      "code": "RS2008",
-      "message": "Enable analyzer release tracking for the analyzer project containing rule 'MERIDIANGEN004'"
-    },
-    {
-      "project": "src/Meridian.Mapping.Generators/Meridian.Mapping.Generators.csproj",
-      "file": "src/Meridian.Mapping.Generators/Diagnostics/MapperDiagnostics.cs",
-      "code": "RS2008",
-      "message": "Enable analyzer release tracking for the analyzer project containing rule 'MERIDIANGEN005'"
-    },
-    {
-      "project": "src/Meridian.Mapping.Generators/Meridian.Mapping.Generators.csproj",
-      "file": "src/Meridian.Mapping.Generators/Diagnostics/MapperDiagnostics.cs",
-      "code": "RS2008",
-      "message": "Enable analyzer release tracking for the analyzer project containing rule 'MERIDIANGEN006'"
-    },
-    {
-      "project": "src/Meridian.Mapping.Generators/Meridian.Mapping.Generators.csproj",
-      "file": "src/Meridian.Mapping.Generators/Discovery/MappingModelBuilder.cs",
-      "code": "CA1859",
-      "message": "Change return type of method 'GetContainingTypes' from 'System.Collections.Generic.IEnumerable<Microsoft.CodeAnalysis.INamedTypeSymbol>' to 'System.Collections.Generic.Stack<Microsoft.CodeAnalysis.INamedTypeSymbol>' for improved performance"
-    },
-    {
       "project": "src/Meridian.Mapping/Meridian.Mapping.csproj",
       "file": "src/Meridian.Mapping/Configuration/ValueTransformerCollection.cs",
       "code": "CA1711",
@@ -53,39 +11,9 @@
     },
     {
       "project": "src/Meridian.Mapping/Meridian.Mapping.csproj",
-      "file": "src/Meridian.Mapping/Execution/FastPathCompiler.cs",
-      "code": "CA1859",
-      "message": "Change return type of method 'BuildMapBody' from 'System.Linq.Expressions.Expression?' to 'System.Linq.Expressions.BlockExpression?' for improved performance"
-    },
-    {
-      "project": "src/Meridian.Mapping/Meridian.Mapping.csproj",
-      "file": "src/Meridian.Mapping/Execution/FastPathCompiler.cs",
-      "code": "CA1859",
-      "message": "Change return type of method 'ChildContext' from 'System.Linq.Expressions.Expression' to 'System.Linq.Expressions.MethodCallExpression' for improved performance"
-    },
-    {
-      "project": "src/Meridian.Mapping/Meridian.Mapping.csproj",
-      "file": "src/Meridian.Mapping/Execution/FastPathCompiler.cs",
-      "code": "CA1859",
-      "message": "Change return type of method 'TryBuildAssignment' from 'System.Linq.Expressions.Expression?' to 'System.Linq.Expressions.BinaryExpression?' for improved performance"
-    },
-    {
-      "project": "src/Meridian.Mapping/Meridian.Mapping.csproj",
       "file": "src/Meridian.Mapping/Execution/MappingEngine.cs",
       "code": "CA1305",
       "message": "The behavior of 'Convert.ChangeType(object, Type)' could vary based on the current user's locale settings. Replace this call in 'MappingEngine.ConvertValue(object, Type, ResolutionContext, [string], [Type])' with a call to 'Convert.ChangeType(object, Type, IFormatProvider)'."
-    },
-    {
-      "project": "src/Meridian.Mapping/Meridian.Mapping.csproj",
-      "file": "src/Meridian.Mapping/Execution/MappingEngine.cs",
-      "code": "CA1822",
-      "message": "Member 'GetCurrentDestinationValue' does not access instance data and can be marked as static"
-    },
-    {
-      "project": "src/Meridian.Mapping/Meridian.Mapping.csproj",
-      "file": "src/Meridian.Mapping/Execution/MappingEngine.cs",
-      "code": "CA1822",
-      "message": "Member 'ResolveService' does not access instance data and can be marked as static"
     },
     {
       "project": "src/Meridian.Mapping/Meridian.Mapping.csproj",
@@ -104,36 +32,6 @@
       "file": "src/Meridian.Mapping/MapperConfiguration.cs",
       "code": "CA1305",
       "message": "The behavior of 'StringBuilder.AppendLine(ref StringBuilder.AppendInterpolatedStringHandler)' could vary based on the current user's locale settings. Replace this call in 'MapperConfiguration.FormatMappingPlan(TypeMap, [int])' with a call to 'StringBuilder.AppendLine(IFormatProvider, ref StringBuilder.AppendInterpolatedStringHandler)'."
-    },
-    {
-      "project": "src/Meridian.Mapping/Meridian.Mapping.csproj",
-      "file": "src/Meridian.Mapping/MapperConfiguration.cs",
-      "code": "CA1822",
-      "message": "Member 'ApplyInheritance' does not access instance data and can be marked as static"
-    },
-    {
-      "project": "src/Meridian.Mapping/Meridian.Mapping.csproj",
-      "file": "src/Meridian.Mapping/MapperConfiguration.cs",
-      "code": "CA1822",
-      "message": "Member 'AutoRegisterIncludedDerivedMaps' does not access instance data and can be marked as static"
-    },
-    {
-      "project": "src/Meridian.Mapping/Meridian.Mapping.csproj",
-      "file": "src/Meridian.Mapping/MapperConfiguration.cs",
-      "code": "CA1822",
-      "message": "Member 'BuildPolymorphicDispatch' does not access instance data and can be marked as static"
-    },
-    {
-      "project": "src/Meridian.Mapping/Meridian.Mapping.csproj",
-      "file": "src/Meridian.Mapping/MapperConfiguration.cs",
-      "code": "CA1822",
-      "message": "Member 'CompileTypeMapFast' does not access instance data and can be marked as static"
-    },
-    {
-      "project": "src/Meridian.Mapping/Meridian.Mapping.csproj",
-      "file": "src/Meridian.Mapping/MapperConfiguration.cs",
-      "code": "CA1822",
-      "message": "Member 'CompileTypeMapReflection' does not access instance data and can be marked as static"
     },
     {
       "project": "src/Meridian.Mediator/Meridian.Mediator.csproj",
@@ -158,24 +56,6 @@
       "file": "src/Meridian.Mediator/Pipeline/IPipelineBehavior.cs",
       "code": "CA1716",
       "message": "In virtual/interface member IPipelineBehavior<TRequest, TResponse>.Handle(TRequest, RequestHandlerDelegate<TResponse>, CancellationToken), rename parameter next so that it no longer conflicts with the reserved language keyword 'Next'. Using a reserved keyword as the name of a parameter on a virtual/interface member makes it harder for consumers in other languages to override/implement the member."
-    },
-    {
-      "project": "src/Meridian.Mediator/Meridian.Mediator.csproj",
-      "file": "src/Meridian.Mediator/Publishing/TaskWhenAllPublisher.cs",
-      "code": "CA1068",
-      "message": "Method 'Meridian.Mediator.Publishing.ResilientTaskWhenAllPublisher.RunBoundedResilient(Meridian.Mediator.Publishing.NotificationHandlerExecutor, Meridian.Mediator.INotification, System.Threading.CancellationToken, System.Threading.SemaphoreSlim, System.Collections.Generic.List<System.Exception>)' should take CancellationToken as the last parameter"
-    },
-    {
-      "project": "src/Meridian.Mediator/Meridian.Mediator.csproj",
-      "file": "src/Meridian.Mediator/Publishing/TaskWhenAllPublisher.cs",
-      "code": "CA1068",
-      "message": "Method 'Meridian.Mediator.Publishing.ResilientTaskWhenAllPublisher.RunResilient(Meridian.Mediator.Publishing.NotificationHandlerExecutor, Meridian.Mediator.INotification, System.Threading.CancellationToken, System.Collections.Generic.List<System.Exception>)' should take CancellationToken as the last parameter"
-    },
-    {
-      "project": "src/Meridian.Mediator/Meridian.Mediator.csproj",
-      "file": "src/Meridian.Mediator/Publishing/TaskWhenAllPublisher.cs",
-      "code": "CA1068",
-      "message": "Method 'Meridian.Mediator.Publishing.TaskWhenAllPublisher.RunBounded(Meridian.Mediator.Publishing.NotificationHandlerExecutor, Meridian.Mediator.INotification, System.Threading.CancellationToken, System.Threading.SemaphoreSlim, System.Collections.Generic.List<System.Exception>)' should take CancellationToken as the last parameter"
     },
     {
       "project": "src/Meridian.Mediator/Meridian.Mediator.csproj",

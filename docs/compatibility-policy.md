@@ -81,6 +81,13 @@ Packable projects enable `EnablePackageValidation` so unintentional public API s
 packages validate against the published 2.1.3 baseline. Contributors should treat unexpected pack validation failures
 as breaking-change signals.
 
+## Analyzer warnings do not justify API changes
+
+A compiler or analyzer warning is never, by itself, a reason to rename a public type or parameter, change a signature,
+switch a culture, or change how a log call is invoked. Behavior-neutral internal fixes are made; every public-surface
+warning is retained with a member-specific written reason, and the remaining set is held by a ratchet. See
+[warning dispositions](warning-dispositions.md).
+
 ## Reporting regressions
 
 If an upgrade within the same major version breaks a previously supported scenario:

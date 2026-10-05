@@ -28,6 +28,8 @@
     href: compatibility-policy.md
   - name: Package compatibility
     href: package-compatibility.md
+  - name: Warning dispositions
+    href: warning-dispositions.md
   - name: Security model
     href: security-model.md
 - name: API reference

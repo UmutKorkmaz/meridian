@@ -17,7 +17,8 @@ under `artifacts/docs/` and is never committed or published by that command.
 | [native-aot.md](./native-aot.md) | Native AOT rows that were published and executed, and what is PENDING |
 | [projection-providers.md](./projection-providers.md) | `ProjectTo` provider/version coverage |
 | [compatibility-policy.md](./compatibility-policy.md) | SemVer, default-behavior, support and deprecation guarantees |
-| [package-compatibility.md](./package-compatibility.md) | Packed-candidate compatibility with the published 2.1.3 packages |
+| [package-compatibility.md](./package-compatibility.md) | Packed-candidate compatibility with the published 2.1.3 packages, dependency licenses and build-time tooling |
+| [warning-dispositions.md](./warning-dispositions.md) | Which compiler/analyzer warnings were fixed or deliberately retained, and the warning ratchet |
 | [security-model.md](./security-model.md) | Threat model and mitigations |
 | [governance/branch-protection.md](./governance/branch-protection.md) | Required checks checklist (maintainers) |
 
