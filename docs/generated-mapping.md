@@ -143,7 +143,8 @@ var invoice = mapper.Map<InvoiceDto>(new Invoice { Number = "INV-1" });   // run
 var payment = mapper.Map<PaymentDto>(new Payment { Id = 9, Amount = 12m }); // generated resolver
 ```
 
-Precedence rules, each asserted by the documentation consumer:
+Precedence rules. The documentation consumer asserts the example case of each rule; it does not exercise the base/included-map
+case of rule 1:
 
 1. An explicit runtime `TypeMap` (from a profile or `CreateMap`) always wins over a generated descriptor for the same
    pair, including base/included maps. In the example `invoice.Label` is `"profile:INV-1"`.

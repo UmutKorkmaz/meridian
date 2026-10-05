@@ -25,7 +25,7 @@ Docs site: <https://umutkorkmaz.github.io/meridian/>
 | --- | --- |
 | License | MIT |
 | Mediator + mapper | Two focused packages; optional backends live in separate packages |
-| Safety defaults | Mapping depth/collection caps; telemetry privacy off by default (2.1.x) |
+| Safety defaults | Mapping depth/collection caps; exception messages and stack traces excluded from telemetry by default (2.1.x) |
 | Performance | Benchmark harness in `benchmarks/`. Earlier numbers are historical and current candidate timings are inconclusive; no performance claim is made until they are re-measured on a dedicated host. |
 | AOT-friendly paths | Opt-in `[GenerateMapper]` methods and generated mediator registries; native execution verified on osx-arm64 only ([details](./docs/native-aot.md)) |
 | Supply chain | CodeQL and Scorecard workflows are configured; candidates are packed with recorded hashes and a dependency inventory. Signing, provenance attestations and publication are release steps that have not run for the candidate. |

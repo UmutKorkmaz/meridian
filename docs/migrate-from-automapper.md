@@ -95,7 +95,7 @@ cap to show the failure you get:
 ```csharp
 var limited = new MapperConfiguration(cfg =>
 {
-    cfg.DefaultMaxCollectionItems = 2; // raise (never lower) only when real payloads need it
+    cfg.DefaultMaxCollectionItems = 2; // demo only: a tiny cap to show the failure; real configurations raise, never lower, it
     cfg.CreateMap<Order, OrderDto>();
     cfg.CreateMap<OrderLine, OrderLineDto>();
 });
@@ -109,7 +109,7 @@ catch (MeridianMappingLimitException ex)
 }
 ```
 
-The consumer asserts `MaxCollectionItems: allowed 2, observed 3` and that a two-item collection still maps.
+The consumer asserts that the failing limit is `MaxCollectionItems`, that the allowed maximum is 2 and the observed count exceeds it, and that a two-item collection still maps.
 
 <a id="behavior-differences"></a>
 ## Behavior differences to plan for
