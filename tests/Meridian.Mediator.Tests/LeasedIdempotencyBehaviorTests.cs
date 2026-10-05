@@ -74,7 +74,7 @@ public class LeasedIdempotencyBehaviorTests
     {
         var store = new Store(); var renewed = Barrier(); var calls = 0;
         store.Renew = (_, _) => { renewed.TrySetResult(); return Task.FromResult(false); };
-        var error = await Assert.ThrowsAsync<IdempotencyOutcomeUnknownException>(() => Run(store, async () => { calls++; await Watch(renewed.Task); return "effect"; }));
+        var error = await Assert.ThrowsAsync<IdempotencyOutcomeUnknownException>(() => RunWatched(store, async () => { calls++; await Watch(renewed.Task); return "effect"; }));
         Assert.False(RetryPolicy.TransientOnly(error)); Assert.Equal(1, calls); Assert.Equal(0, store.Completions); Assert.Equal(0, store.Releases);
     }
 
@@ -84,7 +84,7 @@ public class LeasedIdempotencyBehaviorTests
         var store = new Store(); var renewed = Barrier();
         var secondary = new IOException("renew"); var primary = new IOException("handler");
         store.Renew = (_, _) => { renewed.TrySetResult(); return Task.FromException<bool>(secondary); };
-        var error = await Assert.ThrowsAsync<AggregateException>(() => Run(store, async () => { await Watch(renewed.Task); throw primary; }));
+        var error = await Assert.ThrowsAsync<AggregateException>(() => RunWatched(store, async () => { await Watch(renewed.Task); throw primary; }));
         Assert.Collection(error.InnerExceptions, ex => Assert.Same(primary, ex), ex => Assert.Same(secondary, ex)); Assert.False(RetryPolicy.TransientOnly(error));
     }
 
@@ -102,7 +102,7 @@ public class LeasedIdempotencyBehaviorTests
         try
         {
             await Watch(entered.Task); clock.Advance(TimeSpan.FromSeconds(1)); Assert.Equal(1, calls); Assert.Equal(1, active);
-            release.TrySetResult(); await clock.WaitForScheduledCount(3); clock.Advance(TimeSpan.FromSeconds(10));
+            release.TrySetResult(); await Watch(clock.WaitForScheduledCount(3)); clock.Advance(TimeSpan.FromSeconds(10));
             Assert.Equal("done", await Watch(task)); Assert.Equal(0, active); Assert.Equal(1, store.Completions);
         }
         finally { release.TrySetResult(); twice.TrySetResult(); await Observe(task); }
@@ -114,14 +114,16 @@ public class LeasedIdempotencyBehaviorTests
         var store = new Store(); var entered = Barrier(); var handler = Barrier();
         var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         store.Renew = (_, _) => { entered.TrySetResult(); return gate.Task; };
-        var task = Run(store, async () => { await Watch(handler.Task); return "effect"; });
+        var raw = Run(store, async () => { await Watch(handler.Task); return "effect"; });
         try
         {
-            await Watch(entered.Task); clock.Advance(TimeSpan.FromSeconds(10)); Assert.False(task.IsCompleted); Assert.Equal(0, store.Completions);
+            await Watch(entered.Task); clock.Advance(TimeSpan.FromSeconds(10)); Assert.False(raw.IsCompleted); Assert.Equal(0, store.Completions);
             gate.TrySetResult(true); handler.TrySetResult();
-            await Assert.ThrowsAsync<TimeoutException>(() => Watch(task)); Assert.Equal(0, store.Completions);
+            // The cleanup budget never expires here (the clock is not advanced again), so exactly the renewal deadline faults.
+            var error = await Assert.ThrowsAsync<TimeoutException>(() => Watch(raw));
+            Assert.Equal(RenewalDeadlineMessage, error.Message); Assert.Equal(0, store.Completions);
         }
-        finally { gate.TrySetResult(true); handler.TrySetResult(); await Observe(task); }
+        finally { gate.TrySetResult(true); handler.TrySetResult(); await Observe(raw); }
     }
 
     [Fact]
@@ -139,7 +141,7 @@ public class LeasedIdempotencyBehaviorTests
     {
         var store = new Store(); var entered = Barrier(); var original = new IOException("original");
         store.Renew = async (_, ct) => { entered.TrySetResult(); await Task.Delay(Timeout.Infinite, ct); return true; };
-        var actual = await Assert.ThrowsAsync<IOException>(() => Run(store, async () => { await Watch(entered.Task); throw original; }));
+        var actual = await Assert.ThrowsAsync<IOException>(() => RunWatched(store, async () => { await Watch(entered.Task); throw original; }));
         Assert.Same(original, actual);
     }
 
@@ -176,7 +178,7 @@ public class LeasedIdempotencyBehaviorTests
             try { await Task.Delay(Timeout.Infinite, ct); return true; }
             finally { finished = true; }
         };
-        var error = await Assert.ThrowsAsync<AggregateException>(() => Run(store, async () => { await Watch(entered.Task); return "effect"; }));
+        var error = await Assert.ThrowsAsync<AggregateException>(() => RunWatched(store, async () => { await Watch(entered.Task); return "effect"; }));
         Assert.Contains(original, error.Flatten().InnerExceptions); Assert.True(finished); Assert.Equal(0, store.Completions); Assert.False(RetryPolicy.TransientOnly(error));
     }
 
@@ -185,24 +187,79 @@ public class LeasedIdempotencyBehaviorTests
     {
         var store = new Store(); var entered = Barrier(); var original = new OperationCanceledException("provider cancellation");
         store.Renew = (_, _) => { entered.TrySetResult(); return Task.FromException<bool>(original); };
-        var error = await Assert.ThrowsAsync<OperationCanceledException>(() => Run(store, async () => { await Watch(entered.Task); return "effect"; }));
+        var error = await Assert.ThrowsAsync<OperationCanceledException>(() => RunWatched(store, async () => { await Watch(entered.Task); return "effect"; }));
         Assert.Same(original, error); Assert.Equal(0, store.Completions);
     }
 
     [Fact]
     public async Task Noncooperative_Renewal_Is_Joined_Even_After_Cleanup_Deadline()
     {
-        var store = new Store(); var entered = Barrier(); var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-        store.Renew = (_, _) => { entered.TrySetResult(); return gate.Task; };
-        var task = Run(store, async () => { await Watch(entered.Task); return "effect"; });
+        var store = new Store(); var entered = Barrier(); var handler = new TaskCompletionSource<string>();
+        var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationTokenRegistration stopDelivery = default;
+        // Virtual time passes at the moment cleanup delivers its stop request: the renewal deadline and the 5 second
+        // cleanup budget both fall due while the noncooperative provider ignores that request and stays outstanding.
+        store.Renew = (_, ct) => { stopDelivery = ct.Register(() => clock.Advance(TimeSpan.FromSeconds(10))); entered.TrySetResult(); return gate.Task; };
+        var raw = Run(store, () => handler.Task);
         try
         {
-            await Watch(entered.Task); await clock.WaitForScheduledCount(3); clock.Advance(TimeSpan.FromSeconds(10));
-            Assert.False(task.IsCompleted); gate.TrySetResult(true);
-            var error = await Assert.ThrowsAsync<AggregateException>(() => Watch(task));
-            Assert.Collection(error.InnerExceptions, ex => Assert.IsType<TimeoutException>(ex), ex => Assert.IsType<TimeoutException>(ex)); Assert.Equal(0, store.Completions);
+            await Watch(entered.Task); await CompleteHandlerThroughCleanupJoin(handler, "effect");
+            // The budget was already expired when the join began, so Task.Delay returned a completed task and
+            // Task.WhenAny decided for the budget synchronously, while the renewal was still pending.
+            Assert.False(raw.IsCompleted); Assert.Equal(0, store.Completions);
+            gate.TrySetResult(true);
+            var error = await Assert.ThrowsAsync<AggregateException>(() => Watch(raw));
+            Assert.Collection(error.InnerExceptions, ex => AssertBusinessTimeout(ex, RenewalDeadlineMessage), ex => AssertBusinessTimeout(ex, CleanupBudgetMessage));
+            Assert.Equal(0, store.Completions); Assert.Equal(0, store.Releases);
         }
-        finally { gate.TrySetResult(true); await Observe(task); }
+        finally { stopDelivery.Dispose(); gate.TrySetResult(true); handler.TrySetResult("effect"); await Observe(raw); }
+    }
+
+    [Fact]
+    public async Task Noncooperative_Healthy_Renewal_After_Cleanup_Budget_Faults_With_Only_The_Budget_Timeout()
+    {
+        var store = new Store(); var entered = Barrier(); var handler = new TaskCompletionSource<string>();
+        var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        CancellationTokenRegistration stopDelivery = default;
+        // Only the 5 second cleanup budget falls due; the renewal's own 10 second deadline does not. A renewal that then
+        // settles successfully contributes no failure, so the single budget timeout is the whole outcome.
+        store.Renew = (_, ct) => { stopDelivery = ct.Register(() => clock.Advance(TimeSpan.FromSeconds(5))); entered.TrySetResult(); return gate.Task; };
+        var raw = Run(store, () => handler.Task);
+        try
+        {
+            await Watch(entered.Task); await CompleteHandlerThroughCleanupJoin(handler, "effect");
+            Assert.False(raw.IsCompleted); Assert.Equal(0, store.Completions);
+            gate.TrySetResult(true);
+            var error = await Assert.ThrowsAsync<TimeoutException>(() => Watch(raw));
+            AssertBusinessTimeout(error, CleanupBudgetMessage); Assert.Equal(0, store.Completions); Assert.Equal(0, store.Releases);
+        }
+        finally { stopDelivery.Dispose(); gate.TrySetResult(true); handler.TrySetResult("effect"); await Observe(raw); }
+    }
+
+    [Fact]
+    public async Task Noncooperative_Renewal_With_A_Pending_Budget_Wait_Faults_With_The_Renewal_Deadline_And_Optionally_The_Budget()
+    {
+        var store = new Store(); var entered = Barrier(); var handler = new TaskCompletionSource<string>();
+        var gate = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        store.Renew = (_, _) => { entered.TrySetResult(); return gate.Task; };
+        var raw = Run(store, () => handler.Task);
+        try
+        {
+            await Watch(entered.Task); await CompleteHandlerThroughCleanupJoin(handler, "effect");
+            // Here the budget wait is registered BEFORE the budget expires. Task.Delay completion then reaches
+            // Task.WhenAny through the thread pool, so a renewal that settles immediately afterwards may legitimately win
+            // that tie. The contract asserted is the exact set of two valid outcomes, never success and never a third shape.
+            clock.Advance(TimeSpan.FromSeconds(10));
+            Assert.False(raw.IsCompleted); gate.TrySetResult(true);
+            var error = await Record.ExceptionAsync(() => Watch(raw));
+            Assert.NotNull(error);
+            var faults = error is AggregateException aggregate ? aggregate.InnerExceptions.ToArray() : [error];
+            Assert.InRange(faults.Length, 1, 2);
+            AssertBusinessTimeout(faults[0], RenewalDeadlineMessage);
+            if (faults.Length == 2) AssertBusinessTimeout(faults[1], CleanupBudgetMessage);
+            Assert.Equal(0, store.Completions); Assert.Equal(0, store.Releases);
+        }
+        finally { gate.TrySetResult(true); handler.TrySetResult("effect"); await Observe(raw); }
     }
 
     [Fact]
@@ -215,19 +272,74 @@ public class LeasedIdempotencyBehaviorTests
         finally { release.TrySetResult(); await Watch(task); }
     }
 
+    private const string RenewalDeadlineMessage = "Idempotency renewal exceeded its deadline.";
+    private const string CleanupBudgetMessage = "Stopping idempotency renewal exceeded the cooperative cleanup budget.";
+    private static readonly TimeSpan WatchdogLimit = TimeSpan.FromSeconds(5);
+
     private readonly ManualTimeProvider clock = new();
+
+    // Starts the request and returns the RAW Handle task. Tests that await it bound the wait with Watch, and cleanup
+    // joins the same raw task (Observe), so a watchdog expiry can never be mistaken for, or hide, the business outcome.
     private Task<string> Run(Store store, RequestHandlerDelegate<string> handler, CancellationToken token = default)
     {
         store.Claim = store.Claim with { Lease = store.Claim.Lease! with { ExpiresAt = clock.GetUtcNow().AddSeconds(30) } };
-        var task = new IdempotencyBehavior<Request, string>(store) { LeaseTimeProvider = clock }.Handle(new(), handler, token);
+        var raw = new IdempotencyBehavior<Request, string>(store) { LeaseTimeProvider = clock }.Handle(new(), handler, token);
         clock.Advance(TimeSpan.FromSeconds(10));
-        return Watch(task);
+        return raw;
     }
+    private Task<string> RunWatched(Store store, RequestHandlerDelegate<string> handler, CancellationToken token = default) => Watch(Run(store, handler, token));
+
+    // Completes a handler whose Task was created WITHOUT RunContinuationsAsynchronously, on a pool thread that has no
+    // SynchronizationContext. HandleLeased awaits the handler with ConfigureAwait(false), so its continuation then runs
+    // inline inside TrySetResult and executes every statement up to the first await that is genuinely pending: the join
+    // of the still-outstanding renewal (stop request, any callbacks registered on it, the budget wait and the
+    // Task.WhenAny). When this returns the test therefore KNOWS that cleanup has begun and reached its join. If the
+    // runtime ever queued the continuation instead of inlining it, the checks below fail loudly rather than the test racing.
+    private async Task CompleteHandlerThroughCleanupJoin(TaskCompletionSource<string> handler, string response)
+    {
+        var timersBefore = clock.ScheduledCount;
+        await Watch(Task.Run(() =>
+        {
+            handler.TrySetResult(response);
+            if (clock.ScheduledCount <= timersBefore || clock.LastScheduledThread != Environment.CurrentManagedThreadId)
+                throw new HarnessSynchronizationException("The handler continuation did not run inline to the cleanup join; the cleanup decision point is not deterministic.");
+        }));
+    }
+
+    private static void AssertBusinessTimeout(Exception actual, string message)
+    {
+        Assert.IsType<TimeoutException>(actual); Assert.Equal(message, actual.Message);
+    }
+
     private static TaskCompletionSource Barrier() => new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private static Task Watch(Task task) => task.WaitAsync(TimeSpan.FromSeconds(5));
-    private static Task<T> Watch<T>(Task<T> task) => task.WaitAsync(TimeSpan.FromSeconds(5));
-    // Failure-path gate release is followed by a bounded join; the assertion path owns the failure.
-    private static async Task Observe(Task task) { try { await Watch(task); } catch { } }
+
+    // Bounds a wait on wall-clock time ONLY as a hang detector. Expiry throws a dedicated assertion exception, never a
+    // TimeoutException, so a business TimeoutException from the request is always distinguishable from a stalled test.
+    private static async Task Watch(Task task)
+    {
+        using var stop = new CancellationTokenSource();
+        var expired = Task.Delay(WatchdogLimit, stop.Token);
+        if (await Task.WhenAny(task, expired).ConfigureAwait(false) != task)
+            throw new WatchdogAssertionException($"Watchdog: the awaited task did not complete within {WatchdogLimit.TotalSeconds:0} seconds.");
+        stop.Cancel();
+        await task.ConfigureAwait(false);
+    }
+    private static async Task<T> Watch<T>(Task<T> task)
+    {
+        await Watch((Task)task).ConfigureAwait(false);
+        return task.Result;
+    }
+    // Cleanup: call after every gate is released. Joins the owned RAW task (bounded) and observes its business fault so it
+    // is never left unobserved; the test body, not cleanup, asserts on that fault. A task that will not settle still fails.
+    private static async Task Observe(Task raw)
+    {
+        try { await Watch(raw).ConfigureAwait(false); }
+        catch (WatchdogAssertionException) { throw; }
+        catch (Exception) { /* business fault observed above; asserted by the test body */ }
+    }
+
+    private sealed class WatchdogAssertionException(string message) : Xunit.Sdk.XunitException(message);
+    private sealed class HarnessSynchronizationException(string message) : Xunit.Sdk.XunitException(message);
 
     public sealed record Request : IIdempotentRequest, IRetryableRequest { public string IdempotencyKey => "key"; }
     internal sealed class Store : ILeasedIdempotencyStore
