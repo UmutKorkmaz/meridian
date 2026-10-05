@@ -52,10 +52,20 @@ public static class OrderHttp
             if (orderId is null) return Results.Ok(await sender.Send(new ListOrders(), token));
             var dto = await sender.Send(new GetOrder(orderId.Value), token);
             return dto is null ? Results.NotFound() : Results.Ok(dto);
-        }).Produces<OrderDto[]>(200).ProducesProblem(400).ProducesProblem(401).ProducesProblem(403).ProducesProblem(404).ProducesProblem(500);
+        }).Produces<OrderDto[]>(200).ProducesProblem(400).ProducesProblem(401).ProducesProblem(403).ProducesProblem(404).ProducesProblem(500)
+          .WithDescription("Without orderId: 200 returns an OrderDto array. With orderId: 200 returns one OrderDto object, or 404 when it is not visible to the caller.")
+          .AddOpenApiOperationTransformer(DescribeListOrSingle);
         orders.MapGet("/events", Stream).Produces<OrderEventDto>(200, "application/x-ndjson")
             .ProducesProblem(400).ProducesProblem(401).ProducesProblem(403).ProducesProblem(500)
             .WithDescription("One committed scoped OrderEventDto JSON object per newline. Cancellation disposes enumeration. Post-start failures abort the transport; clients must detect truncation. Status errors apply before streaming starts.");
+    }
+    // GET /orders keeps one route with two 200 shapes; describe both instead of only the array.
+    private static Task DescribeListOrSingle(Microsoft.OpenApi.OpenApiOperation operation, Microsoft.AspNetCore.OpenApi.OpenApiOperationTransformerContext context, CancellationToken token)
+    {
+        if (operation.Responses?.TryGetValue("200", out var ok) == true && ok.Content?.TryGetValue("application/json", out var media) == true
+            && media.Schema is { Items: { } item } list)
+            media.Schema = new Microsoft.OpenApi.OpenApiSchema { OneOf = [list, item] };
+        return Task.CompletedTask;
     }
     private static async Task Stream(HttpContext context, IStreamSender sender, AuthenticatedOrderScope scope, long? after)
     {

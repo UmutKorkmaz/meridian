@@ -204,6 +204,34 @@ public sealed class OrderApiTests
         Assert.Contains("X-Correlation-ID", text); Assert.Contains("truncation", text);
     }
     [Fact]
+    public async Task OpenApi_Get_Orders_200_Describes_List_And_Single_Wire_Shapes()
+    {
+        await using var app = new ApiFixture(); using var client = app.Client(app.Token()); using var created = await Create(client);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        var location = created.Headers.Location!.OriginalString; Assert.StartsWith("/orders?orderId=", location);
+        using var listResponse = await client.GetAsync("/orders"); using var singleResponse = await client.GetAsync(location);
+        Assert.Equal(HttpStatusCode.OK, listResponse.StatusCode); Assert.Equal(HttpStatusCode.OK, singleResponse.StatusCode);
+        using var listWire = JsonDocument.Parse(await listResponse.Content.ReadAsStringAsync()); using var singleWire = JsonDocument.Parse(await singleResponse.Content.ReadAsStringAsync());
+        Assert.Equal(JsonValueKind.Array, listWire.RootElement.ValueKind); Assert.Equal(JsonValueKind.Object, singleWire.RootElement.ValueKind);
+        using var openApi = await client.GetAsync("/openapi/v1.json"); openApi.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await openApi.Content.ReadAsStringAsync());
+        var get = doc.RootElement.GetProperty("paths").GetProperty("/orders").GetProperty("get");
+        var schema = get.GetProperty("responses").GetProperty("200").GetProperty("content").GetProperty("application/json").GetProperty("schema");
+        var branches = schema.GetProperty("oneOf").EnumerateArray().ToArray();
+        Assert.Equal(2, branches.Length);
+        var arrayBranch = Assert.Single(branches, b => b.TryGetProperty("type", out var t) && t.GetString() == "array");
+        var objectBranch = Assert.Single(branches, b => b.TryGetProperty("$ref", out _));
+        var orderRef = objectBranch.GetProperty("$ref").GetString()!; Assert.Equal(orderRef, arrayBranch.GetProperty("items").GetProperty("$ref").GetString());
+        var component = doc.RootElement.GetProperty("components").GetProperty("schemas").GetProperty(orderRef.Split('/').Last());
+        var declared = component.GetProperty("properties").EnumerateObject().Select(p => p.Name).Order().ToArray();
+        Assert.Equal(declared, singleWire.RootElement.EnumerateObject().Select(p => p.Name).Order().ToArray());
+        Assert.All(listWire.RootElement.EnumerateArray(), item => Assert.Equal(declared, item.EnumerateObject().Select(p => p.Name).Order().ToArray()));
+        var orderId = Assert.Single(get.GetProperty("parameters").EnumerateArray(), p => p.GetProperty("name").GetString() == "orderId");
+        Assert.Equal("query", orderId.GetProperty("in").GetString());
+        Assert.Contains("orderId", get.GetProperty("description").GetString(), StringComparison.Ordinal);
+        Assert.True(get.GetProperty("responses").TryGetProperty("404", out _));
+    }
+    [Fact]
     public async Task Initial_Stream_Error_Is_Redacted_Before_Start()
     {
         await using var app = new ApiFixture(); app.Signals.InitialStreamFailure = true; using var client = app.Client(app.Token()); using var response = await client.GetAsync("/orders/events");

@@ -20,7 +20,7 @@ Local bearer tokens are a deliberately small local demo format: base64url JSON L
 | GET /orders | Current scoped list, at most 100 immutable orders; uncached |
 | GET /orders?orderId=guid | Positive immutable DTO lookup; scoped application cache, 404 otherwise |
 | GET /orders/events?after=sequence | Scoped committed events, bounded short DB queries, one JSON object per newline |
-| GET /openapi/v1.json | Generated route statuses, correlation header and NDJSON framing contract |
+| GET /openapi/v1.json | Generated route statuses, correlation header, NDJSON framing contract and a `oneOf` GET /orders 200 schema (array without orderId, single object with it) |
 
 Authentication and authorization run before every cache lookup and idempotency replay; async validation precedes claims. Scope is an immutable injective namespace/issuer/tenant/subject/permission tuple. Database filters use the same scope. Query negatives are not cached; lists remain current without list invalidation races. Cache removal uses CacheKeyComposer<GetOrder> through the same scoped provider. Prefixes are namespacing, not backend access control; dedicated/trusted raw clients are required.
 
