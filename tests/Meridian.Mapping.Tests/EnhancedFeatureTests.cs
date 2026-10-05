@@ -97,7 +97,7 @@ public class GenericWrapperDto<T>
 
 public class BeforeMapTests
 {
-    private IMapper CreateMapper(Action<IMapperConfigurationExpression> configure)
+    private static IMapper CreateMapper(Action<IMapperConfigurationExpression> configure)
     {
         var config = new MapperConfiguration(configure);
         return config.CreateMapper();
@@ -153,7 +153,7 @@ public class BeforeMapTests
                 .BeforeMap((src, dest) =>
                 {
                     // Modify source before mapping occurs
-                    src.Name = src.Name.ToUpper();
+                    src.Name = src.Name.ToUpperInvariant();
                 });
         });
 
@@ -168,7 +168,7 @@ public class BeforeMapTests
 
 public class AfterMapTests
 {
-    private IMapper CreateMapper(Action<IMapperConfigurationExpression> configure)
+    private static IMapper CreateMapper(Action<IMapperConfigurationExpression> configure)
     {
         var config = new MapperConfiguration(configure);
         return config.CreateMapper();
@@ -241,7 +241,7 @@ public class AfterMapTests
 
 public class BeforeAfterMapCombinedTests
 {
-    private IMapper CreateMapper(Action<IMapperConfigurationExpression> configure)
+    private static IMapper CreateMapper(Action<IMapperConfigurationExpression> configure)
     {
         var config = new MapperConfiguration(configure);
         return config.CreateMapper();
@@ -272,7 +272,7 @@ public class BeforeAfterMapCombinedTests
 
 public class PreserveReferencesTests
 {
-    private IMapper CreateMapper(Action<IMapperConfigurationExpression> configure)
+    private static IMapper CreateMapper(Action<IMapperConfigurationExpression> configure)
     {
         var config = new MapperConfiguration(configure);
         return config.CreateMapper();
@@ -329,7 +329,7 @@ public class PreserveReferencesTests
 
 public class ProjectToTests
 {
-    private IMapper CreateMapper(Action<IMapperConfigurationExpression> configure)
+    private static IMapper CreateMapper(Action<IMapperConfigurationExpression> configure)
     {
         var config = new MapperConfiguration(configure);
         return config.CreateMapper();
@@ -508,7 +508,7 @@ public class ValueTransformerTests
         var config = new MapperConfiguration(cfg =>
         {
             cfg.ValueTransformers.Add<string>(s => s.Trim());
-            cfg.ValueTransformers.Add<string>(s => s.ToUpper());
+            cfg.ValueTransformers.Add<string>(s => s.ToUpperInvariant());
             cfg.CreateMap<TransformerSource, TransformerDest>();
         });
         var mapper = config.CreateMapper();
@@ -538,7 +538,8 @@ public class ValueTransformerTests
         }).CreateMapper();
         var result = mapper.Map<TransformerSource, TransformerDest>(new()
         {
-            Name = "  Meridian  ", Description = null!
+            Name = "  Meridian  ",
+            Description = null!
         });
         Assert.Equal("Meridian!", result.Name);
         Assert.Null(result.Description);
@@ -549,7 +550,7 @@ public class ValueTransformerTests
     {
         var config = new MapperConfiguration(cfg =>
         {
-            cfg.ValueTransformers.Add<string>(s => s.ToUpper());
+            cfg.ValueTransformers.Add<string>(s => s.ToUpperInvariant());
             cfg.CreateMap<Source, Destination>();
         });
         var mapper = config.CreateMapper();

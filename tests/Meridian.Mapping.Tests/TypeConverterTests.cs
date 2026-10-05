@@ -7,7 +7,7 @@ namespace Meridian.Mapping.Tests;
 
 public class TypeConverterTests
 {
-    private IMapper CreateMapper(Action<IMapperConfigurationExpression> configure)
+    private static IMapper CreateMapper(Action<IMapperConfigurationExpression> configure)
     {
         var config = new MapperConfiguration(configure);
         return config.CreateMapper();
@@ -15,7 +15,7 @@ public class TypeConverterTests
 
     // ── Converter implementations ───────────────────────────────
 
-    private class SourceToDestConverter : ITypeConverter<Source, Destination>
+    private sealed class SourceToDestConverter : ITypeConverter<Source, Destination>
     {
         public Destination Convert(Source source, Destination destination, ResolutionContext context)
         {
@@ -29,7 +29,7 @@ public class TypeConverterTests
         }
     }
 
-    private class DoubleAgeConverter : ITypeConverter<Source, Destination>
+    private sealed class DoubleAgeConverter : ITypeConverter<Source, Destination>
     {
         public Destination Convert(Source source, Destination destination, ResolutionContext context)
         {
@@ -73,7 +73,7 @@ public class TypeConverterTests
                 .ConvertUsing(s => new Destination
                 {
                     Id = s.Id * 10,
-                    Name = s.Name.ToUpper(),
+                    Name = s.Name.ToUpperInvariant(),
                     Email = s.Email,
                     Age = s.Age
                 });

@@ -7,7 +7,7 @@ public class ProfileTests
 {
     // ── Profile implementations ─────────────────────────────────
 
-    private class SourceDestProfile : Profile
+    private sealed class SourceDestProfile : Profile
     {
         public SourceDestProfile()
         {
@@ -19,7 +19,7 @@ public class ProfileTests
         }
     }
 
-    private class ProductProfile : Profile
+    private sealed class ProductProfile : Profile
     {
         public ProductProfile()
         {
@@ -27,7 +27,7 @@ public class ProfileTests
         }
     }
 
-    private class OrderProfile : Profile
+    private sealed class OrderProfile : Profile
     {
         public OrderProfile()
         {

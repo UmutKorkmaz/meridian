@@ -30,7 +30,7 @@ public class GeneratedStreamCompositionTests
             c.AddOpenStreamBehavior(typeof(GeneratedOpenStreamBehavior<,>));
         }));
         Assert.Contains(nameof(ManualOtherStreamRequest), error.Message);
-        Assert.Contains(nameof(GeneratedOpenStreamBehavior<ManualOtherStreamRequest, int>).Split('`')[0], error.Message);
+        Assert.Contains(nameof(GeneratedOpenStreamBehavior<,>), error.Message);
     }
 
     [Fact]
@@ -43,6 +43,9 @@ public class GeneratedStreamCompositionTests
             c.AddGeneratedRegistry<ManualOtherStreamRegistry>();
             c.AddOpenStreamBehavior(typeof(GeneratedOpenStreamBehavior<,>));
         }));
+        // A manual-only registry has no generated finite pairs, so the older pairs guard rejects it before the per-slot
+        // loop runs; the slot loop itself is covered by the generated-plus-manual test above.
+        Assert.Contains("has no generated finite stream pairs", error.Message);
         Assert.Contains("declare", error.Message);
     }
 

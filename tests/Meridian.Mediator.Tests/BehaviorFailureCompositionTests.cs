@@ -285,7 +285,7 @@ public class BehaviorFailureCompositionTests
         var results = new bool[256];
         Parallel.For(0, results.Length, i => results[i] = RetryPolicy.TransientOnly(failure));
         Assert.All(results, Assert.True);
-        Assert.Equal(1, failure.Data.Count);
+        Assert.Single(failure.Data);
         Assert.Equal("consumer-value", failure.Data["consumer-key"]);
     }
 

@@ -42,7 +42,7 @@ public class IntRequestHandler : IRequestHandler<IntRequest, int>
 [Collection("VoidCommandHandler-static-state")]
 public class EdgeCaseTests
 {
-    private IMediator BuildMediator(Action<IServiceCollection>? configureServices = null)
+    private static IMediator BuildMediator(Action<IServiceCollection>? configureServices = null)
     {
         var services = new ServiceCollection();
         services.AddMeridianMediator(cfg => { });

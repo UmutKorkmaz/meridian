@@ -2,7 +2,7 @@ namespace Meridian.Mapping.Tests;
 
 public class ConstructorMappingTests
 {
-    private IMapper CreateMapper(Action<IMapperConfigurationExpression> configure)
+    private static IMapper CreateMapper(Action<IMapperConfigurationExpression> configure)
     {
         var config = new MapperConfiguration(configure);
         return config.CreateMapper();

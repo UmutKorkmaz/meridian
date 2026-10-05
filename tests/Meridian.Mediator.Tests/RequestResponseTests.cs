@@ -68,7 +68,7 @@ public record UnregisteredRequest : IRequest<int>;
 [Collection("VoidCommandHandler-static-state")]
 public class RequestResponseTests
 {
-    private IMediator BuildMediator(Action<IServiceCollection>? configureServices = null)
+    private static IMediator BuildMediator(Action<IServiceCollection>? configureServices = null)
     {
         var services = new ServiceCollection();
         services.AddMeridianMediator(cfg => { });

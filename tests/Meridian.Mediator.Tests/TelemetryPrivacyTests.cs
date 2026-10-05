@@ -107,7 +107,7 @@ public class TelemetryPrivacyTests
         {
             lock (_sync)
             {
-                return Assert.Single(Stopped.Where(activity => activity.OperationName == operationName));
+                return Assert.Single(Stopped, activity => activity.OperationName == operationName);
             }
         }
     }

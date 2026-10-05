@@ -13,13 +13,13 @@ public class LocalizedValidationBehaviorTests
 
     public sealed class CreateWorkflowHandler : IRequestHandler<CreateWorkflow, Unit>
     {
-        public Task<Unit> Handle(CreateWorkflow r, CancellationToken ct) =>
+        public Task<Unit> Handle(CreateWorkflow r, CancellationToken cancellationToken) =>
             Task.FromResult(Unit.Value);
     }
 
     public sealed class CreateWorkflowValidator : IValidator<CreateWorkflow>
     {
-        public Task<ValidationResult> ValidateAsync(CreateWorkflow r, CancellationToken ct)
+        public Task<ValidationResult> ValidateAsync(CreateWorkflow r, CancellationToken cancellationToken)
         {
             var result = new ValidationResult();
             if (string.IsNullOrEmpty(r.Title))

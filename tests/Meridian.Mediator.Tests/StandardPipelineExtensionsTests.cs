@@ -159,7 +159,7 @@ public class StandardPipelineExtensionsTests
 
     public sealed class StdPingHandler : IRequestHandler<StdPing, StdPong>
     {
-        public Task<StdPong> Handle(StdPing r, CancellationToken ct) =>
+        public Task<StdPong> Handle(StdPing r, CancellationToken cancellationToken) =>
             Task.FromResult(new StdPong(r.Value));
     }
 

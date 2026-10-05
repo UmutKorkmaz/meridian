@@ -1,11 +1,11 @@
+using System.Reflection;
+using Meridian.Mediator.Extensions;
+using Meridian.Mediator.Generated;
+using Meridian.Mediator.Generators;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
-using Meridian.Mediator.Generators;
-using Meridian.Mediator.Generated;
-using Meridian.Mediator.Extensions;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
-using System.Reflection;
 
 namespace Meridian.Mediator.Generators.Tests;
 
@@ -28,7 +28,7 @@ public class RegistryGenerationTests
     {
         var registry = Load(Generate("public sealed class Q : IRequest<int> {} public sealed class P : Meridian.Mediator.Pipeline." + contract + " { " + method + " } [GenerateMediatorRegistry(" + option + "=new[]{typeof(P)})] public partial class Registry {}"));
         Assert.Empty(registry.RequestTypes);
-        var driver = Assert.Single(((IGeneratedMediatorContributions)registry).Contributions.Where(c => c.Category == GeneratedMediatorCategory.Behavior && c.Activation == GeneratedMediatorActivation.Declared));
+        var driver = Assert.Single(((IGeneratedMediatorContributions)registry).Contributions, c => c.Category == GeneratedMediatorCategory.Behavior && c.Activation == GeneratedMediatorActivation.Declared);
         var services = new ServiceCollection(); registry.RegisterServices(services, ServiceLifetime.Transient);
         using var provider = services.BuildServiceProvider();
         Assert.NotNull(provider.GetRequiredService(driver.ServiceType));
@@ -65,7 +65,7 @@ public class RegistryGenerationTests
         var result = Generate(StreamFixture + "public sealed class B<Q,R> : Meridian.Mediator.Streaming.IStreamPipelineBehavior<Q,R> where Q : Meridian.Mediator.Streaming.IStreamRequest<R> { public System.Collections.Generic.IAsyncEnumerable<R> Handle(Q q, Meridian.Mediator.Streaming.StreamHandlerDelegate<R> next,CancellationToken c)=>next(); } [GenerateMediatorRegistry(typeof(H), StreamBehaviorTypes = new[]{typeof(" + selection + ")})] public partial class Registry {}", true);
         var registry = Load(result);
         Assert.NotNull(registry.FindStreamHandler(registry.StreamTypes.Single()));
-        var contribution = Assert.Single(((IGeneratedMediatorContributions)registry).Contributions.Where(c=>c.Category == GeneratedMediatorCategory.StreamBehavior));
+        var contribution = Assert.Single(((IGeneratedMediatorContributions)registry).Contributions, c =>c.Category == GeneratedMediatorCategory.StreamBehavior);
         Assert.Equal(phase, contribution.Phase.ToString());
         var services = new ServiceCollection(); registry.RegisterServices(services,ServiceLifetime.Scoped);
         using var provider = services.BuildServiceProvider();

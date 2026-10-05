@@ -350,9 +350,9 @@ public class MetricsOperationTests
         using var cacheOnly = new MetricCapture(meter, include: i => i.Name == Mx.CacheLookup);
         await provider.GetRequiredService<IMediator>().Send(new MxQuery(1));
 
-        Assert.Equal(1, counterOnly.All.Count);
+        Assert.Single(counterOnly.All);
         Assert.Equal(Mx.RequestCount, counterOnly.All[0].Instrument);
-        Assert.Equal(1, durationOnly.All.Count);
+        Assert.Single(durationOnly.All);
         Assert.Equal(Mx.RequestDuration, durationOnly.All[0].Instrument);
         Assert.Empty(cacheOnly.All);
     }
@@ -414,7 +414,7 @@ public class MetricsOperationTests
         var instrumented = new Mediator(provider, new ForeachAwaitPublisher(), MediatorTelemetryOptions.Default, GeneratedMediatorComposition.Empty, metrics);
         Assert.Equal(2, await instrumented.Send(new MxQuery(1)));
         Assert.Equal(1, capture.Sum(Mx.RequestCount, Type(QueryLabel), Outcome("success")));
-        Assert.Equal(1, everything.Of(Mx.RequestCount).Count);
+        Assert.Single(everything.Of(Mx.RequestCount));
         Assert.Throws<ArgumentNullException>(() => new MediatorMetrics(null!, Array.Empty<Type>()));
         Assert.Throws<ArgumentNullException>(() => new MediatorMetrics(Mx.On(), null!));
     }

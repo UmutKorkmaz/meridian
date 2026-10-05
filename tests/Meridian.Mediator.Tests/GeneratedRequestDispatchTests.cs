@@ -1,9 +1,9 @@
 using Meridian.Mediator.Behaviors;
 using Meridian.Mediator.Extensions;
-using Microsoft.Extensions.Localization;
 using Meridian.Mediator.Generated;
 using Meridian.Mediator.Pipeline;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Localization;
 
 namespace Meridian.Mediator.Tests;
 
@@ -92,15 +92,15 @@ public sealed class GeneratedQueryHandler(DispatchCapture capture) : IRequestHan
 {
     public bool Disposed {get;private set;}
     public void Dispose()=>Disposed=true;
-    public Task<int> Handle(GeneratedQuery request, CancellationToken token) { capture.Request = request; capture.Token = token; capture.Calls++; return Task.FromResult(42); }
+    public Task<int> Handle(GeneratedQuery request, CancellationToken cancellationToken) { capture.Request = request; capture.Token = cancellationToken; capture.Calls++; return Task.FromResult(42); }
 }
 public sealed class GeneratedVoidHandler(DispatchCapture capture) : IRequestHandler<GeneratedVoid>
 {
-    public Task Handle(GeneratedVoid request, CancellationToken token) { capture.Request = request; capture.Token = token; capture.Calls++; return Task.CompletedTask; }
+    public Task Handle(GeneratedVoid request, CancellationToken cancellationToken) { capture.Request = request; capture.Token = cancellationToken; capture.Calls++; return Task.CompletedTask; }
 }
 public sealed class GeneratedUnitHandler(DispatchCapture capture) : IRequestHandler<GeneratedUnit,Unit>
 {
-    public Task<Unit> Handle(GeneratedUnit request, CancellationToken token) { capture.Request = request; capture.Token = token; capture.Calls++; return Task.FromResult(Unit.Value); }
+    public Task<Unit> Handle(GeneratedUnit request, CancellationToken cancellationToken) { capture.Request = request; capture.Token = cancellationToken; capture.Calls++; return Task.FromResult(Unit.Value); }
 }
 [GenerateMediatorRegistry(typeof(GeneratedQueryHandler), typeof(GeneratedVoidHandler), typeof(GeneratedUnitHandler))]
 public partial class DispatchRegistry;
@@ -248,15 +248,15 @@ public interface IMarked;
 public sealed class PipelineQuery : IRequest<int>,IMarked;
 public sealed class PlainQuery : IRequest<int>;
 public sealed class PipelineTrace { public bool Reject {get;set;} public List<string> Events {get;}=new(); public List<AuditEntry> Audit {get;}=new(); }
-public sealed class PipelineHandler(PipelineTrace trace) : IRequestHandler<PipelineQuery,int> { public Task<int> Handle(PipelineQuery q,CancellationToken ct) {trace.Events.Add("handler");return Task.FromResult(7);} }
-public sealed class PlainHandler(PipelineTrace trace) : IRequestHandler<PlainQuery,int> { public Task<int> Handle(PlainQuery q,CancellationToken ct) {trace.Events.Add("plain");return Task.FromResult(8);} }
-public sealed class TraceBehavior<Q,R>(PipelineTrace trace) : IPipelineBehavior<Q,R> where Q:notnull { public Task<R> Handle(Q q,RequestHandlerDelegate<R> next,CancellationToken ct) {trace.Events.Add("open");return next();} }
-public sealed class ClosedTraceBehavior(PipelineTrace trace) : IPipelineBehavior<PipelineQuery,int> { public Task<int> Handle(PipelineQuery q,RequestHandlerDelegate<int> next,CancellationToken ct) {trace.Events.Add("closed");return next();} }
-public sealed class MarkerTraceBehavior<Q,R>(PipelineTrace trace) : IPipelineBehavior<Q,R> where Q:notnull,IMarked { public Task<R> Handle(Q q,RequestHandlerDelegate<R> next,CancellationToken ct) {trace.Events.Add("marker");return next();} }
-public sealed class TracePre(PipelineTrace trace) : IRequestPreProcessor<PipelineQuery> {public Task Process(PipelineQuery q,CancellationToken ct) {trace.Events.Add("pre");return Task.CompletedTask;} }
-public sealed class TracePost(PipelineTrace trace) : IRequestPostProcessor<PipelineQuery,int> {public Task Process(PipelineQuery q,int r,CancellationToken ct) {trace.Events.Add("post");return Task.CompletedTask;} }
-public sealed class TraceValidator(PipelineTrace trace) : IValidator<PipelineQuery> {public Task<ValidationResult> ValidateAsync(PipelineQuery q,CancellationToken ct) {trace.Events.Add("validate");return Task.FromResult(new ValidationResult {Errors=trace.Reject ? new(){new("Name","invalid")} : new()});} }
-public sealed class TraceAuditSink(PipelineTrace trace) : IAuditSink {public Task RecordAsync(AuditEntry entry,CancellationToken ct) {trace.Events.Add("audit");trace.Audit.Add(entry);return Task.CompletedTask;} }
+public sealed class PipelineHandler(PipelineTrace trace) : IRequestHandler<PipelineQuery,int> { public Task<int> Handle(PipelineQuery q,CancellationToken cancellationToken) {trace.Events.Add("handler");return Task.FromResult(7);} }
+public sealed class PlainHandler(PipelineTrace trace) : IRequestHandler<PlainQuery,int> { public Task<int> Handle(PlainQuery q,CancellationToken cancellationToken) {trace.Events.Add("plain");return Task.FromResult(8);} }
+public sealed class TraceBehavior<Q,R>(PipelineTrace trace) : IPipelineBehavior<Q,R> where Q:notnull { public Task<R> Handle(Q q,RequestHandlerDelegate<R> next,CancellationToken cancellationToken) {trace.Events.Add("open");return next();} }
+public sealed class ClosedTraceBehavior(PipelineTrace trace) : IPipelineBehavior<PipelineQuery,int> { public Task<int> Handle(PipelineQuery q,RequestHandlerDelegate<int> next,CancellationToken cancellationToken) {trace.Events.Add("closed");return next();} }
+public sealed class MarkerTraceBehavior<Q,R>(PipelineTrace trace) : IPipelineBehavior<Q,R> where Q:notnull,IMarked { public Task<R> Handle(Q q,RequestHandlerDelegate<R> next,CancellationToken cancellationToken) {trace.Events.Add("marker");return next();} }
+public sealed class TracePre(PipelineTrace trace) : IRequestPreProcessor<PipelineQuery> {public Task Process(PipelineQuery q,CancellationToken cancellationToken) {trace.Events.Add("pre");return Task.CompletedTask;} }
+public sealed class TracePost(PipelineTrace trace) : IRequestPostProcessor<PipelineQuery,int> {public Task Process(PipelineQuery q,int r,CancellationToken cancellationToken) {trace.Events.Add("post");return Task.CompletedTask;} }
+public sealed class TraceValidator(PipelineTrace trace) : IValidator<PipelineQuery> {public Task<ValidationResult> ValidateAsync(PipelineQuery q,CancellationToken cancellationToken) {trace.Events.Add("validate");return Task.FromResult(new ValidationResult {Errors=trace.Reject ? new(){new("Name","invalid")} : new()});} }
+public sealed class TraceAuditSink(PipelineTrace trace) : IAuditSink {public Task RecordAsync(AuditEntry entry,CancellationToken cancellationToken) {trace.Events.Add("audit");trace.Audit.Add(entry);return Task.CompletedTask;} }
 public sealed class TraceLocalizer : IStringLocalizer<PipelineQuery> { public LocalizedString this[string name]=>new(name,name,true); public LocalizedString this[string name,params object[] arguments]=>new(name,name,true); public IEnumerable<LocalizedString> GetAllStrings(bool includeParentCultures)=>Array.Empty<LocalizedString>(); }
 [GenerateMediatorRegistry(typeof(PipelineHandler),BehaviorTypes=new[]{typeof(TraceBehavior<,>),typeof(ClosedTraceBehavior)},PreProcessorTypes=new[]{typeof(TracePre)},PostProcessorTypes=new[]{typeof(TracePost)})] public partial class PipelineRegistry;
 [GenerateMediatorRegistry(typeof(PipelineHandler),typeof(PlainHandler),BehaviorTypes=new[]{typeof(MarkerTraceBehavior<,>)})] public partial class MarkerRegistry;
@@ -309,19 +309,21 @@ public class GeneratedExceptionDispatchTests
 }
 public sealed class ExceptionQuery : IRequest<int>;
 public sealed class ExceptionTrace {public string Mode {get;set;}="";public List<string> Events {get;}=new();public Exception Original {get;}=new InvalidOperationException("original");public Exception Secondary {get;}=new ArgumentException("secondary");public object? Request;public CancellationToken Token; public RequestExceptionHandlerState<int>? FirstState;}
-public sealed class ExceptionQueryHandler(ExceptionTrace trace) : IRequestHandler<ExceptionQuery,int> {public Task<int> Handle(ExceptionQuery q,CancellationToken ct)=>Task.FromException<int>(trace.Original);}
-public sealed class DeclineExceptionHandler(ExceptionTrace trace) : IRequestExceptionHandler<ExceptionQuery,int,InvalidOperationException> {public Task Handle(ExceptionQuery q,InvalidOperationException e,RequestExceptionHandlerState<int> state,CancellationToken ct) {trace.Events.Add("decline");trace.FirstState=state;trace.Request=q;trace.Token=ct;return Task.CompletedTask;}}
-public sealed class SecondExceptionHandler(ExceptionTrace trace) : IRequestExceptionHandler<ExceptionQuery,int,InvalidOperationException> {public Task Handle(ExceptionQuery q,InvalidOperationException e,RequestExceptionHandlerState<int> state,CancellationToken ct) {trace.Events.Add("second");Assert.NotSame(trace.FirstState,state);if(trace.Mode=="handled") state.SetHandled(81);if(trace.Mode=="sync-handler") throw trace.Secondary;return trace.Mode=="async-handler" ? Task.FromException(trace.Secondary) : Task.CompletedTask;}}
+public sealed class ExceptionQueryHandler(ExceptionTrace trace) : IRequestHandler<ExceptionQuery,int> {public Task<int> Handle(ExceptionQuery q,CancellationToken cancellationToken)=>Task.FromException<int>(trace.Original);}
+public sealed class DeclineExceptionHandler(ExceptionTrace trace) : IRequestExceptionHandler<ExceptionQuery,int,InvalidOperationException> {public Task Handle(ExceptionQuery q,InvalidOperationException e,RequestExceptionHandlerState<int> state,CancellationToken cancellationToken) {trace.Events.Add("decline");trace.FirstState=state;trace.Request=q;trace.Token=cancellationToken;return Task.CompletedTask;}}
+public sealed class SecondExceptionHandler(ExceptionTrace trace) : IRequestExceptionHandler<ExceptionQuery,int,InvalidOperationException> {public Task Handle(ExceptionQuery q,InvalidOperationException e,RequestExceptionHandlerState<int> state,CancellationToken cancellationToken) {trace.Events.Add("second");Assert.NotSame(trace.FirstState,state);if(trace.Mode=="handled") state.SetHandled(81);if(trace.Mode=="sync-handler") throw trace.Secondary;return trace.Mode=="async-handler" ? Task.FromException(trace.Secondary) : Task.CompletedTask;}}
 public sealed class BaseExceptionHandler : IRequestExceptionHandler<ExceptionQuery,int,Exception>
 {
     private readonly ExceptionTrace trace;
+#pragma warning disable CA2201 // Deliberate fault: the base-typed handler must not be resolved eagerly when a more specific handler handles the exception.
     public BaseExceptionHandler(ExceptionTrace trace) {if(trace.Mode=="handled") throw new Exception("base resolved eagerly");this.trace=trace;}
-    public Task Handle(ExceptionQuery q,Exception e,RequestExceptionHandlerState<int> state,CancellationToken ct) {trace.Events.Add("base");return Task.CompletedTask;}
+#pragma warning restore CA2201
+    public Task Handle(ExceptionQuery q,Exception e,RequestExceptionHandlerState<int> state,CancellationToken cancellationToken) {trace.Events.Add("base");return Task.CompletedTask;}
 }
-public sealed class ExceptionAction(ExceptionTrace trace) : IRequestExceptionAction<ExceptionQuery,InvalidOperationException> {public Task Execute(ExceptionQuery q,InvalidOperationException e,CancellationToken ct) {trace.Events.Add("action");if(trace.Mode=="sync-action") throw trace.Secondary;return trace.Mode=="async-action" ? Task.FromException(trace.Secondary) : Task.CompletedTask;}}
+public sealed class ExceptionAction(ExceptionTrace trace) : IRequestExceptionAction<ExceptionQuery,InvalidOperationException> {public Task Execute(ExceptionQuery q,InvalidOperationException e,CancellationToken cancellationToken) {trace.Events.Add("action");if(trace.Mode=="sync-action") throw trace.Secondary;return trace.Mode=="async-action" ? Task.FromException(trace.Secondary) : Task.CompletedTask;}}
 [GenerateMediatorRegistry(typeof(ExceptionQueryHandler),ExceptionHandlerTypes=new[]{typeof(DeclineExceptionHandler),typeof(SecondExceptionHandler),typeof(BaseExceptionHandler)},ExceptionActionTypes=new[]{typeof(ExceptionAction)})] public partial class ExceptionRegistry;
 
-public sealed class ExtraTraceBehavior(PipelineTrace trace) : IPipelineBehavior<PipelineQuery,int> { public Task<int> Handle(PipelineQuery q,RequestHandlerDelegate<int> next,CancellationToken ct) {trace.Events.Add("extra");return next();} }
+public sealed class ExtraTraceBehavior(PipelineTrace trace) : IPipelineBehavior<PipelineQuery,int> { public Task<int> Handle(PipelineQuery q,RequestHandlerDelegate<int> next,CancellationToken cancellationToken) {trace.Events.Add("extra");return next();} }
 
 public class GeneratedProcessorCompositionTests
 {

@@ -121,17 +121,17 @@ public sealed class CountingCache(ICacheProvider inner, Signals state) : ICacheP
 }
 public sealed class ObservedLease(RedisLeasedIdempotencyStore inner, Signals state) : ILeasedIdempotencyStore
 {
-    public Task<LeasedIdempotencyClaim> ClaimAsync(string key, Type type, CancellationToken token) { Interlocked.Increment(ref state.Claims); return inner.ClaimAsync(key, type, token); }
-    public Task<bool> RenewAsync(IdempotencyLease lease, CancellationToken token) => inner.RenewAsync(lease, token);
-    public Task ReleaseAsync(IdempotencyLease lease, CancellationToken token) => inner.ReleaseAsync(lease, token);
-    public Task<(bool Exists, object? CachedResponse)> CheckAsync(string key, CancellationToken token) => inner.CheckAsync(key, token);
-    public Task StoreAsync(string key, object response, CancellationToken token) => inner.StoreAsync(key, response, token);
-    public Task CompleteAsync(IdempotencyLease lease, object? response, CancellationToken token)
+    public Task<LeasedIdempotencyClaim> ClaimAsync(string key, Type responseType, CancellationToken ct) { Interlocked.Increment(ref state.Claims); return inner.ClaimAsync(key, responseType, ct); }
+    public Task<bool> RenewAsync(IdempotencyLease lease, CancellationToken ct) => inner.RenewAsync(lease, ct);
+    public Task ReleaseAsync(IdempotencyLease lease, CancellationToken ct) => inner.ReleaseAsync(lease, ct);
+    public Task<(bool Exists, object? CachedResponse)> CheckAsync(string key, CancellationToken ct) => inner.CheckAsync(key, ct);
+    public Task StoreAsync(string key, object response, CancellationToken ct) => inner.StoreAsync(key, response, ct);
+    public Task CompleteAsync(IdempotencyLease lease, object? response, CancellationToken ct)
     {
         Interlocked.Increment(ref state.Completions);
         if (state.CompletionFailureKind == 1) throw new IOException("secret-post-commit");
         if (state.CompletionFailureKind == 2) throw new AggregateException(new IdempotencyOutcomeUnknownException(), new IOException("secret-cleanup"));
-        return state.FailCompletion ? throw new IdempotencyOutcomeUnknownException() : inner.CompleteAsync(lease, response, token);
+        return state.FailCompletion ? throw new IdempotencyOutcomeUnknownException() : inner.CompleteAsync(lease, response, ct);
     }
 }
 public sealed class ObservedStream(WatchOrdersHandler inner, Signals state) : IStreamRequestHandler<WatchOrders, OrderEventDto>
@@ -153,7 +153,9 @@ public sealed class ObservedStream(WatchOrdersHandler inner, Signals state) : IS
             if (cancellationToken.IsCancellationRequested) Interlocked.Increment(ref state.StreamCancellations);
             if (state.GateCleanup) { state.CleanupEntered.TrySetResult(); await state.CleanupRelease.Task; }
             Interlocked.Increment(ref state.StreamDisposes); state.StreamDisposed.TrySetResult();
+#pragma warning disable CA2219 // Deliberate fault from a finally block: this stream double models a cleanup that throws, and the test asserts how that failure is reported.
             if (state.CleanupFailure) throw new IOException("secret-stream-cleanup");
+#pragma warning restore CA2219
         }
     }
 }

@@ -4,16 +4,21 @@ These execute the real PowerShell module/runner with inventory- and output-shape
 execution themselves are exercised by the runner on a matching real host, not by this file.
 """
 
+import atexit
 import json
 import os
 import platform
 import re
 import shutil
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+# Scratch fixtures live in a private temporary directory, never in the repository (artifacts/ may not exist on a clean checkout).
+SCRATCH = Path(tempfile.mkdtemp(prefix="meridian-native-aot-tests-"))
+atexit.register(shutil.rmtree, SCRATCH, ignore_errors=True)
 MODULE = ROOT / "eng/native-aot.psm1"
 RUNNER = ROOT / "eng/run-aot-smoke.ps1"
 CONSUMER = ROOT / "tests/consumers/Meridian.NativeAotConsumer"
@@ -77,7 +82,7 @@ class NativeAotRunnerTests(unittest.TestCase):
     # --- case-set proof -------------------------------------------------------------------------------------
 
     def check_output(self, text, rid="osx-arm64", framework="net10.0", exit_code=0):
-        path = ROOT / "artifacts/D4/test-output.txt"
+        path = SCRATCH / "test-output.txt"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
         return self.ps(
@@ -165,7 +170,7 @@ class NativeAotRunnerTests(unittest.TestCase):
     CLEAN_MAPS = "00400000-00500000 r-xp 00000000 08:01 1 /home/runner/work/Meridian/native/consumer\n7ffd0000-7ffd1000 rw-p 00000000 00:00 0 [stack]\n"
 
     def fake_proc(self, name, *, cpuinfo=None, maps=None, binfmt=None):
-        root = ROOT / "artifacts/D4-fix1/fake-proc" / name
+        root = SCRATCH / "fake-proc" / name
         if root.exists():
             shutil.rmtree(root)
         (root / "self").mkdir(parents=True)
@@ -227,7 +232,7 @@ class NativeAotRunnerTests(unittest.TestCase):
             ("d", elf_arm64, "elf-arm64"),
             ("e", b"not a binary at all, just text.........", "unknown"),
         ]:
-            path = ROOT / f"artifacts/D4/format-{name}.bin"
+            path = SCRATCH / f"format-{name}.bin"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
             with self.subTest(expected):
@@ -237,7 +242,7 @@ class NativeAotRunnerTests(unittest.TestCase):
     # --- warning disposition --------------------------------------------------------------------------------
 
     def warnings(self, text, rid, framework):
-        path = ROOT / "artifacts/D4/test-warnings.txt"
+        path = SCRATCH / "test-warnings.txt"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text)
         return self.json(

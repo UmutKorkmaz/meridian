@@ -2,7 +2,7 @@ namespace Meridian.Mapping.Tests;
 
 public class ReverseMapTests
 {
-    private IMapper CreateMapper(Action<IMapperConfigurationExpression> configure)
+    private static IMapper CreateMapper(Action<IMapperConfigurationExpression> configure)
     {
         var config = new MapperConfiguration(configure);
         return config.CreateMapper();
@@ -76,7 +76,8 @@ public class ReverseMapTests
             .ForPath(d => d.Address.City, o => o.MapFrom(s => s.AddressCity)));
         var result = mapper.Map<FlatPersonDest, PersonSource>(new()
         {
-            Name = "Meridian", AddressCity = "Istanbul"
+            Name = "Meridian",
+            AddressCity = "Istanbul"
         });
         Assert.Equal("override:Meridian", result.Name);
         Assert.Equal("Istanbul", result.Address.City);

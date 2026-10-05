@@ -61,8 +61,8 @@ public class CharlieBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, 
 [Collection("BehaviorOrder")]
 public class BehaviorOrderingTests
 {
-    private void ClearLog() => AlphaBehavior<OrderTestRequest, string>.Log.Clear();
-    private List<string> Log => AlphaBehavior<OrderTestRequest, string>.Log;
+    private static void ClearLog() => AlphaBehavior<OrderTestRequest, string>.Log.Clear();
+    private static List<string> Log => AlphaBehavior<OrderTestRequest, string>.Log;
 
     [Fact]
     public async Task Behaviors_With_Same_Order_Preserve_Registration_Sequence()

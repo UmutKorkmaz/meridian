@@ -64,7 +64,7 @@ public class SequenceHandler2 : INotificationHandler<SequenceNotification>
 
 public class NotificationTests
 {
-    private IMediator BuildMediator(Action<IServiceCollection>? configureServices = null)
+    private static IMediator BuildMediator(Action<IServiceCollection>? configureServices = null)
     {
         var services = new ServiceCollection();
         services.AddMeridianMediator(cfg => { });

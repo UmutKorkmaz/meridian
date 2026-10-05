@@ -6,46 +6,46 @@ public class EnhancedValidationTests
 {
     // ── Test Models (local to avoid polluting shared TestModels) ────
 
-    private class EvSourceA
+    private sealed class EvSourceA
     {
         public int Id { get; set; }
         public string Name { get; set; } = string.Empty;
     }
 
-    private class EvDestA
+    private sealed class EvDestA
     {
         public int Id { get; set; }
         public string Name { get; set; } = string.Empty;
     }
 
     // Type mismatch: source has DateTime, dest has int
-    private class EvTypeMismatchSource
+    private sealed class EvTypeMismatchSource
     {
         public int Id { get; set; }
         public DateTime Value { get; set; }
     }
 
-    private class EvTypeMismatchDest
+    private sealed class EvTypeMismatchDest
     {
         public int Id { get; set; }
         public int Value { get; set; }
     }
 
     // Type mismatch with non-convertible types
-    private class EvNonConvertibleSource
+    private sealed class EvNonConvertibleSource
     {
         public int Id { get; set; }
         public EvSourceA Nested { get; set; } = new();
     }
 
-    private class EvNonConvertibleDest
+    private sealed class EvNonConvertibleDest
     {
         public int Id { get; set; }
         public string Nested { get; set; } = string.Empty; // EvSourceA → string with no map
     }
 
     // Constructor-only dest (no default ctor)
-    private class EvCtorOnlyDest
+    private sealed class EvCtorOnlyDest
     {
         public int Id { get; }
         public string Label { get; }
@@ -59,13 +59,13 @@ public class EnhancedValidationTests
         }
     }
 
-    private class EvCtorSource
+    private sealed class EvCtorSource
     {
         public int Id { get; set; }
         // No Label or Score — should warn about missing ctor params
     }
 
-    private class EvCtorMatchingSource
+    private sealed class EvCtorMatchingSource
     {
         public int Id { get; set; }
         public string Label { get; set; } = string.Empty;
@@ -73,25 +73,25 @@ public class EnhancedValidationTests
     }
 
     // Self-referencing (circular) model
-    private class EvTreeSource
+    private sealed class EvTreeSource
     {
         public string Value { get; set; } = string.Empty;
         public EvTreeSource? Parent { get; set; }
     }
 
-    private class EvTreeDest
+    private sealed class EvTreeDest
     {
         public string Value { get; set; } = string.Empty;
         public EvTreeDest? Parent { get; set; }
     }
 
     // Model with extra dest members (to create an error)
-    private class EvExtraDestSource
+    private sealed class EvExtraDestSource
     {
         public int Id { get; set; }
     }
 
-    private class EvExtraDestDest
+    private sealed class EvExtraDestDest
     {
         public int Id { get; set; }
         public string Extra { get; set; } = string.Empty;
@@ -114,8 +114,8 @@ public class EnhancedValidationTests
         config.AssertConfigurationIsValid();
 
         var maps = config.GetAllTypeMaps();
-        Assert.Single(maps.Where(m =>
-            m.SourceType == typeof(EvSourceA) && m.DestinationType == typeof(EvDestA)));
+        Assert.Single(maps, m =>
+            m.SourceType == typeof(EvSourceA) && m.DestinationType == typeof(EvDestA));
     }
 
     // ── 2. Type Mismatch Warnings (don't throw alone) ──────────────

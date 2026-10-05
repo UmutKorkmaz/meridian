@@ -4,8 +4,8 @@ using Meridian.Mediator.Extensions;
 using Meridian.Mediator.FluentValidation;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Localization;
-using MValidator = Meridian.Mediator.Behaviors.IValidator<Meridian.Mediator.FluentValidation.Tests.AdapterTests.Request>;
 using MValidationException = Meridian.Mediator.Behaviors.ValidationException;
+using MValidator = Meridian.Mediator.Behaviors.IValidator<Meridian.Mediator.FluentValidation.Tests.AdapterTests.Request>;
 
 namespace Meridian.Mediator.FluentValidation.Tests;
 

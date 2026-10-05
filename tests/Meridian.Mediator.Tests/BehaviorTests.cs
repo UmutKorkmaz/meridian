@@ -93,6 +93,7 @@ public class FakeTransactionScope : ITransactionScope
     public ValueTask DisposeAsync()
     {
         Disposed = true;
+        GC.SuppressFinalize(this);
         return ValueTask.CompletedTask;
     }
 }
@@ -247,7 +248,7 @@ public class FakeMediatorLogger : IMediatorLogger
 
     public void LogInformation(string message, params object[] args)
     {
-        InformationMessages.Add(string.Format(message.Replace("{", "{{").Replace("}", "}}"), args.Length > 0 ? args : Array.Empty<object>()).Replace("{{", "{").Replace("}}", "}"));
+        InformationMessages.Add(string.Format(System.Globalization.CultureInfo.InvariantCulture, message.Replace("{", "{{").Replace("}", "}}"), args.Length > 0 ? args : Array.Empty<object>()).Replace("{{", "{").Replace("}}", "}"));
         // Store the template for easier assertion
         InformationMessages[^1] = FormatMessage(message, args);
     }

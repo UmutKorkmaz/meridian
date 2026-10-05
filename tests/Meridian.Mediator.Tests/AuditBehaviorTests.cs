@@ -15,7 +15,7 @@ public class AuditBehaviorTests
 
     public sealed class AuditPingHandler : IRequestHandler<AuditPing, AuditPong>
     {
-        public Task<AuditPong> Handle(AuditPing r, CancellationToken ct) =>
+        public Task<AuditPong> Handle(AuditPing r, CancellationToken cancellationToken) =>
             Task.FromResult(new AuditPong(r.Value + 1));
     }
 
@@ -23,7 +23,7 @@ public class AuditBehaviorTests
 
     public sealed class FailingPingHandler : IRequestHandler<FailingPing, Unit>
     {
-        public Task<Unit> Handle(FailingPing r, CancellationToken ct) =>
+        public Task<Unit> Handle(FailingPing r, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("intentional");
     }
 

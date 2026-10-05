@@ -64,8 +64,8 @@ public sealed class GeneratorIncrementalityTests(ITestOutputHelper output)
         driver = Run(driver, compilation.ReplaceSyntaxTree(compilation.SyntaxTrees.First(),
             Parse(Fixture.Replace("public int Id {", "public int Extra { get; set; } public int Id {"), "Input0.cs")));
         var after = Sources(driver);
-        Assert.NotEqual(before.Single(x => x.Hint.StartsWith("Example.")).Text, after.Single(x => x.Hint.StartsWith("Example.")).Text);
-        Assert.Equal(before.Single(x => x.Hint.StartsWith("Other.")), after.Single(x => x.Hint.StartsWith("Other.")));
+        Assert.NotEqual(before.Single(x => x.Hint.StartsWith("Example.", StringComparison.Ordinal)).Text, after.Single(x => x.Hint.StartsWith("Example.", StringComparison.Ordinal)).Text);
+        Assert.Equal(before.Single(x => x.Hint.StartsWith("Other.", StringComparison.Ordinal)), after.Single(x => x.Hint.StartsWith("Other.", StringComparison.Ordinal)));
         var reasons = OutputReasons(driver);
         Assert.Contains(IncrementalStepRunReason.Cached, reasons);
         Assert.Contains(IncrementalStepRunReason.Modified, reasons);
@@ -187,13 +187,13 @@ public sealed class GeneratorIncrementalityTests(ITestOutputHelper output)
         Assert.DoesNotContain(diagnostics.Concat(updated.GetDiagnostics()), x => x.Severity == DiagnosticSeverity.Error);
         var result = new GeneratorCompilationResult((CSharpCompilation)updated, diagnostics,
             string.Join(Environment.NewLine, Sources(driver).Select(x => x.Text)));
-        Assert.Equal(42, Convert.ToInt32(GeneratorTestHarness.InvokeStatic<object>(result, "Example.Maps", "Proof")));
+        Assert.Equal(42, Convert.ToInt32(GeneratorTestHarness.InvokeStatic<object>(result, "Example.Maps", "Proof"), System.Globalization.CultureInfo.InvariantCulture));
         foreach (var step in driver.GetRunResult().Results.Single().TrackedSteps)
             output.WriteLine($"{step.Key}: {string.Join(", ", step.Value.SelectMany(x => x.Outputs).Select(x => x.Reason))}");
         return driver;
     }
 
-    private void AssertCached(GeneratorDriver driver) => Assert.All(OutputReasons(driver), reason => Assert.Equal(IncrementalStepRunReason.Cached, reason));
+    private static void AssertCached(GeneratorDriver driver) => Assert.All(OutputReasons(driver), reason => Assert.Equal(IncrementalStepRunReason.Cached, reason));
 
     private static IncrementalStepRunReason[] OutputReasons(GeneratorDriver driver) =>
         driver.GetRunResult().Results.Single().TrackedOutputSteps["SourceOutput"]

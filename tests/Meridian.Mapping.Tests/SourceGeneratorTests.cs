@@ -233,8 +233,8 @@ namespace Meridian.Mapping.Tests
             Assert.Empty(result.Compilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error));
             var diagnostic = Assert.Single(result.Diagnostics.Where(d => d.Id == "MERIDIANGEN003"));
             Assert.Equal(DiagnosticSeverity.Error, diagnostic.Severity);
-            Assert.Contains(reason, diagnostic.GetMessage());
-            Assert.Contains("runtime IMapper", diagnostic.GetMessage());
+            Assert.Contains(reason, diagnostic.GetMessage(System.Globalization.CultureInfo.InvariantCulture));
+            Assert.Contains("runtime IMapper", diagnostic.GetMessage(System.Globalization.CultureInfo.InvariantCulture));
             Assert.True(diagnostic.Location.IsInSource);
             Assert.DoesNotContain(" MapToDto(", result.GeneratedSource);
             Assert.Contains(" MapToGoodDto(", result.GeneratedSource);
@@ -263,7 +263,7 @@ namespace Meridian.Mapping.Tests
                 """);
             Assert.Empty(result.Compilation.GetDiagnostics().Where(d => d.Severity == DiagnosticSeverity.Error));
             var diagnostic = Assert.Single(result.Diagnostics.Where(d => d.Id == "MERIDIANGEN003"));
-            Assert.Contains("no accessible unambiguous constructor", diagnostic.GetMessage());
+            Assert.Contains("no accessible unambiguous constructor", diagnostic.GetMessage(System.Globalization.CultureInfo.InvariantCulture));
             Assert.DoesNotContain(" MapToDto(", result.GeneratedSource);
             Assert.Contains(" MapToGoodDto(", result.GeneratedSource);
             Assert.Equal(42, GeneratorTestHarness.InvokeStatic<int>(result, "Maps", "Proof"));
@@ -681,7 +681,7 @@ namespace Meridian.Mapping.Tests
                 .ToList();
 
             var diagnostic = Assert.Single(diagnostics);
-            Assert.Contains("non-partial containing type 'Demo.Outer'", diagnostic.GetMessage());
+            Assert.Contains("non-partial containing type 'Demo.Outer'", diagnostic.GetMessage(System.Globalization.CultureInfo.InvariantCulture));
             Assert.DoesNotContain(
                 runResult.Results.SelectMany(result => result.GeneratedSources),
                 generated => generated.HintName.Contains("NestedGeneratedMappers.Meridian.g.cs", StringComparison.Ordinal));

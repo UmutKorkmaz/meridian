@@ -1,8 +1,8 @@
+using System.Runtime.CompilerServices;
 using Meridian.Mediator;
 using Meridian.Mediator.Extensions;
 using Meridian.Mediator.Streaming;
 using Microsoft.Extensions.DependencyInjection;
-using System.Runtime.CompilerServices;
 
 namespace Meridian.Mediator.Tests;
 
@@ -41,7 +41,7 @@ public class SlowStreamHandler : IStreamRequestHandler<SlowStream, string>
 
 public class StreamingTests
 {
-    private Meridian.Mediator.Mediator BuildMediator()
+    private static Meridian.Mediator.Mediator BuildMediator()
     {
         var services = new ServiceCollection();
         services.AddMeridianMediator(cfg => { });

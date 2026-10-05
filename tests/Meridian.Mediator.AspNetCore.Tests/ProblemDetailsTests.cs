@@ -52,7 +52,7 @@ public sealed class ProblemDetailsTests
     {
         var services = Services(); var count = services.Count;
         Assert.Same(services, services.AddMeridianProblemDetails()); Assert.Equal(count, services.Count);
-        Assert.Single(services.Where(x => x.ServiceType == typeof(IExceptionHandler)));
+        Assert.Single(services, x => x.ServiceType == typeof(IExceptionHandler));
         Assert.Equal(ServiceLifetime.Singleton, services.Single(x => x.ServiceType == typeof(IExceptionHandler)).Lifetime);
         Assert.Throws<ArgumentNullException>(() => MeridianHttpExtensions.AddMeridianProblemDetails(null!));
     }
@@ -95,7 +95,9 @@ public sealed class ProblemDetailsTests
     public async Task Unsafe_Request_Identifier_Is_Replaced(string id)
     {
         await using var provider = Services().BuildServiceProvider(); var context = Context(provider); context.TraceIdentifier = id;
+#pragma warning disable CA2201 // Deliberately the base Exception type: an unclassified failure must be reported as an internal error without its message.
         await provider.GetRequiredService<MeridianExceptionHandler>().TryHandleAsync(context, new Exception("secret-value"), default);
+#pragma warning restore CA2201
         using var json = JsonDocument.Parse(Body(context)); var safe = json.RootElement.GetProperty("correlationId").GetString();
         Assert.Equal(32, safe!.Length); Assert.Equal(context.Response.Headers["X-Correlation-ID"].ToString(), safe);
     }
