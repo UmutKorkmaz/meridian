@@ -1,30 +1,90 @@
 Meridian Third-Party Notices
 Copyright (c) 2026 Meridian Contributors
 
-This repository includes two NuGet packages:
+This repository includes these NuGet packages:
 - Meridian.Mapping
 - Meridian.Mediator
+- Meridian.Mediator.AspNetCore
+- Meridian.Mediator.Caching
+- Meridian.Mediator.EntityFrameworkCore
+- Meridian.Mediator.FluentValidation
+- Meridian.Mediator.Generators
+- Meridian.Mediator.Redis
 
 The Meridian source code is licensed under the MIT License. See the LICENSE
 file in the repository root for the full license text.
 
 This notice lists the direct third-party package dependencies declared in the
-package project files at the time of publication. Transitive dependencies are
-not exhaustively listed here and may vary by target framework, SDK, or package
-resolution at restore time.
+package project files at the time of publication, with the license each one
+declares in its own package metadata (the NuGet license expression read from
+the restored package). Transitive dependencies are not exhaustively listed here
+and may vary by target framework, SDK, or package resolution at restore time.
 
 Direct package dependencies
 
 Meridian.Mapping
 - Microsoft.Extensions.DependencyInjection.Abstractions 10.0.9 (MIT)
 
-Meridian.Mapping also ships Meridian.Mapping.Generators as a compile-time
-analyzer (not a runtime dependency of consuming applications).
-
 Meridian.Mediator
 - Microsoft.Extensions.DependencyInjection.Abstractions 10.0.9 (MIT)
 - Microsoft.Extensions.Logging.Abstractions 10.0.9 (MIT)
 - Microsoft.Extensions.Localization.Abstractions 10.0.9 (MIT)
+
+Meridian.Mediator.Caching
+- Microsoft.Extensions.Caching.Memory 10.0.9 (MIT)
+
+Meridian.Mediator.EntityFrameworkCore
+- Microsoft.EntityFrameworkCore.Relational 8.0.20 (MIT)
+
+Meridian.Mediator.FluentValidation
+- FluentValidation 12.1.1 (Apache-2.0)
+- FluentValidation.DependencyInjectionExtensions 12.1.1 (Apache-2.0)
+- Microsoft.Extensions.DependencyInjection.Abstractions 10.0.9 (MIT)
+
+Meridian.Mediator.Redis
+- StackExchange.Redis 2.7.27 (MIT)
+
+Meridian.Mediator.AspNetCore uses the Microsoft.AspNetCore.App shared framework
+that the consuming application already references and declares no additional
+package dependency. Meridian.Mediator.Generators declares none. The packages
+above also depend on other Meridian packages, which are covered by the Meridian
+MIT License.
+
+Compile-time analyzers shipped inside packages
+
+Meridian.Mapping also ships Meridian.Mapping.Generators, and
+Meridian.Mediator.Generators ships its own generator assembly, as compile-time
+analyzers (not runtime dependencies of consuming applications). Each package
+contains only that compiled assembly under analyzers/dotnet/cs plus the Meridian
+LICENSE and README; no third-party assembly is embedded in or copied into any
+Meridian package.
+
+Build-time tooling that is NOT distributed
+
+The two generator projects are built against private build-time packages
+(PrivateAssets=all): Microsoft.CodeAnalysis.CSharp 4.8.0,
+Microsoft.CodeAnalysis.Analyzers 5.3.0 and NETStandard.Library 2.0.3 with their
+transitive closure. They are restored on the machine that builds a package and
+are neither dependencies of, nor files inside, any Meridian package. The pack
+evidence records them separately for every candidate (scope
+private-analyzer-build).
+
+Six packages in that private closure carry no modern nuspec license field, only
+a legacy license URL, so their license is recorded from the license text
+embedded in each package archive rather than inferred:
+- NETStandard.Library 2.0.3, System.Buffers 4.5.1, System.Memory 4.5.5,
+  System.Numerics.Vectors 4.4.0 and System.Threading.Tasks.Extensions 4.5.4:
+  the embedded text is the MIT License.
+- Microsoft.NETCore.Platforms 1.1.0: the embedded text is the "MICROSOFT
+  SOFTWARE LICENSE TERMS, MICROSOFT .NET LIBRARY" agreement. These are NOT the
+  MIT License. The package is a runtime-identifier catalog (runtime.json) with
+  no assembly. It is used only while building the generators and nothing from it
+  is included in any Meridian package. Anyone who redistributes a build
+  environment, container image or restored package cache that contains this
+  package takes on its terms separately; Meridian does not relicense it.
+
+Archive and license-text SHA-256 values and the full disposition are recorded in
+docs/package-compatibility.md ("Dependency licenses and build-time tooling").
 
 Upstream packages remain subject to their own license terms, notices, and
 attribution requirements. Consumers should review the licenses of all direct
