@@ -7,6 +7,12 @@ self-check recorded**. Publishing alone, compiling, archive inspection, emulatio
 
 Run date of the evidence below: 2026-10-04 (fix round 2 re-run). Candidate packages `2.1.4-d4fix2.20261004.1` (local feed, never published). Evidence receipts are under `artifacts/D4-fix2/final/`.
 
+The `artifacts/` paths on this page are **local receipts** on the machine that ran the gate; `artifacts/` is ignored by
+Git and is not part of the repository. The durable form of this evidence is the CI artifact `native-aot-<rid>-<tfm>`
+produced by the `native-aot` job once it runs on real runners. Later tasks re-ran the osx-arm64 rows from their own
+packed candidates with the same result: D5 (`2.1.4-d5fix1.20261004.1`, net8.0/net9.0/net10.0, 12/12 cases each,
+including an enabled-metrics sub-check) and B8 (`2.1.4-b8fix1.20261005.1`, net10.0 Combined and MappingOnly).
+
 ## Supported-configuration table
 
 | RID | TFM | SDK (pinned) | C# compiler | Native runtime | Combined mediator + mapping | Mapping-only | ILC/trim/AOT warnings | Status |
@@ -24,7 +30,7 @@ Run date of the evidence below: 2026-10-04 (fix round 2 re-run). Candidate packa
   `artifacts/D4-fix2/final/aot-combined/2.1.4-d4fix2.20261004.1/combined-<tfm>-<sdk>-osx-arm64-*/` (`native-result.json`,
   `warnings.json`, `restore-receipt.json`, `generated-sources.json`, `fixture-hashes.json`, `toolchain.json`,
   `publish.log`, `publish.binlog`, `execute.log`) and `artifacts/D4-fix2/final/aot-mapping/...` for the unchanged mapping-only runs.
-* **linux-x64 is PENDING, not PASS, and D4 is not fully accepted until these three rows are filled.** The development
+* **linux-x64 is PENDING, not PASS.** D4 was accepted with these three rows recorded as PENDING; they stay PENDING until real runs fill them. The development
   machine is Apple Silicon with an aarch64 Docker daemon; there is no linux-x64 runner. The CI jobs `native-aot-pack`
   and `native-aot` in `.github/workflows/ci.yml` build the three linux-x64 rows on `ubuntu-24.04` and the three
   osx-arm64 rows on `macos-14` from one immutable feed artifact. They have not run on a real runner yet. To close the
@@ -101,10 +107,15 @@ localizers, telemetry exporters, collectible/unloadable contexts, arbitrary cont
 On a runtime that supports dynamic code (ordinary JIT runtimes) none of these guards
 trigger and legacy behavior, defaults and constructors are unchanged.
 
+The guards test `RuntimeFeature.IsDynamicCodeSupported`, which is also false on runtimes other than ILCompiler Native
+AOT (for example Mono full AOT on iOS). Those runtimes take the same non-reflective branches, but none of them has been
+executed: they are unverified and carry no claim.
+
 ## The narrow core changes behind the native rows
 
 Publishing the packaged consumer before any change failed in ILCompiler with these reachable sites (kept in
-`artifacts/D4/red.log`): `Mediator.cs` 232/264/268/271/277/284/298 (IL3050, IL2055, IL2067, IL2070: the legacy wrapper
+`artifacts/D4/red.log`; this RED publish was captured on net10.0 only, and net8.0/net9.0 were first published after the
+fix): `Mediator.cs` 232/264/268/271/277/284/298 (IL3050, IL2055, IL2067, IL2070: the legacy wrapper
 factory), `ServiceCollectionExtensions.cs` 47/142/152/167/188/199/204/208/214/236 and `GeneratedMediatorRegistration.cs`
 299 (IL2026, IL2067, IL2070, IL2072, IL2075: assembly scanning and `Type`-based descriptors), and
 `MeridianMediatorConfiguration.cs` 478 (IL2070: open behavior validation).

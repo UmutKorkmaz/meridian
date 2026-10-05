@@ -1,0 +1,53 @@
+{
+  "$schema": "https://raw.githubusercontent.com/dotnet/docfx/main/schemas/docfx.schema.json",
+  "_comment": "Source template only. eng/verify-docs.ps1 writes the effective run-local config: it points metadata at the inspected candidate lib/net8.0 DLL+XML pairs and their resolved dependency references, and sends all output under artifacts/docs. Generated output is never committed.",
+  "metadata": [
+    {
+      "src": [
+        {
+          "src": "../artifacts/docs/api-input/net8.0",
+          "files": [ "*.dll" ]
+        }
+      ],
+      "dest": "api",
+      "references": [],
+      "disableGitFeatures": true
+    }
+  ],
+  "build": {
+    "content": [
+      {
+        "files": [
+          "index.md",
+          "toc.yml",
+          "capabilities.md",
+          "migrate-from-automapper.md",
+          "migrate-from-mediatr.md",
+          "generated-mapping.md",
+          "generated-mapping-contract.md",
+          "source-gen-guide.md",
+          "integrations.md",
+          "mediator-metrics.md",
+          "native-aot.md",
+          "projection-providers.md",
+          "compatibility-policy.md",
+          "package-compatibility.md",
+          "security-model.md"
+        ]
+      },
+      {
+        "files": [ "api/*.yml" ]
+      }
+    ],
+    "template": [ "default", "modern" ],
+    "globalMetadata": {
+      "_appTitle": "Meridian",
+      "_appName": "Meridian",
+      "_enableSearch": true,
+      "_disableContribution": true,
+      "_appFooter": "Meridian documentation generated locally from a packed candidate. Not a published release."
+    },
+    "disableGitFeatures": true,
+    "output": "../artifacts/docs/site"
+  }
+}

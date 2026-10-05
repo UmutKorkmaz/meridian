@@ -36,6 +36,9 @@ public sealed class LocalizedValidationBehavior<TRequest, TResponse> : IPipeline
     private readonly IStringLocalizer<TRequest> _localizer;
     private readonly MediatorMetrics _metrics;
 
+    /// <summary>Initializes a new instance without metrics.</summary>
+    /// <param name="validators">The validators for the request type.</param>
+    /// <param name="localizer">The localizer for the request type.</param>
     public LocalizedValidationBehavior(
         IEnumerable<IValidator<TRequest>> validators,
         IStringLocalizer<TRequest> localizer)
@@ -60,6 +63,7 @@ public sealed class LocalizedValidationBehavior<TRequest, TResponse> : IPipeline
         _metrics = metrics ?? MediatorMetrics.Disabled;
     }
 
+    /// <inheritdoc/>
     public async Task<TResponse> Handle(
         TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken cancellationToken)
     {

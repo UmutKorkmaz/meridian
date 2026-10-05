@@ -7,7 +7,7 @@ namespace Meridian.Mediator.Extensions;
 
 /// <summary>
 /// Provides handler registration validation for the Meridian Mediator.
-/// Call <see cref="AssertHandlerRegistration"/> at application startup to detect
+/// Call <c>AssertHandlerRegistration</c> at application startup to detect
 /// missing or duplicate handler registrations before runtime errors occur.
 /// </summary>
 public static class MediatorHandlerValidation

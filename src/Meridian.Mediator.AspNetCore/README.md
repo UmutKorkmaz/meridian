@@ -2,6 +2,7 @@
 
 Optional .NET 8/9/10 integration with only Meridian.Mediator and the ASP.NET Core shared framework. No EF, Redis, FluentValidation, Mapping or OpenAPI dependency is added to this package or either core library.
 
+<!-- illustrative: configuration fragment, not compiled as shown, runnable equivalent in the packaged consumer; fixture: tests/consumers/Meridian.HttpConsumer/Program.cs -->
 ```csharp
 builder.Services.AddMeridianProblemDetails();
 // Authentication, status-code integration and full-request correlation are application responsibilities.

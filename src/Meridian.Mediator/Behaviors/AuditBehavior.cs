@@ -38,6 +38,10 @@ public sealed record AuditEntry(
 /// </remarks>
 public interface IAuditSink
 {
+    /// <summary>Records one completed audit entry.</summary>
+    /// <param name="entry">The redacted audit record.</param>
+    /// <param name="cancellationToken">Cancellation for the sink operation.</param>
+    /// <returns>A task that completes when the sink has accepted the record.</returns>
     Task RecordAsync(AuditEntry entry, CancellationToken cancellationToken);
 }
 
@@ -52,11 +56,14 @@ public sealed class LoggerAuditSink : IAuditSink
 {
     private readonly ILogger<LoggerAuditSink> _logger;
 
+    /// <summary>Creates a sink that writes audit entries to <paramref name="logger"/>.</summary>
+    /// <param name="logger">The destination logger.</param>
     public LoggerAuditSink(ILogger<LoggerAuditSink> logger)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
+    /// <inheritdoc/>
     public Task RecordAsync(AuditEntry entry, CancellationToken cancellationToken)
     {
         if (entry.Success)
@@ -108,17 +115,23 @@ public sealed class AuditBehavior<TRequest, TResponse> : IPipelineBehavior<TRequ
     private readonly IAuditSink _sink;
     private readonly MediatorTelemetryOptions _telemetryOptions;
 
+    /// <summary>Creates the behavior with privacy-preserving default telemetry options.</summary>
+    /// <param name="sink">The audit destination.</param>
     public AuditBehavior(IAuditSink sink)
         : this(sink, MediatorTelemetryOptions.Default)
     {
     }
 
+    /// <summary>Creates the behavior with explicit telemetry options.</summary>
+    /// <param name="sink">The audit destination.</param>
+    /// <param name="telemetryOptions">Controls whether failure messages are recorded.</param>
     public AuditBehavior(IAuditSink sink, MediatorTelemetryOptions telemetryOptions)
     {
         _sink = sink ?? throw new ArgumentNullException(nameof(sink));
         _telemetryOptions = telemetryOptions ?? throw new ArgumentNullException(nameof(telemetryOptions));
     }
 
+    /// <inheritdoc/>
     public async Task<TResponse> Handle(
         TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken cancellationToken)
     {

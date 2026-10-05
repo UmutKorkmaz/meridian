@@ -4,6 +4,7 @@ Optional memory caching for Meridian Mediator on .NET 8, 9 and 10. The package u
 Microsoft.Extensions.Caching.Memory 10.0.9 (MIT). Core Meridian packages do not
 acquire a memory backend dependency.
 
+<!-- illustrative: configuration fragment, not compiled as shown, runnable equivalent in the packaged consumer; fixture: tests/consumers/Meridian.CachingConsumer/Program.cs -->
 ```csharp
 using Meridian.Mediator.Behaviors;
 using Meridian.Mediator.Caching;
@@ -86,6 +87,7 @@ our provider tests is a test-only dependency. Register every local response type
 explicitly with stable contract IDs, positive schemas, and metadata that supports
 source-generated deserialization:
 
+<!-- illustrative: configuration fragment, not compiled as shown, runnable equivalent in the packaged consumer; fixture: tests/consumers/Meridian.CachingConsumer/Program.cs -->
 ```csharp
 using System.Text.Json.Serialization;
 
@@ -142,6 +144,7 @@ data and provides no fencing guarantee.
 
 Opt into authenticated partitioning explicitly:
 
+<!-- illustrative: configuration fragment, not compiled as shown, runnable equivalent in the packaged consumer; fixture: tests/consumers/Meridian.CachingConsumer/Program.cs -->
 ```csharp
 services.AddMeridianCacheScope<AuthenticatedPartition>();
 // Either memory or distributed registration may precede/follow this call.

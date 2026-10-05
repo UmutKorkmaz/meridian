@@ -1,13 +1,19 @@
 # Mediator metrics
 
 `Meridian.Mediator` can publish bounded, privacy-preserving metrics through a standard
-`System.Diagnostics.Metrics.Meter`. Metrics are **opt-in**: with the default options a provider creates no meter,
-no instruments and no type table, and every send, publish and stream takes exactly the code path it had before.
+`System.Diagnostics.Metrics.Meter`. Metrics are **opt-in**: with the default options a provider creates no meter
+and no instruments, and every send and publish, and every stream that is not observed, takes the code path it had
+before. A stream is observed when stream metrics are enabled with a listener **or** an `Activity` listener is
+attached: such a stream is wrapped in an observing enumerator even when metrics are disabled (a small extra
+allocation per stream), and if both its enumeration and its cleanup fail it throws an `AggregateException` (see
+[Cost and failure behavior](#cost-and-failure-behavior)). The known-type snapshot taken by `AddMeridianMediator` is
+retained even while metrics are disabled.
 Meridian never installs an exporter, a hosting dependency or a periodic monitor; the application attaches its own
 listener (OpenTelemetry, `dotnet-counters`, `MeterListener`).
 
 ## Enabling
 
+<!-- snippet: mediator-metrics -->
 ```csharp
 services.AddMeridianMediator(cfg =>
 {
@@ -21,7 +27,7 @@ An application can instead register a `MediatorMetricsOptions` singleton, exactl
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `Enabled` | `false` | Creates the `Meridian.Mediator` meter and its instruments for this provider. |
-| `MaximumRequestTypes` | `100` | Distinct message types that receive their own `request.type` value per provider. `0` means overflow only; a negative value is a startup error. |
+| `MaximumRequestTypes` | `100` | Distinct message types that receive their own `request.type` value per provider. `0` means overflow only. A negative value throws when the provider creates its metrics component (on the first `IMediator` resolution, even with `Enabled = false`), not when `AddMeridianMediator` is called. |
 
 The options are an immutable snapshot read once when the provider-owned `MediatorMetrics` component is created.
 The component is created once per root provider, shared by its scopes, and disposed with the provider. Two providers
@@ -123,4 +129,10 @@ only `Activity` data, defaults to `false`, and cannot add metric tags.
   primary first. A single failure keeps its identity and stack. A stream that is not observed is returned exactly as
   the handler produced it.
 
-See `benchmarks/Meridian.Benchmarks/README.md` for the measured hot-path comparison.
+## Performance status
+
+The overhead comparison in `benchmarks/Meridian.Benchmarks/README.md` was measured on a busy, non-dedicated developer
+host. Its allocation figures are exact; its timings are **not** accepted performance evidence. Metrics performance
+acceptance is PENDING/INCONCLUSIVE until the benchmark task (E3) re-measures it on a dedicated host. The
+documentation consumer asserts the enabled example above records exactly one `meridian.mediator.request.count`
+measurement with `outcome=success` and the bounded `request.type` tag.

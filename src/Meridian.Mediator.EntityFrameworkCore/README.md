@@ -2,6 +2,7 @@
 
 Register the same scoped context used by the handler, then opt into the transaction behavior:
 
+<!-- illustrative: configuration fragment, not compiled as shown, runnable equivalent in the packaged consumer; fixture: tests/consumers/Meridian.EfTransactionsConsumer/Program.cs -->
 ```csharp
 services.AddDbContext<AppDbContext>(options => options.UseNpgsql(connectionString));
 services.AddMeridianEfCoreTransactions<AppDbContext>();

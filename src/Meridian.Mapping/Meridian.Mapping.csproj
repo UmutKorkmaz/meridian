@@ -3,6 +3,8 @@
   <PropertyGroup>
     <IsPackable>true</IsPackable>
     <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+    <!-- XML reference docs ship beside each runtime assembly (Directory.Build.targets runs after the SDK computes DocumentationFile). -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <RootNamespace>Meridian.Mapping</RootNamespace>
     <AssemblyName>Meridian.Mapping</AssemblyName>
     <PackageId>Meridian.Mapping</PackageId>

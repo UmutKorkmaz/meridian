@@ -9,13 +9,63 @@ public interface IGeneratedMediatorContributions
     bool IncludesStandardPipeline { get; }
 }
 /// <summary>Contribution service category.</summary>
-public enum GeneratedMediatorCategory { RequestHandler, NotificationHandler, StreamHandler, Behavior, StreamBehavior, Validator, PreProcessor, PostProcessor, ExceptionHandler, ExceptionAction, Infrastructure }
+public enum GeneratedMediatorCategory
+{
+    /// <summary>An <c>IRequestHandler</c> registration.</summary>
+    RequestHandler,
+    /// <summary>An <c>INotificationHandler</c> registration.</summary>
+    NotificationHandler,
+    /// <summary>An <c>IStreamRequestHandler</c> registration.</summary>
+    StreamHandler,
+    /// <summary>An <c>IPipelineBehavior</c> registration.</summary>
+    Behavior,
+    /// <summary>An <c>IStreamPipelineBehavior</c> registration.</summary>
+    StreamBehavior,
+    /// <summary>A validator registration.</summary>
+    Validator,
+    /// <summary>An <c>IRequestPreProcessor</c> registration.</summary>
+    PreProcessor,
+    /// <summary>An <c>IRequestPostProcessor</c> registration.</summary>
+    PostProcessor,
+    /// <summary>An <c>IRequestExceptionHandler</c> registration.</summary>
+    ExceptionHandler,
+    /// <summary>An <c>IRequestExceptionAction</c> registration.</summary>
+    ExceptionAction,
+    /// <summary>Supporting infrastructure required by a generated contribution.</summary>
+    Infrastructure,
+}
 /// <summary>Registration phase; later dispatch stages normalize pipeline ordering.</summary>
-public enum GeneratedMediatorPhase { Handler, Request, AutomaticProcessor, ClosedStream, OpenStream }
+public enum GeneratedMediatorPhase
+{
+    /// <summary>Handler registration.</summary>
+    Handler,
+    /// <summary>Request pipeline contribution.</summary>
+    Request,
+    /// <summary>Automatically composed pre/post-processor driver.</summary>
+    AutomaticProcessor,
+    /// <summary>Closed stream pipeline contribution.</summary>
+    ClosedStream,
+    /// <summary>Open stream pipeline contribution.</summary>
+    OpenStream,
+}
 /// <summary>Factory lifetime policy.</summary>
-public enum GeneratedMediatorLifetime { HandlerLifetime, Transient, Singleton }
+public enum GeneratedMediatorLifetime
+{
+    /// <summary>Uses the configured mediator handler lifetime.</summary>
+    HandlerLifetime,
+    /// <summary>Always transient.</summary>
+    Transient,
+    /// <summary>Always singleton.</summary>
+    Singleton,
+}
 /// <summary>Whether a contribution is declared or dormant standard metadata.</summary>
-public enum GeneratedMediatorActivation { Declared, StandardOnly }
+public enum GeneratedMediatorActivation
+{
+    /// <summary>Explicitly declared by the registry.</summary>
+    Declared,
+    /// <summary>Dormant metadata that activates only with the standard pipeline.</summary>
+    StandardOnly,
+}
 /// <summary>Immutable exact types and a closed factory; the factory receives the resolving provider.</summary>
 public sealed class GeneratedMediatorContribution
 {

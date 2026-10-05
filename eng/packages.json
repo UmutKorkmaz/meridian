@@ -383,6 +383,22 @@
         "legacy"
       ],
       "baselineComparison": false
+    },
+    {
+      "id": "Meridian.DocumentationConsumer",
+      "project": "tests/consumers/Meridian.DocumentationConsumer/Meridian.DocumentationConsumer.csproj",
+      "sourceFiles": [
+        "tests/consumers/Meridian.DocumentationConsumer/Meridian.DocumentationConsumer.csproj",
+        "tests/consumers/Meridian.DocumentationConsumer/Program.cs"
+      ],
+      "packageIds": [
+        "Meridian.Mapping",
+        "Meridian.Mediator"
+      ],
+      "variants": [
+        "legacy"
+      ],
+      "baselineComparison": false
     }
   ]
 }

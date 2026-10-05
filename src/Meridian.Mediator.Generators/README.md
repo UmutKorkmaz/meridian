@@ -2,6 +2,7 @@
 
 Optional analyzer-only package for explicit closed handler registration. Reference this package alongside Meridian.Mediator. It has no runtime dependency assets.
 
+<!-- illustrative: configuration fragment, not compiled as shown, runnable equivalent in the packaged consumer; fixture: tests/consumers/Meridian.MediatorRegistryConsumer/Program.cs -->
 ```csharp
 [Meridian.Mediator.Generated.GenerateMediatorRegistry(
     typeof(GetOrderHandler), ExpectedRequestTypes = new[] { typeof(GetOrder) })]

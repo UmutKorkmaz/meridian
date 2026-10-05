@@ -2,6 +2,7 @@
 
 Optional asynchronous FluentValidation integration for Meridian Mediator on .NET 8, 9 and 10.
 
+<!-- illustrative: configuration fragment, not compiled as shown, runnable equivalent in the packaged consumer; fixture: tests/consumers/Meridian.FluentValidationConsumer/Program.cs -->
 ```csharp
 using FluentValidation;
 using Meridian.Mediator.Extensions;
