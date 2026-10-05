@@ -126,8 +126,25 @@ internal static class E3Preflight
         .Where(t => t.GetMethods().Any(m => m.GetCustomAttribute<BenchmarkAttribute>() is not null))
         .OrderBy(t => t.Name, StringComparer.Ordinal);
 
+    /// <summary>
+    /// BenchmarkDotNet validates every type that has a benchmark method (public, unsealed, not abstract, top level) as soon as
+    /// any run starts, even when a filter excludes it. Catching a violation here fails the preflight instead of the timed run.
+    /// </summary>
+    internal static IEnumerable<Type> UndiscoverableBenchmarkTypes() => typeof(Program).Assembly.GetTypes()
+        .Where(t => t.GetMethods().Any(m => m.GetCustomAttribute<BenchmarkAttribute>() is not null))
+        .Where(BdnWouldReject);
+
+    internal static bool BdnWouldReject(Type type) => !type.IsPublic || type.IsSealed || type.IsAbstract || type.IsNested;
+
     internal static int Run(string[] classNames, TextWriter log)
     {
+        var undiscoverable = UndiscoverableBenchmarkTypes().ToList();
+        if (undiscoverable.Count > 0)
+        {
+            log.WriteLine("PREFLIGHT FAIL benchmark types that BenchmarkDotNet would reject: " + string.Join(", ", undiscoverable.Select(t => t.FullName)));
+            return 1;
+        }
+
         var all = ScenarioTypes().ToList();
         var selected = all;
         if (classNames.Length > 0)
@@ -324,6 +341,16 @@ internal static class E3Preflight
             }
         });
 
+        MustReject("benchmark type BenchmarkDotNet would reject", () =>
+        {
+            if (!BdnWouldReject(typeof(SabotagedScenario)) || BdnWouldReject(typeof(E3MappingFlat)))
+            {
+                return;
+            }
+
+            throw new InvalidOperationException("detected: a sealed nested internal type is rejected, a public top-level unsealed type is accepted");
+        });
+
         foreach (var name in accepted)
         {
             log.WriteLine("SELFTEST FAIL accepted a wrong result: " + name);
@@ -344,7 +371,10 @@ internal static class E3Preflight
         }
     }
 
-    /// <summary>A scenario whose preflight deliberately fails (not discovered: the name does not start with E3).</summary>
+    /// <summary>
+    /// A scenario whose preflight deliberately fails. It has no benchmark method, so BenchmarkDotNet never discovers it, and
+    /// its name does not start with E3, so the preflight never discovers it either; only the self-test runs it.
+    /// </summary>
     internal sealed class SabotagedScenario
     {
         private int _state;
@@ -353,8 +383,5 @@ internal static class E3Preflight
         public void Setup() => _state = 1;
 
         public void Preflight() => throw new InvalidOperationException("sabotaged preflight must be reported as a failure (state " + _state + ")");
-
-        [Benchmark]
-        public int Work() => _state;
     }
 }

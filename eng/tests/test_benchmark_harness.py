@@ -51,8 +51,8 @@ class PreflightTests(unittest.TestCase):
         match = re.search(r"SELFTEST PASS rejected=(\d+)", result.stdout)
         self.assertIsNotNone(match, result.stdout + result.stderr)
         # value mismatch, null mismatch, count mismatch, aliased instance, default-valued leaf, broken reference
-        # identity, collapsed distinct identity and a throwing scenario preflight.
-        self.assertGreaterEqual(int(match.group(1)), 8)
+        # identity, collapsed distinct identity, a throwing scenario preflight and a benchmark type BenchmarkDotNet would reject.
+        self.assertGreaterEqual(int(match.group(1)), 10)
 
     def test_preflight_runs_every_required_scenario_and_passes(self):
         result = run(["dotnet", str(DLL), "--e3-preflight"])
