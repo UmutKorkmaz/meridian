@@ -1,5 +1,6 @@
 """Behavioral tests for eng/check-docs.py (links, snippet regions, warning ratchet, API surfaces)."""
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -223,6 +224,134 @@ class WarningRatchetTests(unittest.TestCase):
         baseline.write_text(json.dumps(data))
         result = run("warnings", "--repo", "/repo", "--baseline", baseline, "--report", report, after)
         self.assertEqual(result.returncode, 0, result.stdout)
+
+
+class WarningRatchetFailsClosedTests(unittest.TestCase):
+    """A vanished or unparseable warning set must never read as success."""
+
+    LINE = "/repo/src/A.cs(1,1): warning CA1848: Use LoggerMessage [/repo/src/A.csproj::TargetFramework=net8.0]\n"
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.base = Path(self.temp.name)
+        self.baseline = self.base / "baseline.json"
+        (self.base / "seed.log").write_text(self.LINE)
+        self.assertEqual(run("warnings", "--repo", "/repo", "--write-baseline", self.baseline, self.base / "seed.log").returncode, 0)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def check(self, text):
+        log = self.base / "run.log"
+        log.write_text(text)
+        return run("warnings", "--repo", "/repo", "--baseline", self.baseline, "--report", self.base / "r.json", log)
+
+    def test_empty_log_fails_when_the_baseline_is_not_empty(self):
+        result = self.check("")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("FAIL", result.stdout)
+
+    def test_unparseable_warning_lines_fail(self):
+        result = self.check(self.LINE + "src/B.cs: warning CS1591 in a new unsupported output format\n")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("unparsed", result.stdout)
+
+    def test_log_that_contains_no_warning_lines_still_passes_for_an_empty_baseline(self):
+        self.baseline.write_text(json.dumps({"schemaVersion": 1, "warnings": [], "explained": []}))
+        result = self.check("Build succeeded.\n")
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+
+class DocfxLogFailsClosedTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.base = Path(self.temp.name)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def check(self, text, *extra):
+        log = self.base / "docfx.json"
+        log.write_text(text)
+        return run("docfx-log", "--log", log, "--report", self.base / "r.json", *extra)
+
+    def test_empty_log_fails(self):
+        result = self.check("")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("FAIL", result.stdout)
+
+    def test_unparseable_line_fails(self):
+        self.assertEqual(self.check("not json\n").returncode, 1)
+
+    def test_clean_log_with_required_completion_marker_passes_and_missing_marker_fails(self):
+        text = json.dumps({"severity": "info", "message": "Creating output..."}) + "\n"
+        self.assertEqual(self.check(text, "--require-message", "Creating output").returncode, 0)
+        result = self.check(text, "--require-message", "XRef map exported")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("XRef map exported", result.stdout)
+
+    def test_warning_still_fails(self):
+        text = json.dumps({"severity": "warning", "code": "InvalidFileLink", "message": "x"}) + "\n"
+        self.assertEqual(self.check(text).returncode, 1)
+
+
+class PackageEvidenceBindingTests(unittest.TestCase):
+    """Reused verify-packages evidence must be bound to the exact feed packages and consumer source."""
+
+    CANDIDATE = "2.1.4-t.1"
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.base = Path(self.temp.name)
+        self.feed = self.base / "feed"
+        self.evidence = self.base / "evidence"
+        self.repo = self.base / "repo"
+        (self.feed).mkdir()
+        self.evidence.mkdir()
+        (self.feed / "Meridian.Mapping.2.1.4-t.1.nupkg").write_bytes(b"nupkg-bytes")
+        write(self.repo / "tests/consumers/Doc/Program.cs", "// region source\n")
+        self.sha_pkg = hashlib.sha256(b"nupkg-bytes").hexdigest()
+        self.sha_src = hashlib.sha256(b"// region source\n").hexdigest()
+        self.save()
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def save(self, pkg_sha=None, src_sha=None, with_sources=True):
+        sbom = {"candidateVersion": self.CANDIDATE, "distributedPackages": [
+            {"id": "Meridian.Mapping", "package": "Meridian.Mapping.2.1.4-t.1.nupkg", "sha256": pkg_sha or self.sha_pkg}]}
+        (self.evidence / "sbom-inventory.json").write_text(json.dumps(sbom))
+        row = {"consumer": "Meridian.DocumentationConsumer", "variant": "migrated", "framework": "net8.0"}
+        if with_sources:
+            row["sourceFiles"] = [{"source": "tests/consumers/Doc/Program.cs", "file": "Program.cs", "sha256": src_sha or self.sha_src}]
+        (self.evidence / "consumer-results.json").write_text(json.dumps([
+            {"consumer": "Meridian.LegacyConsumer", "variant": "baseline", "framework": "net8.0"}, row]))
+
+    def check(self):
+        return run("evidence", "--evidence", self.evidence, "--feed", self.feed, "--repo", self.repo,
+                   "--consumer", "Meridian.DocumentationConsumer", "--report", self.base / "e.json")
+
+    def test_matching_evidence_passes(self):
+        result = self.check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_feed_package_hash_mismatch_fails(self):
+        self.save(pkg_sha="0" * 64)
+        result = self.check()
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("Meridian.Mapping", result.stdout)
+
+    def test_edited_consumer_source_fails(self):
+        write(self.repo / "tests/consumers/Doc/Program.cs", "// region source edited after the evidence run\n")
+        result = self.check()
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("Program.cs", result.stdout)
+
+    def test_evidence_without_recorded_source_hashes_fails(self):
+        self.save(with_sources=False)
+        result = self.check()
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("sourceFiles", result.stdout)
 
 
 class SurfaceComparisonTests(unittest.TestCase):

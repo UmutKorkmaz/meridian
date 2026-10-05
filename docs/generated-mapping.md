@@ -162,8 +162,31 @@ calls take the minimum of the attribute limits and the effective runtime limits,
 
 Generated pairs default to `MaxDepth = 64`, `MaxCollectionItems = 10000`, `AllowNullCollections = false`,
 `AllowNullDestinationValues = true` and `AllowUndefinedEnumValues = false`, matching the runtime defaults. Structural
-entry methods accept an optional `GeneratedMappingOptions` argument that can only tighten the limits for one call and
-carries a `CancellationToken`. Collection overflow throws `MeridianMappingLimitException`.
+entry methods accept an optional `GeneratedMappingOptions` argument that carries a `CancellationToken` and may set
+`MaxDepth` and `MaxCollectionItems` (positive values only; zero or negative throws `ArgumentOutOfRangeException`). On
+a direct entry method an explicit option value **replaces** the attribute limit for that call, so it can lower or raise
+it; the safety ceiling is the attribute value you chose, not the option. Only calls that enter through the resolver
+bridge (`IMapper` with `UseGeneratedMappings`) are clamped: they take the minimum of the attribute limits and the
+effective runtime limits. Collection overflow throws `MeridianMappingLimitException`.
+
+<!-- snippet: generated-chain-mapper -->
+```csharp
+[GenerateMapper(typeof(Chain), typeof(ChainDto), Mode = GeneratedMappingMode.Structural, MaxDepth = 2)]
+public static partial class ChainMaps
+{
+}
+```
+
+<!-- snippet: generated-options -->
+```csharp
+var chain = new Chain { Value = 1, Next = new Chain { Value = 2, Next = new Chain { Value = 3 } } };
+var byAttribute = ChainMaps.MapToChainDto(chain);                                             // attribute MaxDepth = 2
+var raised = ChainMaps.MapToChainDto(chain, new GeneratedMappingOptions { MaxDepth = 3 });    // option replaces the limit
+var lowered = ChainMaps.MapToChainDto(chain, new GeneratedMappingOptions { MaxDepth = 1 });
+```
+
+The consumer asserts all three outcomes: depth 2 by attribute, one level deeper with the raised option and one level
+shallower with the lowered one.
 
 ## Diagnostics
 

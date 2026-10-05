@@ -15,6 +15,7 @@ Console.WriteLine($"HOST runtime={Environment.Version} framework={System.Runtime
 MappingMigration();
 MappingLimits();
 GeneratedMappings();
+GeneratedOptions();
 GeneratedPrecedence();
 await MediatorMigration();
 await MediatorBehaviors();
@@ -118,6 +119,22 @@ static void GeneratedMappings()
     Throws<OverflowException>(() => MeasurementMaps.MapToMeasurementDto(new Measurement { Ratio = 1, Count = int.MaxValue + 1L }));
     Check(MeasurementMaps.MapToMeasurementDto(new Measurement { Ratio = 0.5, Count = 9 }) is { Ratio: 0.5f, Count: 9 }, "checked in-range conversion");
     Console.WriteLine("COMMON generated legacy=42 null=default doubleToFloat=Infinity longToInt=OverflowException");
+}
+
+static void GeneratedOptions()
+{
+    #region generated-options
+    var chain = new Chain { Value = 1, Next = new Chain { Value = 2, Next = new Chain { Value = 3 } } };
+    var byAttribute = ChainMaps.MapToChainDto(chain);                                             // attribute MaxDepth = 2
+    var raised = ChainMaps.MapToChainDto(chain, new GeneratedMappingOptions { MaxDepth = 3 });    // option replaces the limit
+    var lowered = ChainMaps.MapToChainDto(chain, new GeneratedMappingOptions { MaxDepth = 1 });
+    #endregion
+
+    Check(byAttribute.Next is { Value: 2, Next: null }, "attribute depth limit applies without options");
+    Check(raised.Next is { Value: 2, Next: { Value: 3 } }, "direct option raises the attribute depth limit for one call");
+    Check(lowered is { Value: 1, Next: null }, "direct option lowers the attribute depth limit for one call");
+    Throws<ArgumentOutOfRangeException>(() => ChainMaps.MapToChainDto(chain, new GeneratedMappingOptions { MaxDepth = 0 }));
+    Console.WriteLine("COMMON generated options=replace-attribute-limits depth=2/3/1 nonPositive=ArgumentOutOfRangeException");
 }
 
 static void GeneratedPrecedence()
@@ -416,6 +433,16 @@ public class CustomerDto
 
 [GenerateMapper(typeof(CustomerSource), typeof(CustomerDto))]
 public static partial class CustomerMappers
+{
+}
+#endregion
+
+public sealed class Chain { public int Value { get; set; } public Chain? Next { get; set; } }
+public sealed class ChainDto { public int Value { get; set; } public ChainDto? Next { get; set; } }
+
+#region generated-chain-mapper
+[GenerateMapper(typeof(Chain), typeof(ChainDto), Mode = GeneratedMappingMode.Structural, MaxDepth = 2)]
+public static partial class ChainMaps
 {
 }
 #endregion

@@ -8,7 +8,8 @@ Subcommands:
   warnings  Normalize MSBuild warnings and compare them with a committed baseline.
   surface   Compare DocFX API metadata produced from different target frameworks.
   mdlinks   Check relative links in repository Markdown (README files) with exact case.
-  docfx-log Summarize a DocFX structured JSON log.
+  docfx-log Summarize a DocFX structured JSON log (an empty or unparseable log fails).
+  evidence  Bind a reused verify-packages run to the feed package hashes and the current consumer sources.
 """
 
 from __future__ import annotations
@@ -292,12 +293,19 @@ def _relative(path: str, repo: str) -> str:
     return path[len(repo):] if path.startswith(repo) else path
 
 
-def _parse_warnings(logs: list[str], repo: str):
+# Any line that looks like a compiler warning, in any of the MSBuild output shapes. A line that matches this but not
+# WARNING means the output format changed and the ratchet can no longer see the warning.
+LOOSE_WARNING = re.compile(r"\bwarning\s+[A-Z]{2,}[0-9]+\b")
+
+
+def _parse_warnings(logs: list[str], repo: str, unparsed: list[str] | None = None):
     unique = {}
     for log in logs:
         for raw in Path(log).read_text(encoding="utf-8", errors="replace").splitlines():
             match = WARNING.match(raw.strip())
             if not match:
+                if unparsed is not None and LOOSE_WARNING.search(raw):
+                    unparsed.append(raw.strip())
                 continue
             item = {
                 "project": _relative(match["project"], repo),
@@ -313,7 +321,8 @@ def _parse_warnings(logs: list[str], repo: str):
 
 
 def cmd_warnings(args) -> int:
-    unique = _parse_warnings(args.logs, args.repo)
+    unparsed: list[str] = []
+    unique = _parse_warnings(args.logs, args.repo, unparsed)
     items = [dict(v, tfms=sorted(v["tfms"]), lines=sorted(v["lines"])) for _, v in sorted(unique.items())]
     keyed = {(i["project"], i["file"], i["code"], i["message"]): i for i in items}
     if args.write_baseline:
@@ -328,6 +337,16 @@ def cmd_warnings(args) -> int:
         print(f"WROTE baseline unique={len(items)}")
         return 0
     baseline = json.loads(Path(args.baseline).read_text(encoding="utf-8"))
+    if unparsed:
+        for line in unparsed[:20]:
+            print(f"FAIL unparsed warning line (output format changed?): {line[:200]}")
+        print(f"FAIL warnings: {len(unparsed)} unparsed warning line(s); the ratchet would not see them")
+        return 1
+    if not unique and baseline["warnings"]:
+        print(f"FAIL warnings: no warnings were parsed from {len(args.logs)} log(s) but the baseline records "
+              f"{len(baseline['warnings'])}; refusing to treat a vanished warning set as success "
+              "(build output missing or its format changed)")
+        return 1
     known = {(w["project"], w["file"], w["code"], w["message"]) for w in baseline["warnings"]}
     explained = baseline.get("explained", [])
     new, explained_hits = [], []
@@ -448,22 +467,81 @@ def cmd_mdlinks(args) -> int:
 
 
 def cmd_docfx_log(args) -> int:
-    counts, entries = {}, []
-    for raw in Path(args.log).read_text(encoding="utf-8").splitlines():
+    counts, entries, messages = {}, [], []
+    for number, raw in enumerate(Path(args.log).read_text(encoding="utf-8").splitlines(), 1):
         if not raw.strip():
             continue
-        entry = json.loads(raw)
+        try:
+            entry = json.loads(raw)
+        except json.JSONDecodeError:
+            print(f"FAIL docfx log line {number} is not JSON; the log format changed ({args.log})")
+            return 1
+        messages.append(str(entry.get("message", "")))
         severity = entry.get("severity", "unknown")
         counts[severity] = counts.get(severity, 0) + 1
         if severity in ("warning", "error"):
             entries.append({k: entry.get(k) for k in ("severity", "code", "message", "file", "line")})
-    report = {"log": str(args.log), "counts": counts, "warningsAndErrors": entries}
+    report = {"log": str(args.log), "counts": counts, "warningsAndErrors": entries, "requiredMessages": args.require_message}
     Path(args.report).write_text(json.dumps(report, indent=2), encoding="utf-8")
+    if not messages:
+        print(f"FAIL docfx log is empty; an absent log is not a clean build ({args.log})")
+        return 1
+    missing = [m for m in args.require_message if not any(m in text for text in messages)]
+    if missing:
+        for marker in missing:
+            print(f"FAIL docfx log has no completion message containing {marker!r} ({args.log})")
+        return 1
     if entries:
         for entry in entries[:50]:
             print(f"DOCFX {entry['severity']} {entry.get('code')}: {entry.get('message')}")
         return 1
     print(f"PASS docfx log warnings=0 errors=0 ({args.log})")
+    return 0
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def cmd_evidence(args) -> int:
+    """Bind a reused verify-packages run to the feed packages and to the current consumer source files."""
+    evidence, feed, repo = Path(args.evidence), Path(args.feed), Path(args.repo)
+    problems, packages_checked, sources_checked = [], 0, 0
+    sbom = json.loads((evidence / "sbom-inventory.json").read_text(encoding="utf-8"))
+    for package in sbom.get("distributedPackages", []):
+        nupkg = feed / package["package"]
+        if not nupkg.is_file():
+            problems.append(f"{package['id']}: {package['package']} is missing from the feed")
+        elif _sha256(nupkg) != package["sha256"].lower():
+            problems.append(f"{package['id']}: feed {package['package']} differs from the package the evidence ran against")
+        packages_checked += 1
+    if not packages_checked:
+        problems.append("evidence records no distributed packages")
+    results = json.loads((evidence / "consumer-results.json").read_text(encoding="utf-8"))
+    rows = [r for r in results if r.get("consumer") == args.consumer]
+    if not rows:
+        problems.append(f"evidence has no {args.consumer} rows")
+    for row in rows:
+        label = f"{row.get('consumer')} {row.get('variant')}/{row.get('framework')}"
+        recorded = row.get("sourceFiles")
+        if not recorded:
+            problems.append(f"{label}: evidence has no sourceFiles hashes (run was recorded before source binding); rerun verify-packages")
+            continue
+        for item in recorded:
+            current = repo / item["source"]
+            if not current.is_file():
+                problems.append(f"{label}: {item['source']} no longer exists")
+            elif _sha256(current) != item["sha256"].lower():
+                problems.append(f"{label}: {item['source']} changed after the evidence run; the edit was not compiled or executed")
+            sources_checked += 1
+    report = {"evidence": str(evidence), "feed": str(feed), "packagesChecked": packages_checked,
+              "sourceFilesChecked": sources_checked, "problems": problems}
+    Path(args.report).write_text(json.dumps(report, indent=2), encoding="utf-8")
+    for problem in problems:
+        print(f"FAIL evidence: {problem}")
+    if problems:
+        return 1
+    print(f"PASS evidence packages={packages_checked} sourceFiles={sources_checked} bound to feed and current sources")
     return 0
 
 
@@ -500,7 +578,16 @@ def main(argv=None) -> int:
     log = sub.add_parser("docfx-log")
     log.add_argument("--log", required=True)
     log.add_argument("--report", required=True)
+    log.add_argument("--require-message", action="append", default=[],
+                     help="text that a completion message in the log must contain (repeatable)")
     log.set_defaults(func=cmd_docfx_log)
+    evidence = sub.add_parser("evidence")
+    evidence.add_argument("--evidence", required=True, help="verify-packages run directory to reuse")
+    evidence.add_argument("--feed", required=True)
+    evidence.add_argument("--repo", required=True)
+    evidence.add_argument("--consumer", required=True)
+    evidence.add_argument("--report", required=True)
+    evidence.set_defaults(func=cmd_evidence)
     args = parser.parse_args(argv)
     if args.command == "warnings" and not (args.baseline or args.write_baseline):
         parser.error("warnings requires --baseline or --write-baseline")

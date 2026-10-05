@@ -17,7 +17,8 @@ param(
 # metadata from the packed DLL+XML pairs for every target framework and require identical surfaces, build the site
 # twice, combine it with the legacy docs-site entry page, check links/anchors/resources, compare documentation
 # snippets with the compiled DocumentationConsumer regions, compare compiler warnings with the committed baseline and
-# require the DocumentationConsumer to pass on every manifest compiler host.
+# require the DocumentationConsumer to pass on every manifest compiler host. Reused -PackageEvidence must match the feed
+# nupkg hashes and the current consumer source hashes (eng/check-docs.py evidence).
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 3.0
 Import-Module (Join-Path $PSScriptRoot 'package-inventory.psm1') -Force -DisableNameChecking
@@ -178,7 +179,7 @@ try {
         $config | ConvertTo-Json -Depth 8 | Set-Content $configPath
         $log = Join-Path $run "metadata-$framework.log.json"
         $null = Invoke-Logged $dotnet @('tool', 'run', 'docfx', '--', 'metadata', $configPath, '--log', $log, '--logLevel', 'info') (Join-Path $run "metadata-$framework.log") $run
-        $null = Invoke-Logged $python @('-B', $checker, 'docfx-log', '--log', $log, '--report', (Join-Path $run "metadata-$framework.report.json")) (Join-Path $run "metadata-$framework.check.log")
+        $null = Invoke-Logged $python @('-B', $checker, 'docfx-log', '--require-message', 'Creating output', '--log', $log, '--report', (Join-Path $run "metadata-$framework.report.json")) (Join-Path $run "metadata-$framework.check.log")
         $metadataDirs += Join-Path $run "api-$framework"
     }
     $null = Invoke-Logged $python (@('-B', $checker, 'surface', '--report', (Join-Path $run 'api-surface.json')) + $metadataDirs) (Join-Path $run 'api-surface.log')
@@ -207,7 +208,7 @@ try {
         @{ build = $build } | ConvertTo-Json -Depth 8 | Set-Content $configPath
         $log = Join-Path $run "build-$label.log.json"
         $null = Invoke-Logged $dotnet @('tool', 'run', 'docfx', '--', 'build', $configPath, '--log', $log, '--logLevel', 'info') (Join-Path $run "build-$label.log") $run
-        $null = Invoke-Logged $python @('-B', $checker, 'docfx-log', '--log', $log, '--report', (Join-Path $run "build-$label.report.json")) (Join-Path $run "build-$label.check.log")
+        $null = Invoke-Logged $python @('-B', $checker, 'docfx-log', '--require-message', 'XRef map exported', '--log', $log, '--report', (Join-Path $run "build-$label.report.json")) (Join-Path $run "build-$label.check.log")
         $sites += Join-Path $run "site-$label"
     }
     $hashes = foreach ($site in $sites) {
@@ -287,6 +288,8 @@ if ($selection.scope -ne 'all' -or @($selection.omittedIds).Count) { throw 'Pack
 Assert-SameSet @($selection.selectedIds) @($inventory.consumers.id) 'Package evidence does not cover the current consumer inventory'
 $sbom = Get-Content -Raw (Join-Path $PackageEvidence 'sbom-inventory.json') | ConvertFrom-Json
 if ($sbom.candidateVersion -ne $CandidateVersion -or $sbom.manifestSha256 -ne (Get-Sha256 $manifestPath)) { throw 'Package evidence belongs to another candidate or manifest' }
+# Reused evidence must be bound to these exact feed packages and to the current consumer source, not only to a version.
+$null = Invoke-Logged $python @('-B', $checker, 'evidence', '--evidence', $PackageEvidence, '--feed', $Feed, '--repo', $repo, '--consumer', 'Meridian.DocumentationConsumer', '--report', (Join-Path $run 'package-evidence-binding.json')) (Join-Path $run 'package-evidence-binding.log')
 $results = @(Get-Content -Raw (Join-Path $PackageEvidence 'consumer-results.json') | ConvertFrom-Json)
 foreach ($lane in $inventory.compilerHosts) {
     $rows = @($results | Where-Object { $_.consumer -eq 'Meridian.DocumentationConsumer' -and $_.framework -eq $lane.framework -and $_.sdkVersion -eq $lane.sdkVersion -and $_.exit -eq 0 -and $_.packageVersion -eq $CandidateVersion })

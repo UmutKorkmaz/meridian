@@ -161,7 +161,7 @@ foreach ($lane in $lanes) {
                 if ($consumer.baselineComparison) {
                     if ($variant -eq 'baseline') { $common[$consumer.id] = $lines } else { Assert-SameSet @($common[$consumer.id]) $lines "Old/new common output mismatch: $($consumer.id)" }
                 }
-                $results += [ordered]@{ framework=$lane.framework; sdkVersion=$sdk; compilerVersion=$compilerVersion; runtime=$runtimeLine[0]; consumer=$consumer.id; variant=$variant; baselineComparison=$consumer.baselineComparison; packageVersion=$version; packageIds=@($closure.id); exit=0; commonOutput=$lines; binarySha256=(Get-FileHash $binary -Algorithm SHA256).Hash.ToLowerInvariant(); directory=$work }
+                $results += [ordered]@{ framework=$lane.framework; sdkVersion=$sdk; compilerVersion=$compilerVersion; runtime=$runtimeLine[0]; consumer=$consumer.id; variant=$variant; baselineComparison=$consumer.baselineComparison; packageVersion=$version; packageIds=@($closure.id); exit=0; commonOutput=$lines; binarySha256=(Get-FileHash $binary -Algorithm SHA256).Hash.ToLowerInvariant(); sourceFiles=@($fixture); directory=$work }
                 ConvertTo-Json -InputObject $results -Depth 10 | Set-Content (Join-Path $run 'consumer-results.json')
                 Write-Host "PASS $variant $($consumer.id) SDK=$sdk framework=$($lane.framework) CSharp=12 warningsAsErrors=true hashes=matched"
             }
