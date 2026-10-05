@@ -65,7 +65,7 @@ corpus under `findings/queue/`. Commit interesting new seeds back.
 
 ## CI integration — deferred
 
-The PLAN.md Phase 4.2 calls for a nightly CI workflow. We are deferring
+The [docs/PLAN.md](../../docs/PLAN.md) Phase 4.2 calls for a nightly CI workflow. We are deferring
 that because AFL is an OS-level dependency and GitHub-hosted runners
 install it inconsistently. The `.github/workflows/fuzz.yml` workflow in
 this repository runs the property-based tests in FsCheck with a high
