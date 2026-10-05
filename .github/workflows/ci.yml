@@ -20,12 +20,17 @@ concurrency:
 
 jobs:
   build:
-    name: build + test (${{ matrix.os }})
+    name: build + test (${{ matrix.os }}, ${{ matrix.framework }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
+        framework: [net8.0, net9.0, net10.0]
+    env:
+      MeridianIncludeNet11Samples: 'false'
+      DOTNET_ROLL_FORWARD: LatestPatch
+      DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
 
     steps:
       - name: Checkout
@@ -37,6 +42,23 @@ jobs:
         uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
+          # Each SDK installs its matching runtime family. global.json selects
+          # a stable .NET 10 SDK; tests cannot roll forward across runtime families.
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+
+      - name: Verify stable SDK and required runtimes
+        shell: bash
+        run: |
+          sdk="$(dotnet --version)"
+          [[ "$sdk" == 10.* && "$sdk" != *-* ]]
+          runtimes="$(dotnet --list-runtimes)"
+          for family in 8 9 10; do
+            echo "$runtimes" | grep -E "^Microsoft.NETCore.App $family\." > /dev/null
+          done
+          dotnet --info
 
       - name: Restore
         run: dotnet restore Meridian.sln
@@ -48,27 +70,42 @@ jobs:
         shell: bash
         env:
           MATRIX_OS: ${{ matrix.os }}
+          MATRIX_FRAMEWORK: ${{ matrix.framework }}
         run: |
           # The HTTP sample test project has a dedicated net10-only provider lane.
           for project in tests/*/*.csproj; do
             [[ "$project" == tests/Meridian.AspNetCore.Tests/* ]] && continue
-            dotnet test "$project" -c Release --no-build \
+            dotnet test "$project" -c Release --no-build -f "$MATRIX_FRAMEWORK" \
               --filter "Provider!=PostgreSQL&Provider!=Redis" \
-              --logger "trx;LogFilePrefix=$MATRIX_OS" \
+              --logger "trx;LogFilePrefix=$MATRIX_OS-$MATRIX_FRAMEWORK" \
               --logger "console;verbosity=normal" --collect:"XPlat Code Coverage" \
               --results-directory ./test-results
           done
+
+      - name: Execute samples
+        shell: pwsh
+        env:
+          MATRIX_FRAMEWORK: ${{ matrix.framework }}
+        run: ./eng/run-samples.ps1 -Framework $env:MATRIX_FRAMEWORK -NoBuild
+
+      - name: Upload sample logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sample-results-${{ matrix.os }}-${{ matrix.framework }}
+          path: ./artifacts/sample-results/**/*
+          retention-days: 7
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results-${{ matrix.os }}
+          name: test-results-${{ matrix.os }}-${{ matrix.framework }}
           path: ./test-results/**/*
           retention-days: 7
 
       - name: Pack (ubuntu only)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && matrix.framework == 'net10.0'
         run: |
           dotnet pack src/Meridian.Mapping/Meridian.Mapping.csproj \
             -c Release --no-build -o ./artifacts
@@ -76,7 +113,7 @@ jobs:
             -c Release --no-build -o ./artifacts
 
       - name: Inspect package contents
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && matrix.framework == 'net10.0'
         run: |
           for pkg in ./artifacts/*.nupkg; do
             echo "=== $pkg ==="
@@ -84,7 +121,7 @@ jobs:
           done
 
       - name: Upload packages
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && matrix.framework == 'net10.0'
         uses: actions/upload-artifact@v4
         with:
           name: packages
@@ -274,6 +311,34 @@ jobs:
             artifacts/redis-packages/**
             artifacts/redis-package-consumers/**
           retention-days: 14
+
+  preview:
+    name: preview samples (net11.0, optional)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      MeridianIncludeNet11Samples: 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup preview SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 11.0.x
+
+      # Select preview only in this job's checkout. The committed global.json
+      # continues to reject previews in every stable lane.
+      - name: Select preview SDK locally
+        shell: bash
+        run: |
+          sdk="$(dotnet --list-sdks | awk '$1 ~ /^11\./ {print $1}' | sort -V | tail -1)"
+          test -n "$sdk"
+          printf '{"sdk":{"version":"%s","rollForward":"latestFeature","allowPrerelease":true}}\n' "$sdk" > global.json
+          dotnet --info
+
+      - name: Build preview samples
+        run: dotnet build Meridian.sln -c Release
 
   ef-transactions:
     name: EF transactions (${{ matrix.framework }})
