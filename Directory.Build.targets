@@ -15,6 +15,10 @@
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
     <EnablePackageValidation>true</EnablePackageValidation>
     <PackageValidationBaselineVersion Condition="'$(PackageId)' == 'Meridian.Mapping' or '$(PackageId)' == 'Meridian.Mediator'">2.1.3</PackageValidationBaselineVersion>
+    <!-- Prefer project-local README.md when present (package-focused docs);
+         otherwise pack the repository root README. Content-only change for NuGet. -->
+    <_MeridianPackageReadme Condition="Exists('$(MSBuildProjectDirectory)/README.md')">$(MSBuildProjectDirectory)/README.md</_MeridianPackageReadme>
+    <_MeridianPackageReadme Condition="'$(_MeridianPackageReadme)' == ''">$(MSBuildThisFileDirectory)README.md</_MeridianPackageReadme>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <!--
       License is declared via PackageLicenseExpression (SPDX = MIT) in each
@@ -31,7 +35,7 @@
   </PropertyGroup>
 
   <ItemGroup Condition="'$(IsPackable)' == 'true'">
-    <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" />
+    <None Include="$(_MeridianPackageReadme)" Pack="true" PackagePath="README.md" />
     <None Include="$(MSBuildThisFileDirectory)LICENSE"   Pack="true" PackagePath="\" />
   </ItemGroup>
 
