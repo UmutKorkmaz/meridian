@@ -715,7 +715,10 @@ public class Mediator : IMediator
 
         if (telemetryOptions.RecordExceptionStackTrace)
         {
-            activity?.SetTag("exception.stacktrace", ex.ToString());
+            var stackTrace = telemetryOptions.RecordExceptionMessage
+                ? ex.ToString()
+                : $"{ex.GetType().FullName}{Environment.NewLine}{ex.StackTrace}";
+            activity?.SetTag("exception.stacktrace", stackTrace);
         }
     }
 }

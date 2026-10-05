@@ -131,7 +131,11 @@ public class CacheableQueryHandler : IRequestHandler<CacheableQuery, string>
 
 public record CacheInvalidatingCommand(string Data) : IRequest<string>, ICacheInvalidatingRequest
 {
-    public string[] CacheKeysToInvalidate => new[] { "cache:key1", "cache:key2" };
+    public string[] CacheKeysToInvalidate =>
+    [
+        CacheKeyComposer.Compose<CacheableQuery>("cache:key1"),
+        CacheKeyComposer.Compose<CacheableQuery>("cache:key2")
+    ];
 }
 
 public class CacheInvalidatingCommandHandler : IRequestHandler<CacheInvalidatingCommand, string>
@@ -497,7 +501,7 @@ public class BehaviorTests
     {
         // Arrange
         var cacheProvider = new FakeCacheProvider();
-        cacheProvider.Seed("cache:mykey", "CachedValue");
+        cacheProvider.Seed(CacheKeyComposer.Compose<CacheableQuery>("cache:mykey"), "CachedValue");
         var behavior = new CachingBehavior<CacheableQuery, string>(cacheProvider);
         var request = new CacheableQuery("mykey");
         var handlerCalled = false;
@@ -538,7 +542,7 @@ public class BehaviorTests
         Assert.True(handlerCalled);
         Assert.Equal("Fresh:newkey", result);
         Assert.Single(cacheProvider.SetCalls);
-        Assert.Equal("cache:newkey", cacheProvider.SetCalls[0].Key);
+        Assert.Equal(CacheKeyComposer.Compose<CacheableQuery>("cache:newkey"), cacheProvider.SetCalls[0].Key);
         Assert.Equal("Fresh:newkey", cacheProvider.SetCalls[0].Value);
         Assert.Equal(TimeSpan.FromMinutes(5), cacheProvider.SetCalls[0].Duration);
     }
@@ -548,8 +552,8 @@ public class BehaviorTests
     {
         // Arrange
         var cacheProvider = new FakeCacheProvider();
-        cacheProvider.Seed("cache:key1", "val1");
-        cacheProvider.Seed("cache:key2", "val2");
+        cacheProvider.Seed(CacheKeyComposer.Compose<CacheableQuery>("cache:key1"), "val1");
+        cacheProvider.Seed(CacheKeyComposer.Compose<CacheableQuery>("cache:key2"), "val2");
         var behavior = new CacheInvalidationBehavior<CacheInvalidatingCommand, string>(cacheProvider);
         var request = new CacheInvalidatingCommand("data");
 
@@ -560,8 +564,8 @@ public class BehaviorTests
 
         // Assert
         Assert.Equal("Invalidated:data", result);
-        Assert.Contains("cache:key1", cacheProvider.RemovedKeys);
-        Assert.Contains("cache:key2", cacheProvider.RemovedKeys);
+        Assert.Contains(CacheKeyComposer.Compose<CacheableQuery>("cache:key1"), cacheProvider.RemovedKeys);
+        Assert.Contains(CacheKeyComposer.Compose<CacheableQuery>("cache:key2"), cacheProvider.RemovedKeys);
         Assert.Equal(2, cacheProvider.RemovedKeys.Count);
     }
 
@@ -841,7 +845,7 @@ public class BehaviorTests
         // Arrange
         IdempotentCommandHandler.CallCount = 0;
         var store = new FakeIdempotencyStore();
-        store.Seed("dup-key", "PreviousResult");
+        store.Seed(IdempotencyKeyComposer.Compose<IdempotentCommand>("dup-key"), "PreviousResult");
         var behavior = new IdempotencyBehavior<IdempotentCommand, string>(store);
         var request = new IdempotentCommand("dup-key", "data");
         var handlerCalled = false;
@@ -883,7 +887,9 @@ public class BehaviorTests
         Assert.Equal("Executed:newdata", result);
 
         // Verify it was stored — a second call should return cached
-        var (exists, cached) = await store.CheckAsync("new-key", CancellationToken.None);
+        var (exists, cached) = await store.CheckAsync(
+            IdempotencyKeyComposer.Compose<IdempotentCommand>("new-key"),
+            CancellationToken.None);
         Assert.True(exists);
         Assert.Equal("Executed:newdata", cached);
     }
