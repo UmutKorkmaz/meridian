@@ -11,7 +11,7 @@ carry the HIGH-severity fixes from `GHSA-f5v8-v6q3-q4h6`. Effective
 
 | Version   | Supported |
 | --------- | --------- |
-| 2.1.x     | ✅        |
+| 2.1.x (prefer latest, currently 2.1.3) | ✅ |
 | 2.0.x     | ❌ (deprecated 2026-04-16 — upgrade to 2.1.1+) |
 | < 2.0     | ❌        |
 
@@ -75,6 +75,11 @@ will not pursue legal action against researchers who:
 
 Reporters of accepted vulnerabilities are credited in `CHANGELOG.md` and the
 published GHSA unless they request anonymity.
+
+## Related docs
+
+- [docs/security-model.md](./docs/security-model.md) — threat model and mitigations
+- [docs/compatibility-policy.md](./docs/compatibility-policy.md) — SemVer and default-behavior guarantees
 
 ## Historical Advisories
 

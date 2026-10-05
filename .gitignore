@@ -33,3 +33,8 @@ Thumbs.db
 
 # Tooling
 *.local.history
+
+# Agent/assistant tooling state (never part of the library)
+.agent-state/
+.remember/
+.claude/

@@ -54,6 +54,13 @@ public interface IConfigurationProvider
     bool AllowNullDestinationValues { get; }
 
     /// <summary>
+    /// Gets whether string values that parse to undefined enum values are allowed.
+    /// Default is <c>false</c>. See
+    /// <see cref="IMapperConfigurationExpression.AllowUndefinedEnumValues"/>.
+    /// </summary>
+    bool AllowUndefinedEnumValues => false;
+
+    /// <summary>
     /// Gets the default maximum recursion depth applied when a type map has no
     /// explicit depth. See <see cref="IMapperConfigurationExpression.DefaultMaxDepth"/>.
     /// </summary>

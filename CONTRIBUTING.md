@@ -15,8 +15,10 @@ dotnet test tests/Meridian.Mediator.Tests -c Release
 ```
 
 Required tools:
-- .NET SDK 10.0.103 or later (see `global.json`)
+- .NET SDK matching `global.json` (or a compatible install the SDK can roll forward to)
 - Git 2.40+
+
+Samples live under `samples/` (including Hexagonal, QuickStart, Showcase, and architecture demos).
 
 ## How to Propose a Change
 
@@ -37,26 +39,33 @@ Required tools:
      `BREAKING CHANGE:` footer.
 4. **Open a PR** against `main`. Fill in the PR template. Link the issue.
 
+## Compatibility
+
+Do **not** change public APIs or default runtime behavior without a major
+version and explicit CHANGELOG notes. See
+[docs/compatibility-policy.md](./docs/compatibility-policy.md).
+
 ## Quality Gates (enforced by CI)
 
 A PR is mergeable when **all** of these pass:
 
-- `dotnet build -warnaserror` succeeds on `net8.0`, `net9.0`, `net10.0`
-- All unit tests pass (`dotnet test`)
-- Public API changes are reflected in `PublicAPI.Shipped.txt` / `PublicAPI.Unshipped.txt`
-- `PackageValidation` passes (no unintended breaking API changes)
+- `dotnet build` + `dotnet test` succeed on the CI matrix
+  (`build + test (ubuntu-latest|windows-latest|macos-latest)` — see `.github/workflows/ci.yml`)
+- Packable projects keep `EnablePackageValidation` green (no unintended public
+  API surface regressions on pack)
 - CodeQL finds no new critical issues
-- At least one maintainer approval (two for changes in `Execution/` or
-  `Pipeline/` directories — these are the security-sensitive hot paths)
+- At least one maintainer approval (CODEOWNERS applies; security-sensitive
+  paths under `Execution/`, `Pipeline/`, and `Wrappers/` require explicit attention)
 
 ## Code Style
 
-- Follow the existing `.editorconfig` and nullable-reference-types settings.
+- Follow `.editorconfig` and the repository `Directory.Build.props` defaults
+  (nullable reference types, latest language version, analysis level).
 - Prefer `record` / `record struct` for immutable value-like types.
 - Avoid `dynamic` and `Delegate.DynamicInvoke` in application code (source of
   past perf bugs — use cached compiled expression trees instead).
 - Every public type needs an XML doc comment. `GenerateDocumentationFile` is
-  enabled and warnings about missing docs will fail the build eventually.
+  enabled on packable projects.
 - Keep files focused. If a file exceeds 500 lines, consider splitting.
 
 ## Testing

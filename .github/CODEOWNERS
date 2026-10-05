@@ -2,9 +2,9 @@
 # patterns below apply.
 * @UmutKorkmaz
 
-# Security-sensitive hot paths: per PLAN.md quality gate, changes to the
+# Security-sensitive hot paths: per docs/PLAN.md quality gate, changes to the
 # mapping execution engine and mediator pipeline require explicit attention.
-# When a second maintainer is recruited (PLAN.md §8.4), add them here so
+# When a second maintainer is recruited (docs/PLAN.md §8.4), add them here so
 # both reviewers are required on these paths.
 /src/Meridian.Mapping/Execution/   @UmutKorkmaz
 /src/Meridian.Mediator/Pipeline/   @UmutKorkmaz
