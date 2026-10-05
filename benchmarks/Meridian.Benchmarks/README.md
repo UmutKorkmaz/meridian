@@ -73,14 +73,14 @@ semantic checks in a separate preflight process so they cannot warm the measured
 | `E3MappingDeep` | chain of 4 and 16 nested objects (explicit pair per level) | same eight | same |
 | `E3MappingReferences` | repeated-reference graph: one source node used twice plus an equal-valued distinct node | `Manual` (with identity tracking), `MeridianRuntime`, `MeridianGeneratedDirect`, `Mapster`, `Mapperly`, `AutoMapperV14` | same; identity is asserted |
 | `E3MediatorDispatch` | request, handler, response; no behaviors | `DirectHandler` (floor), `MeridianRuntime`, `MeridianStrictGenerated`, `MediatRV12` | one `Send` |
-| `E3MediatorScopeExisting` | scoped handler dependency inside one existing scope | `DiResolvedHandler`, `MeridianRuntime`, `MediatRV12` | one `Send` |
+| `E3MediatorScopeExisting` | scoped handler dependency inside one existing scope; both handlers registered by type | `DiResolvedHandler`, `MeridianRuntime`, `MediatRV12` | one `Send` |
 | `E3MediatorScopePerOperation` | create, use and dispose a scope per operation | same three | scope + `Send` |
 | `E3MediatorPipelines` | none, 1 or 4 pass-through behaviors, closed or open registration | `MeridianRuntime`, `MediatRV12` | one `Send` |
 | `E3MediatorCacheBehavior` | disabled, primed in-memory hit, synthetic always-miss | `Send` | behavior overhead only |
 | `E3MediatorIdempotencyBehavior` | disabled, legacy replay, atomic replay, synthetic always-claim | `Send` | behavior overhead only |
 | `E3MediatorMetrics` | disabled, enabled with no listener, enabled with an in-process listener | `Send` | one `Send` |
 | `E3NotificationPublish` | three handlers, default sequential publisher | `MeridianPublish`, `MediatRV12Publish` | one `Publish` |
-| `E3NotificationTaskWhenAll` | 10 and 100 handlers, opt-in task-when-all publisher | `MeridianTaskWhenAll`, `MediatRV12TaskWhenAll` | one `Publish`; synchronous handlers only |
+| `E3NotificationTaskWhenAll` | 10 and 100 handlers, opt-in task-when-all publisher | `MeridianTaskWhenAllUnbounded` (`new TaskWhenAllPublisher(-1)`, baseline, like for like with MediatR), `MeridianTaskWhenAllBounded16` (the default cap of 16, a different contract), `MediatRV12TaskWhenAll` (unbounded) | one `Publish`; synchronous handlers only |
 | `E3StartupMapping` | configuration only, and ready plus first map (warmed process) | Meridian, Meridian generated runtime, Mapster, AutoMapper | one construction / one first map |
 | `E3StartupMediator` | registration only, and provider build plus first `Send` plus disposal (warmed process) | Meridian runtime, Meridian strict generated, MediatR | one construction / one first send |
 | `E3ColdMapping`, `E3ColdMediator` | first use in a fresh process | the same contenders plus manual, generated direct and Mapperly first maps, and a direct handler call | one invocation per fresh launch |
@@ -100,6 +100,15 @@ Equal-work rules enforced by the code:
 - **Path selection is proven.** Meridian "interpreted" is the same specification on an independently created configuration whose
   `TypeMap.CompiledFastPath` is cleared in setup, and the setup asserts how many fast paths each configuration has. The
   generated runtime row asserts that its configuration contains no explicit runtime `TypeMap`.
+- **Same DI path.** The scoped-handler rows register the Meridian and the MediatR handler by type with the same lifetime (no
+  factory delegate, no instance); the direct floor resolves the concrete type through its own separate registration. A
+  factory that re-resolves the concrete type adds a delegate call and a second provider lookup (about 8 ns in an existing
+  scope on the evaluated host) to one contender only, so the preflight rejects any asymmetric registration shape.
+- **Same publisher contract.** Meridian's `TaskWhenAllPublisher` has a concurrency cap of 16 by default: per publication it
+  allocates a `SemaphoreSlim` and one async state machine per handler to honor the cap. MediatR 12.5.0's publisher is an
+  unbounded `Task.WhenAll`. The like-for-like comparison is therefore Meridian **unbounded** (`new TaskWhenAllPublisher(-1)`)
+  against MediatR; the **bounded** (cap of 16) row is shown separately and is a different contract, so the cost of the cap is not
+  read as the publisher's own fan-out overhead. The preflight reads each row's publisher and requires the labeled cap.
 - **Resources.** Providers, scopes and listeners created in setup are disposed in cleanup. Scope creation and disposal is
   inside the timed region for every contender or for none.
 - **No drift.** Cache and idempotency rows use either a prepopulated bounded store (hit/replay) or a deterministic synthetic
@@ -135,7 +144,7 @@ the generator-emitted internal attribute types appear twice.
   eagerly and Meridian compiles when the configuration is constructed. Only the "ready" rows (configuration plus first result) and the
   cold rows are equal work.
 - **Asynchronous latency, parallel throughput and I/O**: every handler completes synchronously; the task-when-all rows measure
-  the publisher's own overhead only. No Redis, EF Core or other provider latency is measured: cache and idempotency rows are
+  the publisher's own fan-out (unbounded rows) and the cost of its concurrency cap (bounded row) only. No Redis, EF Core or other provider latency is measured: cache and idempotency rows are
   behavior overhead with in-process providers.
 - **Release-package performance**: all runs use project references to source. No run of the packed candidate packages exists.
 - Cycles and null/limit/enum-failure behavior: correctness suites, not throughput scenarios.
