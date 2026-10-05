@@ -33,6 +33,7 @@ public class MapperConfiguration : IConfigurationProvider, IGeneratedMappingConf
     private readonly Dictionary<(Type, Type), object> _openGenericMappings = new();
     private readonly bool _allowNullCollections;
     private readonly bool _allowNullDestinationValues;
+    private readonly bool _allowUndefinedEnumValues;
     private readonly int _defaultMaxDepth;
     private readonly int _defaultMaxCollectionItems;
     private readonly Configuration.ValueTransformerCollection? _valueTransformers;
@@ -51,6 +52,7 @@ public class MapperConfiguration : IConfigurationProvider, IGeneratedMappingConf
         GeneratedResolvers = Array.AsReadOnly(expression.GeneratedResolvers.ToArray());
         _allowNullCollections = expression.AllowNullCollections;
         _allowNullDestinationValues = expression.AllowNullDestinationValues;
+        _allowUndefinedEnumValues = expression.AllowUndefinedEnumValues;
         _defaultMaxDepth = ValidatePositive(expression.DefaultMaxDepth, nameof(expression.DefaultMaxDepth));
         _defaultMaxCollectionItems = ValidatePositive(expression.DefaultMaxCollectionItems, nameof(expression.DefaultMaxCollectionItems));
         _valueTransformers = expression.ValueTransformers.HasTransformers ? expression.ValueTransformers : null;
@@ -75,6 +77,7 @@ public class MapperConfiguration : IConfigurationProvider, IGeneratedMappingConf
         GeneratedResolvers = Array.AsReadOnly(expression.GeneratedResolvers.ToArray());
         _allowNullCollections = expression.AllowNullCollections;
         _allowNullDestinationValues = expression.AllowNullDestinationValues;
+        _allowUndefinedEnumValues = expression.AllowUndefinedEnumValues;
         _defaultMaxDepth = ValidatePositive(expression.DefaultMaxDepth, nameof(expression.DefaultMaxDepth));
         _defaultMaxCollectionItems = ValidatePositive(expression.DefaultMaxCollectionItems, nameof(expression.DefaultMaxCollectionItems));
         _valueTransformers = expression.ValueTransformers.HasTransformers ? expression.ValueTransformers : null;
@@ -108,10 +111,15 @@ public class MapperConfiguration : IConfigurationProvider, IGeneratedMappingConf
         var allowNullDest = _allowNullDestinationValues;
         var hasTransformers = _valueTransformers is not null;
 
+        // Nested maps are looked up in the same finished set the engine's exact-pair FindTypeMap would
+        // consult, so an inlined nested pair is always the map the generic dispatch would have chosen.
+        TypeMap? FindExact(Type source, Type destination) =>
+            typeMaps.TryGetValue((source, destination), out var map) ? map : null;
+
         foreach (var typeMap in typeMaps.Values)
         {
             typeMap.CompiledFastPath =
-                FastPathCompiler.TryCompile(typeMap, allowNullDest, hasTransformers, GeneratedResolvers.Count > 0);
+                FastPathCompiler.TryCompile(typeMap, allowNullDest, hasTransformers, GeneratedResolvers.Count > 0, FindExact);
         }
     }
 
@@ -376,6 +384,9 @@ public class MapperConfiguration : IConfigurationProvider, IGeneratedMappingConf
 
     /// <inheritdoc />
     public bool AllowNullDestinationValues => _allowNullDestinationValues;
+
+    /// <inheritdoc />
+    public bool AllowUndefinedEnumValues => _allowUndefinedEnumValues;
 
     /// <inheritdoc />
     public int DefaultMaxDepth => _defaultMaxDepth;

@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Globalization;
 using System.Reflection;
 using Meridian.Mapping.Configuration;
 
@@ -40,12 +41,6 @@ public class MappingEngine
             return CreateDefaultValue(destinationType, allowNullOverride: null);
         }
 
-        // Check for collection mapping
-        if (IsCollectionMapping(sourceType, destinationType, out var srcElementType, out var destElementType))
-        {
-            return MapCollection(source, sourceType, destinationType, srcElementType!, destElementType!, context);
-        }
-
         var typeMap = ResolveTypeMap(source, sourceType, destinationType);
 
         if (typeMap == null)
@@ -57,23 +52,9 @@ public class MappingEngine
                     ? (destinationType.IsValueType ? Activator.CreateInstance(destinationType) : null)
                     : generated.Map(source, context);
             sourceType = source.GetType();
-
-            // Handle assignable types (same type, base type, etc.)
-            if (destinationType.IsAssignableFrom(sourceType))
-                return source;
-
-            // Handle enum conversions
-            if (sourceType.IsEnum && destinationType.IsEnum)
-                return Enum.ToObject(destinationType, source);
-
-            // Handle primitive/convertible types
-            if (IsConvertible(sourceType) && IsConvertible(destinationType))
-                return Convert.ChangeType(source, destinationType);
-
-            // Handle nullable target
-            var underlyingDest = Nullable.GetUnderlyingType(destinationType);
-            if (underlyingDest != null)
-                return Map(source, sourceType, underlyingDest, context);
+            var converted = ConvertValue(source, destinationType, context, destinationMember: null);
+            if (IsCompatibleDestinationValue(converted, destinationType))
+                return converted;
 
             throw new InvalidOperationException(
                 $"Missing mapping configuration for {sourceType.Name} -> {destinationType.Name}. " +
@@ -165,6 +146,15 @@ public class MappingEngine
         return destinationType.IsValueType ? Activator.CreateInstance(destinationType) : null;
     }
 
+    /// <summary>
+    /// Whether a map whose context sits <paramref name="relativeDepth"/> levels below <paramref name="context"/>
+    /// has reached its depth boundary. The single owner of the depth rule: <see cref="MapWithTypeMap"/> and
+    /// compiled nested maps both call it, so inlining cannot drift from the engine's per-map override and
+    /// inherited-limit semantics.
+    /// </summary>
+    internal bool IsDepthExceeded(ResolutionContext context, int relativeDepth, int? typeMapMaxDepth) =>
+        context.Depth + relativeDepth >= Math.Min(typeMapMaxDepth ?? _configurationProvider.DefaultMaxDepth, context.InheritedMaxDepth ?? int.MaxValue);
+
     private object? MapWithTypeMap(object source, TypeMap typeMap, ResolutionContext context)
     {
         // Check max depth — per-map override wins, otherwise fall back to the
@@ -172,8 +162,7 @@ public class MappingEngine
         // Hitting the cap returns default(TDestination) instead of throwing,
         // mirroring AutoMapper's MaxDepth semantics. The only difference vs
         // AutoMapper v14 is that the cap is ALWAYS active — no opt-in required.
-        var effectiveMaxDepth = Math.Min(typeMap.MaxDepth ?? _configurationProvider.DefaultMaxDepth, context.InheritedMaxDepth ?? int.MaxValue);
-        if (context.Depth >= effectiveMaxDepth)
+        if (IsDepthExceeded(context, relativeDepth: 0, typeMap.MaxDepth))
             return typeMap.DestinationType.IsValueType ? Activator.CreateInstance(typeMap.DestinationType) : null;
 
         // Fast path: if the TypeMap uses only the simple ForMember+MapFrom
@@ -372,6 +361,15 @@ public class MappingEngine
                 declaredValueType = null;
             }
 
+            // Match the compiled fast path: a null nullable source becomes the
+            // destination value type's default. Nullable<T> remains null.
+            if (value == null && destPropType.IsValueType &&
+                Nullable.GetUnderlyingType(destPropType) is null)
+            {
+                value = Activator.CreateInstance(destPropType);
+                declaredValueType = null;
+            }
+
             if (value != null && propertyMap.UseDestinationValue == true)
             {
                 value = TryMapOntoExistingDestinationValue(value, destination, propertyMap, childContext);
@@ -379,13 +377,12 @@ public class MappingEngine
 
             if (value != null && !destPropType.IsAssignableFrom(value.GetType()))
             {
-                value = ConvertValue(value, destPropType, childContext, declaredValueType);
+                value = ConvertValue(value, destPropType, childContext, propertyMap.DestinationProperty.Name, declaredValueType);
             }
             else if (value != null && propertyMap.UseDestinationValue != true)
             {
                 value = ConvertAssignableValue(value, declaredValueType ?? value.GetType(), destPropType, childContext);
             }
-
 
             // Apply value transformers
             if (value != null && _valueTransformers != null)
@@ -533,7 +530,12 @@ public class MappingEngine
             : generated.Map(value, context);
     }
 
-    private object? ConvertValue(object value, Type destType, ResolutionContext context, Type? declaredSourceType = null)
+    internal object? ConvertValue(
+        object value,
+        Type destType,
+        ResolutionContext context,
+        string? destinationMember = null,
+        Type? declaredSourceType = null)
     {
         var sourceType = value.GetType();
 
@@ -554,7 +556,7 @@ public class MappingEngine
         if (destType.IsEnum)
         {
             if (sourceType == typeof(string))
-                return Enum.Parse(destType, (string)value, ignoreCase: true);
+                return ConvertStringToEnum((string)value, destType, destinationMember);
             return Enum.ToObject(destType, value);
         }
 
@@ -580,6 +582,107 @@ public class MappingEngine
             return value.ToString();
 
         return value;
+    }
+
+    private object ConvertStringToEnum(string value, Type enumType, string? destinationMember)
+    {
+        object parsed;
+        try
+        {
+            parsed = Enum.Parse(enumType, value, ignoreCase: true);
+        }
+        catch (ArgumentException)
+        {
+            throw new MeridianEnumMappingException(value, enumType, destinationMember);
+        }
+        catch (OverflowException)
+        {
+            throw new MeridianEnumMappingException(value, enumType, destinationMember);
+        }
+
+        if (!_configurationProvider.AllowUndefinedEnumValues &&
+            !IsDefinedEnumStringValue(enumType, value, parsed))
+        {
+            throw new MeridianEnumMappingException(value, enumType, destinationMember);
+        }
+
+        return parsed;
+    }
+
+    private static bool IsCompatibleDestinationValue(object? value, Type destinationType)
+    {
+        if (value == null)
+            return !destinationType.IsValueType || Nullable.GetUnderlyingType(destinationType) != null;
+
+        var effectiveDestinationType = Nullable.GetUnderlyingType(destinationType) ?? destinationType;
+        return effectiveDestinationType.IsAssignableFrom(value.GetType());
+    }
+
+    private static bool IsDefinedEnumStringValue(Type enumType, string value, object parsed)
+    {
+        if (IsNumericEnumLiteral(value))
+        {
+            // Flags numeric literals are valid when every set bit is supplied
+            // by at least one defined member; named and numeric forms then
+            // accept the same composite values.
+            if (enumType.IsDefined(typeof(FlagsAttribute), inherit: false))
+                return AreFlagsBitsDefined(enumType, parsed);
+
+            return Enum.IsDefined(enumType, parsed);
+        }
+
+        if (!enumType.IsDefined(typeof(FlagsAttribute), inherit: false))
+            return Enum.IsDefined(enumType, parsed);
+
+        var definedNames = Enum.GetNames(enumType);
+        var names = value.Split(',', StringSplitOptions.TrimEntries);
+        return names.Length > 0 && names.All(name =>
+            name.Length > 0 && definedNames.Contains(name, StringComparer.OrdinalIgnoreCase));
+    }
+
+    private static bool AreFlagsBitsDefined(Type enumType, object value)
+    {
+        var underlyingType = Enum.GetUnderlyingType(enumType);
+        ulong definedMask = 0;
+        foreach (var member in Enum.GetValues(enumType))
+            definedMask |= GetEnumBits(member, underlyingType);
+
+        return (GetEnumBits(value, underlyingType) & ~definedMask) == 0;
+    }
+
+    private static ulong GetEnumBits(object value, Type underlyingType)
+        => Type.GetTypeCode(underlyingType) switch
+        {
+            TypeCode.SByte => unchecked((ulong)Convert.ToSByte(value, CultureInfo.InvariantCulture)),
+            TypeCode.Byte => Convert.ToByte(value, CultureInfo.InvariantCulture),
+            TypeCode.Int16 => unchecked((ulong)Convert.ToInt16(value, CultureInfo.InvariantCulture)),
+            TypeCode.UInt16 => Convert.ToUInt16(value, CultureInfo.InvariantCulture),
+            TypeCode.Int32 => unchecked((ulong)Convert.ToInt32(value, CultureInfo.InvariantCulture)),
+            TypeCode.UInt32 => Convert.ToUInt32(value, CultureInfo.InvariantCulture),
+            TypeCode.Int64 => unchecked((ulong)Convert.ToInt64(value, CultureInfo.InvariantCulture)),
+            TypeCode.UInt64 => Convert.ToUInt64(value, CultureInfo.InvariantCulture),
+            _ => throw new InvalidOperationException($"Unsupported enum underlying type '{underlyingType.Name}'.")
+        };
+
+    private static bool IsNumericEnumLiteral(string value)
+    {
+        var span = value.AsSpan().Trim();
+        if (span.Length == 0)
+            return false;
+
+        if (span[0] is '+' or '-')
+            span = span[1..];
+
+        if (span.Length == 0)
+            return false;
+
+        foreach (var character in span)
+        {
+            if (character is < '0' or > '9')
+                return false;
+        }
+
+        return true;
     }
 
     private object? MapCollection(object source, Type sourceType, Type destType,
@@ -757,7 +860,7 @@ public class MappingEngine
         }
     }
 
-    private static bool IsCollectionMapping(Type sourceType, Type destType,
+    internal static bool IsCollectionMapping(Type sourceType, Type destType,
         out Type? srcElementType, out Type? destElementType)
     {
         srcElementType = null;
@@ -825,6 +928,8 @@ public class MappingEngine
         return typeof(IConvertible).IsAssignableFrom(type);
     }
 
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, System.Reflection.PropertyInfo?> _genericCountPropertyCache = new();
+
     /// <summary>
     /// Returns the item count of <paramref name="source"/> without touching
     /// its enumerator, if the type exposes one. Checks the non-generic
@@ -835,8 +940,6 @@ public class MappingEngine
     /// generic interface. Returns <c>null</c> when the count is not
     /// cheaply available.
     /// </summary>
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, System.Reflection.PropertyInfo?> _genericCountPropertyCache = new();
-
     private static int? GetKnownCount(object source)
     {
         if (source is System.Collections.ICollection nonGeneric)

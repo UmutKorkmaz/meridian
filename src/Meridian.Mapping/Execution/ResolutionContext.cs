@@ -110,6 +110,14 @@ public class ResolutionContext
         return new ResolutionContext(Mapper, Depth + 1, ServiceProvider, _cacheOwner, Items, State, InheritedMaxDepth, InheritedMaxCollectionItems, AllowGeneratedAssignableMappings);
     }
 
+    /// <summary>
+    /// Creates a context <paramref name="relativeDepth"/> levels deeper in one step. Compiled nested maps use it
+    /// to produce the same context a chain of <see cref="IncrementDepth"/> calls would, without allocating
+    /// the intermediate contexts; the new instance shares the cache owner, items, state, services and limits.
+    /// </summary>
+    internal ResolutionContext AtRelativeDepth(int relativeDepth) =>
+        new(Mapper, Depth + relativeDepth, ServiceProvider, _cacheOwner, Items, State, InheritedMaxDepth, InheritedMaxCollectionItems, AllowGeneratedAssignableMappings);
+
     internal ResolutionContext ForExistingDestination() => new(Mapper, Depth, ServiceProvider, _cacheOwner, Items, State,
         InheritedMaxDepth, InheritedMaxCollectionItems, allowGeneratedAssignableMappings: false);
 

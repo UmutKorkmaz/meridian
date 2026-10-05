@@ -30,6 +30,9 @@ public class MapperConfigurationExpression : IMapperConfigurationExpression, IGe
     public bool AllowNullDestinationValues { get; set; } = true;
 
     /// <inheritdoc />
+    public bool AllowUndefinedEnumValues { get; set; }
+
+    /// <inheritdoc />
     public int DefaultMaxDepth { get; set; } = 64;
 
     /// <inheritdoc />
