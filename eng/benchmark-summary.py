@@ -2,11 +2,13 @@
 """Summarize and compare BenchmarkDotNet JSON reports (`*-report-full.json`) produced by eng/run-benchmarks.ps1.
 
   benchmark-summary.py summarize --results DIR --output FILE.md [--json FILE.json] [--manifest manifest.json]
+                                  [--baselines Method1,Method2,...]
   benchmark-summary.py compare --baseline DIR --candidate DIR --output FILE.md [--json FILE.json] [--threshold 10]
 
 `summarize` reports, for every scenario row, the mean, the 99.9% confidence half-width, the standard deviation, the
 coefficient of variation, the spread between per-launch means, allocation per operation and Gen0 collections. Nothing is
-hidden or averaged across scenarios.
+hidden or averaged across scenarios. With `--baselines`, a Ratio column divides each mean by the mean of the first listed
+method that exists in the same class and parameter combination (a derived figure without an error bar of its own).
 
 `compare` pairs rows of two runs of the *same* harness by full benchmark name and flags every mean regression larger
 than the threshold (default 10 percent, a trigger for investigation even when the row is noisy) and every allocation
@@ -113,6 +115,17 @@ def summarize(args) -> None:
     if not rows:
         fail(f"no benchmark reports found in {args.results}")
     ordered = sorted(rows.values(), key=sort_key)
+    baselines = [name for name in (args.baselines or "").split(",") if name]
+    reference: dict = {}
+    if baselines:
+        for row in ordered:
+            key = (row["class"], row["parameters"])
+            if row["method"] in baselines and (key not in reference or baselines.index(row["method"]) < baselines.index(reference[key]["method"])):
+                reference[key] = row
+    for row in ordered:
+        base = reference.get((row["class"], row["parameters"]))
+        row["ratioToBaseline"] = None if base is None else row["meanNs"] / base["meanNs"]
+        row["baselineMethod"] = None if base is None else base["method"]
     lines = ["# Benchmark summary", ""]
     if args.manifest:
         with open(args.manifest, encoding="utf-8") as handle:
@@ -125,20 +138,26 @@ def summarize(args) -> None:
     lines += [
         "Mean, 99.9% confidence half-width, standard deviation (across measured iterations), coefficient of variation,",
         "launch spread (largest per-launch mean over smallest, minus one), allocation per operation, Gen0 per 1000 ops.",
+    ]
+    if baselines:
+        lines += ["Ratio = mean divided by the mean of the baseline method of the same class and parameters (derived; no error bar)."]
+    lines += [
         "",
-        "| Scenario | Mean | +- 99.9% CI | StdDev | CV | Launch spread | Alloc B/op | Gen0/1k ops |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|",
+        "| Scenario | Mean | +- 99.9% CI | StdDev | CV | Launch spread | Ratio | Alloc B/op | Gen0/1k ops |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     current = None
     for row in ordered:
         if row["class"] != current:
             current = row["class"]
-            lines.append(f"| **{current}** | | | | | | | |")
+            lines.append(f"| **{current}** | | | | | | | | |")
         gen0 = "-" if row["gen0Per1000Ops"] is None else f"{row['gen0Per1000Ops']:.2f}"
         alloc = "-" if row["allocatedBytesPerOp"] is None else str(row["allocatedBytesPerOp"])
+        ratio = "-" if row["ratioToBaseline"] is None else (
+            "1.00 (baseline)" if row["method"] == row["baselineMethod"] else f"{row['ratioToBaseline']:.2f}")
         lines.append(
             f"| {label(row['method'], row['parameters'])} | {fmt_ns(row['meanNs'])} | {fmt_ns(row['errorNs'])} | "
-            f"{fmt_ns(row['stdDev'])} | {pct(row['cvPercent'])} | {pct(row['launchSpreadPercent'])} | {alloc} | {gen0} |")
+            f"{fmt_ns(row['stdDev'])} | {pct(row['cvPercent'])} | {pct(row['launchSpreadPercent'])} | {ratio} | {alloc} | {gen0} |")
     lines += ["", f"Rows: {len(ordered)}"]
     spreads = [r["launchSpreadPercent"] for r in ordered if r["launchSpreadPercent"] is not None]
     if spreads:
@@ -225,6 +244,7 @@ def main() -> None:
     s.add_argument("--output", required=True)
     s.add_argument("--json")
     s.add_argument("--manifest")
+    s.add_argument("--baselines", help="comma separated method names; the first one present in a class and parameter group is its ratio baseline")
     s.set_defaults(func=summarize)
     c = sub.add_parser("compare")
     c.add_argument("--baseline", required=True)

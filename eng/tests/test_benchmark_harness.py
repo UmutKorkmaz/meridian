@@ -208,6 +208,20 @@ class SummaryToolTests(unittest.TestCase):
         self.assertIn("Steady", text)
         self.assertIn("launch spread", text.lower())
 
+    def test_summarize_ratio_divides_by_the_first_baseline_present_in_each_group(self):
+        results = self.write_results("ratio", [("Manual", [100.0, 100.0], 10, 0), ("Fast", [50.0, 50.0], 10, 0), ("Slow", [300.0, 300.0], 10, 0)])
+        result = self.tool("summarize", "--results", results, "--output", self.root / "ratio.md", "--json", self.root / "ratio.json",
+                           "--baselines", "Missing,Manual")
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        rows = {row["method"]: row for row in json.loads((self.root / "ratio.json").read_text())["rows"]}
+        self.assertEqual("Manual", rows["Fast"]["baselineMethod"])
+        self.assertAlmostEqual(1.0, rows["Manual"]["ratioToBaseline"], places=6)
+        self.assertAlmostEqual(0.5, rows["Fast"]["ratioToBaseline"], places=2)
+        self.assertAlmostEqual(3.0, rows["Slow"]["ratioToBaseline"], places=2)
+        text = (self.root / "ratio.md").read_text()
+        self.assertIn("1.00 (baseline)", text)
+        self.assertIn("| Ratio |", text)
+
     def test_compare_flags_mean_regressions_over_ten_percent_and_any_allocation_increase(self):
         base = self.write_results("base", [
             ("Same", [100.0, 100.0], 100, 1), ("Slower", [100.0, 100.0], 100, 1), ("Fatter", [100.0, 100.0], 100, 1),

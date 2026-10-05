@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    # BenchmarkDotNet filter glob(s) over Namespace.Class.Method names, for example '*E3MappingFlat*'.
+    # BenchmarkDotNet filter glob(s) over Namespace.Class.Method names, for example '*E3MappingFlat*'. Several patterns may be
+    # given as an array or comma separated.
     [Parameter(Mandatory)][string[]] $Filter,
 
     # A directory that does not exist yet or is empty. It must not overlap the source trees. Raw BenchmarkDotNet artifacts,
@@ -57,6 +58,9 @@ function Test-IsUnder([string] $child, [string] $parent) {
 }
 
 # ---- argument validation (before anything is created) ----
+# `pwsh -File` passes 'a,b' as one string, so comma separated lists are split here; a comma cannot be part of a pattern.
+$Filter = @($Filter | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
+$BenchmarkArguments = @($BenchmarkArguments | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 foreach ($pattern in $Filter) {
     if ($pattern -notmatch "^[A-Za-z0-9_.*?][A-Za-z0-9_.*?()':, -]*$" -or $pattern.Contains('--')) {
         Fail "Filter pattern '$pattern' is invalid: it must start with a letter, digit, '_', '.', '*' or '?', and may not contain '--'."
@@ -373,7 +377,8 @@ try {
     $manifest.endedUtc = [DateTime]::UtcNow.ToString('o')
     Save-Manifest
     $summaryExit = Invoke-Logged $python @('-B', (Join-Path $repoRoot 'eng/benchmark-summary.py'), 'summarize', '--results', (Join-Path $bdnDirectory 'results'),
-        '--output', (Join-Path $out 'summary.md'), '--json', (Join-Path $out 'summary.json'), '--manifest', $manifestPath) (Join-Path $out 'summary.log') $repoRoot
+        '--output', (Join-Path $out 'summary.md'), '--json', (Join-Path $out 'summary.json'), '--manifest', $manifestPath,
+        '--baselines', 'Manual,DirectHandler,DiResolvedHandler,ManualFirstMap,DirectHandlerFirstCall,MeridianRuntime') (Join-Path $out 'summary.log') $repoRoot
     if ($summaryExit -ne 0) { Fail "Summary generation failed (exit $summaryExit)." }
     $exitCode = 0
     Write-Host "PASS benchmarks: $($manifest.scenarios.count) scenarios, manifest=$manifestPath"
