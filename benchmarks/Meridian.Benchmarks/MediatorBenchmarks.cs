@@ -283,17 +283,48 @@ public class E3MediatorScopePerOperation
 
 internal static class E3Scoped
 {
-    /// <summary>Scope validation is on so a captured scoped service would fail fast instead of silently benchmarking a bug.</summary>
+    /// <summary>
+    /// Scope validation is on so a captured scoped service would fail fast instead of silently benchmarking a bug.
+    /// Both libraries' handlers are registered by type (no factory), so neither pays a DI hop the other does not; the direct
+    /// floor resolves the concrete handler type, which has its own registration.
+    /// </summary>
     internal static ServiceProvider BuildProvider()
+    {
+        var services = BuildServices();
+        RequireSymmetricHandlerRegistrations(services);
+        return services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });
+    }
+
+    internal static ServiceCollection BuildServices()
     {
         var services = new ServiceCollection();
         services.AddScoped<IE3ScopedDependency, E3ScopedDependency>();
-        services.AddTransient<E3ScopedPingMeridianHandler>();
-        services.AddTransient<MeridianM.IRequestHandler<ScopedPing, Pong>>(sp => sp.GetRequiredService<E3ScopedPingMeridianHandler>());
+        services.AddTransient<E3ScopedPingMeridianHandler>(); // the floor's concrete resolution; never the Send path
+        services.AddTransient<MeridianM.IRequestHandler<ScopedPing, Pong>, E3ScopedPingMeridianHandler>();
         services.AddMeridianMediator(_ => { });
         services.AddTransient<MediatR.IRequestHandler<ScopedPing, Pong>, E3ScopedPingMediatRHandler>();
         E3MediatR.Add(services);
-        return services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });
+        return services;
+    }
+
+    /// <summary>
+    /// The Send path of both contenders must resolve its handler through the same kind of registration: a type with the same
+    /// lifetime, no factory delegate and no pre-built instance. An asymmetric registration (for example a factory that
+    /// re-resolves the concrete type) adds a delegate call and a second provider lookup to one contender only.
+    /// </summary>
+    internal static void RequireSymmetricHandlerRegistrations(IServiceCollection services)
+    {
+        var meridian = services.Where(d => d.ServiceType == typeof(MeridianM.IRequestHandler<ScopedPing, Pong>)).ToList();
+        var mediatR = services.Where(d => d.ServiceType == typeof(MediatR.IRequestHandler<ScopedPing, Pong>)).ToList();
+        E3Work.Require(meridian.Count == 1 && mediatR.Count == 1, $"expected exactly one scoped-handler registration per library but saw Meridian={meridian.Count}, MediatR={mediatR.Count}.");
+        foreach (var (name, descriptor) in new[] { ("Meridian", meridian[0]), ("MediatR", mediatR[0]) })
+        {
+            E3Work.Require(
+                descriptor.ImplementationType is not null && descriptor.ImplementationFactory is null && descriptor.ImplementationInstance is null,
+                $"{name}'s scoped handler is not registered by type; a factory or instance gives that contender a different DI path than the other.");
+        }
+
+        E3Work.Require(meridian[0].Lifetime == mediatR[0].Lifetime, "the scoped handlers are registered with different lifetimes.");
     }
 }
 

@@ -51,8 +51,9 @@ class PreflightTests(unittest.TestCase):
         match = re.search(r"SELFTEST PASS rejected=(\d+)", result.stdout)
         self.assertIsNotNone(match, result.stdout + result.stderr)
         # value mismatch, null mismatch, count mismatch, aliased instance, default-valued leaf, broken reference
-        # identity, collapsed distinct identity, a throwing scenario preflight and a benchmark type BenchmarkDotNet would reject.
-        self.assertGreaterEqual(int(match.group(1)), 10)
+        # identity, collapsed distinct identity, a throwing scenario preflight, a benchmark type BenchmarkDotNet would reject,
+        # a factory-registered (extra DI hop) scoped handler and a publisher whose concurrency cap is not the labeled one.
+        self.assertGreaterEqual(int(match.group(1)), 12)
 
     def test_preflight_runs_every_required_scenario_and_passes(self):
         result = run(["dotnet", str(DLL), "--e3-preflight"])
@@ -70,6 +71,46 @@ class PreflightTests(unittest.TestCase):
     def test_preflight_unknown_class_is_an_error(self):
         result = run(["dotnet", str(DLL), "--e3-preflight", "NoSuchScenarioClass"])
         self.assertNotEqual(0, result.returncode)
+
+
+class FairnessContractTests(unittest.TestCase):
+    """E3 fix round 1: registration shape and publisher contract must be like for like and disclosed."""
+
+    def test_task_when_all_rows_include_a_like_for_like_unbounded_meridian_row(self):
+        result = run(["dotnet", str(DLL), "--list", "flat", "--filter", "*E3NotificationTaskWhenAll*"])
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        methods = set(re.findall(r"E3NotificationTaskWhenAll\.(\w+)", result.stdout))
+        self.assertEqual({"MeridianTaskWhenAllUnbounded", "MeridianTaskWhenAllBounded16", "MediatRV12TaskWhenAll"}, methods)
+
+    def test_readmes_disclose_the_bounded_cap_and_the_scoped_registration_shape(self):
+        for path in (PROJECT / "README.md", ROOT / "benchmarks" / "results" / "README.md"):
+            text = path.read_text(encoding="utf-8").lower()
+            with self.subTest(path=path.name):
+                self.assertIn("unbounded", text)
+                self.assertIn("cap of 16", text)
+                self.assertIn("registered by type", text)
+
+
+class LoggedProcessTests(unittest.TestCase):
+    """The timed BenchmarkDotNet run must receive exactly the argument array that was listed and preflighted."""
+
+    def test_arguments_with_spaces_reach_the_child_unsplit(self):
+        module = ROOT / "eng" / "benchmark-process.psm1"
+        self.assertTrue(module.exists(), "eng/benchmark-process.psm1 is missing")
+        with tempfile.TemporaryDirectory() as temp:
+            out, err = Path(temp) / "child out.txt", Path(temp) / "child err.txt"
+            script = (
+                f"Import-Module '{module}' -Force; "
+                f"$p = Start-LoggedProcess -FilePath '{sys.executable}' -WorkingDirectory '{temp}' "
+                f"-StandardOutputPath '{out}' -StandardErrorPath '{err}' "
+                "-ArgumentList @('-c','import sys, json; print(json.dumps(sys.argv[1:])); print(\"E\", file=sys.stderr)',"
+                "'--filter','*Foo Bar*','/tmp/a b/x.dll',\"it's\",'say \"hi\"'); "
+                "$p.Process.WaitForExit(); Complete-LoggedProcess $p; exit $p.Process.ExitCode"
+            )
+            result = run([PWSH, "-NoProfile", "-NonInteractive", "-Command", script])
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            self.assertEqual(["--filter", "*Foo Bar*", "/tmp/a b/x.dll", "it's", 'say "hi"'], json.loads(out.read_text()))
+            self.assertEqual("E", err.read_text().strip())
 
 
 class RunScriptContractTests(unittest.TestCase):
@@ -116,6 +157,15 @@ class RunScriptContractTests(unittest.TestCase):
             result = self.script("-Filter", "--job", "-OutputDirectory", str(Path(temp) / "out"))
         self.assertNotEqual(0, result.returncode)
         self.assertIn("invalid", (result.stdout + result.stderr).lower())
+
+    def test_smoke_run_with_a_space_in_the_output_directory_times_the_listed_scenario(self):
+        with tempfile.TemporaryDirectory() as temp:
+            out = Path(temp) / "out dir with spaces"
+            result = self.script("-Filter", "*E3MappingFlat*", "-OutputDirectory", str(out), "-Profile", "Smoke")
+            self.assertEqual(0, result.returncode, result.stdout[-5000:] + result.stderr[-2000:])
+            manifest = json.loads((out / "manifest.json").read_text())
+            self.assertEqual("passed", manifest["status"])
+            self.assertTrue(list((out / "bdn" / "results").glob("*E3MappingFlat-report-full.json")))
 
     def test_smoke_run_writes_manifest_raw_results_and_summary(self):
         with tempfile.TemporaryDirectory() as temp:

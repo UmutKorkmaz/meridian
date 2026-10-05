@@ -36,6 +36,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'benchmark-process.psm1') -Force
 $repoRoot = [IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $sourceRoot = if ($SourceRoot) { [IO.Path]::GetFullPath($SourceRoot) } else { $repoRoot }
 $dotnet = (Get-Command dotnet -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
@@ -331,8 +332,10 @@ try {
     $aborted = $false
     try {
         $timedStart = [DateTime]::UtcNow
-        $process = Start-Process -FilePath $executable -ArgumentList $executableArguments -WorkingDirectory $dllDirectory `
-            -RedirectStandardOutput $runLog -RedirectStandardError $runErrors -PassThru -NoNewWindow
+        # An exact argument array (Start-Process would split a filter or path that contains a space).
+        $logged = Start-LoggedProcess -FilePath $executable -ArgumentList $executableArguments -WorkingDirectory $dllDirectory `
+            -StandardOutputPath $runLog -StandardErrorPath $runErrors
+        $process = $logged.Process
         $high = 0
         while (-not $process.WaitForExit($SampleSeconds * 1000)) {
             $condition = Get-HostConditions
@@ -345,6 +348,8 @@ try {
                 break
             }
         }
+        $null = $process.WaitForExit(30000)
+        Complete-LoggedProcess $logged
         $bdnExit = if ($aborted) { 1 } else { $process.ExitCode }
         $timedEnd = [DateTime]::UtcNow
     } finally {
@@ -378,7 +383,7 @@ try {
     Save-Manifest
     $summaryExit = Invoke-Logged $python @('-B', (Join-Path $repoRoot 'eng/benchmark-summary.py'), 'summarize', '--results', (Join-Path $bdnDirectory 'results'),
         '--output', (Join-Path $out 'summary.md'), '--json', (Join-Path $out 'summary.json'), '--manifest', $manifestPath,
-        '--baselines', 'Manual,DirectHandler,DiResolvedHandler,ManualFirstMap,DirectHandlerFirstCall,MeridianRuntime') (Join-Path $out 'summary.log') $repoRoot
+        '--baselines', 'Manual,DirectHandler,DiResolvedHandler,ManualFirstMap,DirectHandlerFirstCall,MeridianRuntime,MeridianTaskWhenAllUnbounded') (Join-Path $out 'summary.log') $repoRoot
     if ($summaryExit -ne 0) { Fail "Summary generation failed (exit $summaryExit)." }
     $exitCode = 0
     Write-Host "PASS benchmarks: $($manifest.scenarios.count) scenarios, manifest=$manifestPath"

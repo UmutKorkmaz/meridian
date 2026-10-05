@@ -10,7 +10,11 @@ using BenchmarkDotNet.Exporters.Json;
 using BenchmarkDotNet.Jobs;
 using BenchmarkDotNet.Loggers;
 using BenchmarkDotNet.Running;
+using Meridian.Mediator.Publishing;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Perfolizer.Horology;
+using MeridianM = Meridian.Mediator;
 
 namespace Meridian.Benchmarks;
 
@@ -350,6 +354,16 @@ internal static class E3Preflight
 
             throw new InvalidOperationException("detected: a sealed nested internal type is rejected, a public top-level unsealed type is accepted");
         });
+
+        MustReject("factory-registered scoped handler (extra DI hop)", () =>
+        {
+            var services = E3Scoped.BuildServices();
+            services.RemoveAll<MeridianM.IRequestHandler<ScopedPing, Pong>>();
+            services.AddTransient<MeridianM.IRequestHandler<ScopedPing, Pong>>(sp => sp.GetRequiredService<E3ScopedPingMeridianHandler>());
+            E3Scoped.RequireSymmetricHandlerRegistrations(services);
+        });
+        MustReject("publisher cap different from the row label", () =>
+            E3NotificationTaskWhenAll.RequireCap("selftest", new TaskWhenAllPublisher(), -1));
 
         foreach (var name in accepted)
         {
