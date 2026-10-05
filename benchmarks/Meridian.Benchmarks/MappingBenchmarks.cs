@@ -1,131 +1,30 @@
-using AutoMapper;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Configs;
 using BenchmarkDotNet.Jobs;
+using Mapster;
 using MeridianAlias = Meridian.Mapping;
 
 namespace Meridian.Benchmarks;
 
-/// <summary>
-/// Compares Meridian.Mapping against AutoMapper v14 (last MIT) and a
-/// hand-written baseline on a representative line-of-business payload:
-/// flat-to-flat DTO with ~10 scalar properties plus one nested object,
-/// mapped via <c>ForMember + MapFrom</c> only — the dominant pattern
-/// in real-world AutoMapper usage.
-/// </summary>
-/// <remarks>
-/// Expectations (from PLAN.md §4 Phase 3 exit criteria):
-/// Meridian within 2× of hand-written and Mapperly; faster than AutoMapper v14.
-/// </remarks>
-[MemoryDiagnoser]
-public class MappingBenchmarks
-{
-    private SourceOrder _source = default!;
-    private MeridianAlias.IMapper _meridian = default!;
-    private AutoMapper.IMapper _autoMapper = default!;
+// ============================================================================
+// Mapping benchmarks.
+//
+// * The E3 families (E3MappingFlat, E3MappingNested, E3MappingCollectionPayload, E3MappingDeep, E3MappingReferences) compare
+//   equal work: ONE complete new-result map of the same payload by a hand-written floor, Meridian runtime (interpreted and
+//   compiled, selected through the public TypeMap.CompiledFastPath property on independently created identical
+//   configurations), Meridian generated mapping (direct call and, separately, the generated runtime integration),
+//   Mapster (current), Mapperly (current) and AutoMapper at the explicitly pinned historical 14.0.0. The generated and
+//   Mapperly methods live in GeneratedMappingBenchmarks.cs (partial classes).
+// * Every contender is validated against independently specified expected values in GlobalSetup (and by the preflight
+//   before any timing): all members, collection element order, non-aliasing of nested objects, reference identity and
+//   source immutability. A contender that cannot do the same work is omitted and recorded, never timed.
+// * The older H1 classes further below (Flat/OneLevelNested/DeepBounded/CollectionPayload MappingBenchmarks) are the
+//   B8 harness (job B8-H1) and keep their bodies and job unchanged. The B8 P0/P1 evidence was produced by the frozen
+//   snapshot copies of this harness kept with the task artifacts, and the pair is rerun from those snapshots; these live
+//   copies are not part of the E3 evidence set.
+// * The April 2026 numbers in the benchmark README were produced by an earlier class of this file and are historical.
+// ============================================================================
 
-    [GlobalSetup]
-    public void Setup()
-    {
-        _source = new SourceOrder
-        {
-            Id = 42,
-            OrderNumber = "ORD-2026-00042",
-            CustomerName = "Acme Corp",
-            CustomerEmail = "ops@acme.example",
-            CreatedUtc = new DateTime(2026, 4, 14, 12, 0, 0, DateTimeKind.Utc),
-            UpdatedUtc = new DateTime(2026, 4, 14, 13, 30, 0, DateTimeKind.Utc),
-            Status = "Approved",
-            TotalGross = 12_345.67m,
-            TotalNet = 10_288.06m,
-            VatRate = 0.20m,
-            ShippingAddress = new SourceAddress
-            {
-                Line1 = "Maslak Mah.",
-                Line2 = "1453 Sk. No:2",
-                City = "Istanbul",
-                PostalCode = "34485",
-                Country = "TR",
-            },
-        };
-
-        var meridianConfig = new MeridianAlias.MapperConfiguration(cfg =>
-        {
-            cfg.CreateMap<SourceAddress, DestAddress>()
-                .ForMember(d => d.Line1, o => o.MapFrom(s => s.Line1))
-                .ForMember(d => d.Line2, o => o.MapFrom(s => s.Line2))
-                .ForMember(d => d.City, o => o.MapFrom(s => s.City))
-                .ForMember(d => d.PostalCode, o => o.MapFrom(s => s.PostalCode))
-                .ForMember(d => d.Country, o => o.MapFrom(s => s.Country));
-
-            cfg.CreateMap<SourceOrder, DestOrder>()
-                .ForMember(d => d.OrderId, o => o.MapFrom(s => s.Id))
-                .ForMember(d => d.Number, o => o.MapFrom(s => s.OrderNumber))
-                .ForMember(d => d.Customer, o => o.MapFrom(s => s.CustomerName))
-                .ForMember(d => d.Email, o => o.MapFrom(s => s.CustomerEmail))
-                .ForMember(d => d.Created, o => o.MapFrom(s => s.CreatedUtc))
-                .ForMember(d => d.Updated, o => o.MapFrom(s => s.UpdatedUtc))
-                .ForMember(d => d.Status, o => o.MapFrom(s => s.Status))
-                .ForMember(d => d.Gross, o => o.MapFrom(s => s.TotalGross))
-                .ForMember(d => d.Net, o => o.MapFrom(s => s.TotalNet))
-                .ForMember(d => d.Vat, o => o.MapFrom(s => s.VatRate))
-                .ForMember(d => d.ShipTo, o => o.MapFrom(s => s.ShippingAddress));
-        });
-        _meridian = meridianConfig.CreateMapper();
-
-        var autoMapperConfig = new AutoMapper.MapperConfiguration(cfg =>
-        {
-            cfg.CreateMap<SourceAddress, DestAddress>();
-            cfg.CreateMap<SourceOrder, DestOrder>()
-                .ForMember(d => d.OrderId, o => o.MapFrom(s => s.Id))
-                .ForMember(d => d.Number, o => o.MapFrom(s => s.OrderNumber))
-                .ForMember(d => d.Customer, o => o.MapFrom(s => s.CustomerName))
-                .ForMember(d => d.Email, o => o.MapFrom(s => s.CustomerEmail))
-                .ForMember(d => d.Created, o => o.MapFrom(s => s.CreatedUtc))
-                .ForMember(d => d.Updated, o => o.MapFrom(s => s.UpdatedUtc))
-                .ForMember(d => d.Status, o => o.MapFrom(s => s.Status))
-                .ForMember(d => d.Gross, o => o.MapFrom(s => s.TotalGross))
-                .ForMember(d => d.Net, o => o.MapFrom(s => s.TotalNet))
-                .ForMember(d => d.Vat, o => o.MapFrom(s => s.VatRate))
-                .ForMember(d => d.ShipTo, o => o.MapFrom(s => s.ShippingAddress));
-        });
-        _autoMapper = autoMapperConfig.CreateMapper();
-    }
-
-    [Benchmark(Baseline = true, Description = "Hand-written mapping (floor)")]
-    public DestOrder Manual()
-    {
-        return new DestOrder
-        {
-            OrderId = _source.Id,
-            Number = _source.OrderNumber,
-            Customer = _source.CustomerName,
-            Email = _source.CustomerEmail,
-            Created = _source.CreatedUtc,
-            Updated = _source.UpdatedUtc,
-            Status = _source.Status,
-            Gross = _source.TotalGross,
-            Net = _source.TotalNet,
-            Vat = _source.VatRate,
-            ShipTo = new DestAddress
-            {
-                Line1 = _source.ShippingAddress.Line1,
-                Line2 = _source.ShippingAddress.Line2,
-                City = _source.ShippingAddress.City,
-                PostalCode = _source.ShippingAddress.PostalCode,
-                Country = _source.ShippingAddress.Country,
-            },
-        };
-    }
-
-    [Benchmark(Description = "Meridian.Mapping")]
-    public DestOrder Meridian() =>
-        _meridian.Map<SourceOrder, DestOrder>(_source);
-
-    [Benchmark(Description = "AutoMapper v14 (last MIT)")]
-    public DestOrder AutoMapper() =>
-        _autoMapper.Map<SourceOrder, DestOrder>(_source);
-}
 
 public class SourceOrder
 {
@@ -444,7 +343,7 @@ public class CollectionPayloadMappingBenchmarks
     public BasketDto Compiled() => _compiled.Map<Basket, BasketDto>(_source);
 }
 
-internal static class OrderPayload
+internal static partial class OrderPayload
 {
     public static SourceOrder Create() => new()
     {
@@ -510,7 +409,7 @@ internal static class OrderPayload
     };
 }
 
-internal static class BasketPayload
+internal static partial class BasketPayload
 {
     public static void Configure(MeridianAlias.IMapperConfigurationExpression cfg)
     {
@@ -610,7 +509,7 @@ public class BasketProductDto
 }
 
 
-internal static class DeepChain
+internal static partial class DeepChain
 {
     public static void Configure(MeridianAlias.IMapperConfigurationExpression cfg)
     {
@@ -704,3 +603,558 @@ public sealed class S15 { public int Level { get; set; } public string Label { g
 public sealed class D15 { public int Level { get; set; } public string Label { get; set; } = ""; public decimal Amount { get; set; } public D16? Child { get; set; } }
 public sealed class S16 { public int Level { get; set; } public string Label { get; set; } = ""; public decimal Amount { get; set; } }
 public sealed class D16 { public int Level { get; set; } public string Label { get; set; } = ""; public decimal Amount { get; set; } }
+
+
+// ============================================================================
+// E3 payload helpers: deterministic payloads, independently specified expectations and the equivalence verifiers that
+// run in GlobalSetup and in the preflight (never inside a timed method).
+// ============================================================================
+
+internal static class FlatPayload
+{
+    public static FlatSource Create() => new()
+    {
+        Id = 42, Name = "Acme Corp", Email = "ops@acme.example", Status = "Approved", Notes = "bulk",
+        Created = new DateTime(2026, 4, 14, 12, 0, 0, DateTimeKind.Utc), Version = 7L,
+        Total = 12_345.67m, Net = 10_288.06m, Vat = 0.20m,
+    };
+
+    public static FlatDest ManualMap(FlatSource s) => new()
+    {
+        Id = s.Id, Name = s.Name, Email = s.Email, Status = s.Status, Notes = s.Notes,
+        Created = s.Created, Version = s.Version, Total = s.Total, Net = s.Net, Vat = s.Vat,
+    };
+
+    /// <summary>Expected values written out literally, independent of every mapper and of <see cref="ManualMap"/>.</summary>
+    private static FlatDest Expected() => new()
+    {
+        Id = 42, Name = "Acme Corp", Email = "ops@acme.example", Status = "Approved", Notes = "bulk",
+        Created = new DateTime(2026, 4, 14, 12, 0, 0, DateTimeKind.Utc), Version = 7L,
+        Total = 12_345.67m, Net = 10_288.06m, Vat = 0.20m,
+    };
+
+    public static void Verify(string contender, FlatSource source, FlatDest result)
+    {
+        NestedPathSupport.Require("flat/" + contender, NestedPathSupport.DeepCompare(Expected(), result), 10);
+        NestedPathSupport.DeepCompare(Create(), source);
+    }
+}
+
+internal static partial class OrderPayload
+{
+    public static void ConfigureAutoMapper(AutoMapper.IMapperConfigurationExpression cfg)
+    {
+        cfg.CreateMap<SourceAddress, DestAddress>();
+        cfg.CreateMap<SourceOrder, DestOrder>()
+            .ForMember(d => d.OrderId, o => o.MapFrom(s => s.Id))
+            .ForMember(d => d.Number, o => o.MapFrom(s => s.OrderNumber))
+            .ForMember(d => d.Customer, o => o.MapFrom(s => s.CustomerName))
+            .ForMember(d => d.Email, o => o.MapFrom(s => s.CustomerEmail))
+            .ForMember(d => d.Created, o => o.MapFrom(s => s.CreatedUtc))
+            .ForMember(d => d.Updated, o => o.MapFrom(s => s.UpdatedUtc))
+            .ForMember(d => d.Gross, o => o.MapFrom(s => s.TotalGross))
+            .ForMember(d => d.Net, o => o.MapFrom(s => s.TotalNet))
+            .ForMember(d => d.Vat, o => o.MapFrom(s => s.VatRate))
+            .ForMember(d => d.ShipTo, o => o.MapFrom(s => s.ShippingAddress));
+    }
+
+    /// <summary>A fully compiled Mapster configuration for the order pair (explicit renames, nested address).</summary>
+    public static TypeAdapterConfig CreateMapsterConfig()
+    {
+        var mapster = new TypeAdapterConfig();
+        mapster.NewConfig<SourceAddress, DestAddress>();
+        mapster.NewConfig<SourceOrder, DestOrder>()
+            .Map(d => d.OrderId, s => s.Id).Map(d => d.Number, s => s.OrderNumber).Map(d => d.Customer, s => s.CustomerName)
+            .Map(d => d.Email, s => s.CustomerEmail).Map(d => d.Created, s => s.CreatedUtc).Map(d => d.Updated, s => s.UpdatedUtc)
+            .Map(d => d.Gross, s => s.TotalGross).Map(d => d.Net, s => s.TotalNet).Map(d => d.Vat, s => s.VatRate)
+            .Map(d => d.ShipTo, s => s.ShippingAddress);
+        mapster.Compile();
+        return mapster;
+    }
+
+    private static DestOrder Expected() => new()
+    {
+        OrderId = 42, Number = "ORD-2026-00042", Customer = "Acme Corp", Email = "ops@acme.example",
+        Created = new DateTime(2026, 4, 14, 12, 0, 0, DateTimeKind.Utc),
+        Updated = new DateTime(2026, 4, 14, 13, 30, 0, DateTimeKind.Utc),
+        Status = "Approved", Gross = 12_345.67m, Net = 10_288.06m, Vat = 0.20m,
+        ShipTo = new DestAddress { Line1 = "Maslak Mah.", Line2 = "1453 Sk. No:2", City = "Istanbul", PostalCode = "34485", Country = "TR" },
+    };
+
+    public static void Verify(string contender, SourceOrder source, DestOrder result)
+    {
+        NestedPathSupport.Require("nested/" + contender, NestedPathSupport.DeepCompare(Expected(), result), 15);
+        NestedPathSupport.DeepCompare(Create(), source);
+    }
+}
+
+internal static partial class BasketPayload
+{
+    public static Basket Create(int items)
+    {
+        var basket = new Basket { Id = 9, Owner = "ops@acme.example" };
+        for (var i = 1; i <= items; i++)
+        {
+            basket.Lines.Add(new BasketLine
+            {
+                Number = i, Sku = $"SKU-{i:0000}", Quantity = i * 1.5m, Price = 9.99m + i,
+                Product = new BasketProduct { Name = $"Product {i}", Category = "Hardware", Origin = "TR" },
+            });
+        }
+
+        return basket;
+    }
+
+    private static BasketDto Expected(int items)
+    {
+        var dto = new BasketDto { Id = 9, Owner = "ops@acme.example" };
+        for (var i = 1; i <= items; i++)
+        {
+            dto.Lines.Add(new BasketLineDto
+            {
+                Number = i, Sku = "SKU-" + i.ToString("0000", System.Globalization.CultureInfo.InvariantCulture),
+                Quantity = i * 1.5m, Price = 9.99m + i,
+                Product = new BasketProductDto { Name = "Product " + i.ToString(System.Globalization.CultureInfo.InvariantCulture), Category = "Hardware", Origin = "TR" },
+            });
+        }
+
+        return dto;
+    }
+
+    public static void Verify(string contender, int items, Basket source, BasketDto result)
+    {
+        NestedPathSupport.Require($"collection{items}/{contender}", NestedPathSupport.DeepCompare(Expected(items), result), 2 + items * 7);
+        if (result.Lines is null || result.Lines.Count != items)
+            throw new InvalidOperationException($"collection{items}/{contender}: wrong collection.");
+        NestedPathSupport.DeepCompare(Create(items), source);
+    }
+}
+
+internal static partial class DeepChain
+{
+    public static readonly (Type Source, Type Destination)[] Pairs =
+    [
+        (typeof(S01), typeof(D01)), (typeof(S02), typeof(D02)), (typeof(S03), typeof(D03)), (typeof(S04), typeof(D04)),
+        (typeof(S05), typeof(D05)), (typeof(S06), typeof(D06)), (typeof(S07), typeof(D07)), (typeof(S08), typeof(D08)),
+        (typeof(S09), typeof(D09)), (typeof(S10), typeof(D10)), (typeof(S11), typeof(D11)), (typeof(S12), typeof(D12)),
+        (typeof(S13), typeof(D13)), (typeof(S14), typeof(D14)), (typeof(S15), typeof(D15)), (typeof(S16), typeof(D16)),
+    ];
+
+    /// <summary>Walks the destination chain with independently computed expectations (level i: i, "level-i", i + 0.25).</summary>
+    public static void Verify(string contender, int depth, S01 source, object? result)
+    {
+        object? node = result;
+        for (var level = 1; level <= depth; level++)
+        {
+            if (node is null)
+                throw new InvalidOperationException($"deep{depth}/{contender}: chain ends before level {level}.");
+            var type = node.GetType();
+            if (type.Name != "D" + level.ToString("00", System.Globalization.CultureInfo.InvariantCulture))
+                throw new InvalidOperationException($"deep{depth}/{contender}: level {level} has type {type.Name}.");
+            var actualLevel = (int)type.GetProperty("Level")!.GetValue(node)!;
+            var label = (string)type.GetProperty("Label")!.GetValue(node)!;
+            var amount = (decimal)type.GetProperty("Amount")!.GetValue(node)!;
+            if (actualLevel != level || label != "level-" + level.ToString(System.Globalization.CultureInfo.InvariantCulture) || amount != level + 0.25m)
+                throw new InvalidOperationException($"deep{depth}/{contender}: level {level} holds {actualLevel}/{label}/{amount}.");
+            node = type.GetProperty("Child")?.GetValue(node);
+        }
+
+        if (node is not null)
+            throw new InvalidOperationException($"deep{depth}/{contender}: chain is longer than {depth} levels.");
+        NestedPathSupport.DeepCompare(BuildDeepSource(depth), source);
+    }
+}
+
+/// <summary>A small repeated-reference DAG: Left and Right are the SAME source node, Distinct is a different node with equal values.</summary>
+public class RefNode
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = "";
+}
+
+public class RefNodeDto
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = "";
+}
+
+public class RefGraph
+{
+    public RefNode Left { get; set; } = default!;
+    public RefNode Right { get; set; } = default!;
+    public RefNode Distinct { get; set; } = default!;
+}
+
+public class RefGraphDto
+{
+    public RefNodeDto Left { get; set; } = default!;
+    public RefNodeDto Right { get; set; } = default!;
+    public RefNodeDto Distinct { get; set; } = default!;
+}
+
+internal static class ReferencePayload
+{
+    public static RefGraph Create()
+    {
+        var shared = new RefNode { Id = 7, Name = "shared" };
+        return new RefGraph { Left = shared, Right = shared, Distinct = new RefNode { Id = 7, Name = "shared" } };
+    }
+
+    /// <summary>The hand-written floor implements the same identity tracking by source reference.</summary>
+    public static RefGraphDto ManualMap(RefGraph s)
+    {
+        var seen = new Dictionary<object, RefNodeDto>(ReferenceEqualityComparer.Instance);
+        return new RefGraphDto { Left = Node(s.Left, seen), Right = Node(s.Right, seen), Distinct = Node(s.Distinct, seen) };
+
+        static RefNodeDto Node(RefNode source, Dictionary<object, RefNodeDto> seen)
+        {
+            if (!seen.TryGetValue(source, out var node))
+            {
+                node = new RefNodeDto { Id = source.Id, Name = source.Name };
+                seen.Add(source, node);
+            }
+
+            return node;
+        }
+    }
+
+    public static void Verify(string contender, RefGraph source, RefGraphDto result)
+    {
+        if (result is null || result.Left is null || result.Right is null || result.Distinct is null)
+            throw new InvalidOperationException($"references/{contender}: incomplete result.");
+        if (!ReferenceEquals(result.Left, result.Right))
+            throw new InvalidOperationException($"references/{contender}: a repeated source reference was not mapped to one destination instance.");
+        if (ReferenceEquals(result.Distinct, result.Left))
+            throw new InvalidOperationException($"references/{contender}: two distinct equal-valued sources collapsed to one destination instance.");
+        foreach (var node in new[] { result.Left, result.Distinct })
+        {
+            if (node.Id != 7 || node.Name != "shared")
+                throw new InvalidOperationException($"references/{contender}: wrong node values {node.Id}/{node.Name}.");
+        }
+
+        if (!ReferenceEquals(source.Left, source.Right) || ReferenceEquals(source.Left, source.Distinct)
+            || source.Left.Id != 7 || source.Left.Name != "shared")
+            throw new InvalidOperationException($"references/{contender}: the source graph was modified.");
+    }
+}
+
+// ============================================================================
+// E3 mapping families (runtime, manual and competitor methods). Generated and Mapperly methods: GeneratedMappingBenchmarks.cs.
+// ============================================================================
+
+/// <summary>Flat payload: ten scalars, no nesting.</summary>
+[Config(typeof(E3HotConfig))]
+[BenchmarkCategory("E3", "mapping")]
+public partial class E3MappingFlat
+{
+    private FlatSource _source = default!;
+    private MeridianAlias.IMapper _compiled = default!;
+    private MeridianAlias.IMapper _interpreted = default!;
+    private MeridianAlias.IMapper _generatedRuntime = default!;
+    private global::MapsterMapper.Mapper _mapster = default!;
+    private AutoMapper.IMapper _autoMapper = default!;
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        _source = FlatPayload.Create();
+        (_compiled, _interpreted) = NestedPathSupport.Create(cfg => cfg.CreateMap<FlatSource, FlatDest>(), expectedCompiledMaps: 1);
+        _generatedRuntime = Generated.GeneratedMappingSupport.CreateRuntimeMapper(new Generated.E3GeneratedFlatMaps.GeneratedResolver());
+
+        var mapster = new Mapster.TypeAdapterConfig();
+        mapster.NewConfig<FlatSource, FlatDest>();
+        mapster.Compile();
+        _mapster = new global::MapsterMapper.Mapper(mapster);
+
+        _autoMapper = new AutoMapper.MapperConfiguration(cfg => cfg.CreateMap<FlatSource, FlatDest>()).CreateMapper();
+        Preflight();
+    }
+
+    /// <summary>Runs every contender once and verifies it against the independently specified expectation.</summary>
+    public void Preflight()
+    {
+        FlatPayload.Verify(nameof(Manual), _source, Manual());
+        FlatPayload.Verify(nameof(MeridianInterpreted), _source, MeridianInterpreted());
+        FlatPayload.Verify(nameof(MeridianCompiled), _source, MeridianCompiled());
+        FlatPayload.Verify(nameof(MeridianGeneratedDirect), _source, MeridianGeneratedDirect());
+        FlatPayload.Verify(nameof(MeridianGeneratedRuntime), _source, MeridianGeneratedRuntime());
+        FlatPayload.Verify(nameof(Mapster), _source, Mapster());
+        FlatPayload.Verify(nameof(Mapperly), _source, Mapperly());
+        FlatPayload.Verify(nameof(AutoMapperV14), _source, AutoMapperV14());
+    }
+
+    [Benchmark(Baseline = true)]
+    public FlatDest Manual() => FlatPayload.ManualMap(_source);
+
+    [Benchmark]
+    public FlatDest MeridianInterpreted() => _interpreted.Map<FlatSource, FlatDest>(_source);
+
+    [Benchmark]
+    public FlatDest MeridianCompiled() => _compiled.Map<FlatSource, FlatDest>(_source);
+
+    [Benchmark]
+    public FlatDest MeridianGeneratedRuntime() => _generatedRuntime.Map<FlatSource, FlatDest>(_source);
+
+    [Benchmark]
+    public FlatDest Mapster() => _mapster.Map<FlatSource, FlatDest>(_source);
+
+    [Benchmark]
+    public FlatDest AutoMapperV14() => _autoMapper.Map<FlatSource, FlatDest>(_source);
+}
+
+/// <summary>An order with ten renamed scalar members and one nested address (the original April benchmark shape).</summary>
+[Config(typeof(E3HotConfig))]
+[BenchmarkCategory("E3", "mapping")]
+public partial class E3MappingNested
+{
+    private SourceOrder _source = default!;
+    private MeridianAlias.IMapper _compiled = default!;
+    private MeridianAlias.IMapper _interpreted = default!;
+    private MeridianAlias.IMapper _generatedRuntime = default!;
+    private global::MapsterMapper.Mapper _mapster = default!;
+    private AutoMapper.IMapper _autoMapper = default!;
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        _source = OrderPayload.Create();
+        (_compiled, _interpreted) = NestedPathSupport.Create(OrderPayload.ConfigureMeridian, expectedCompiledMaps: 2);
+        _generatedRuntime = Generated.GeneratedMappingSupport.CreateRuntimeMapper(new Generated.E3GeneratedOrderMaps.GeneratedResolver());
+
+        _mapster = new global::MapsterMapper.Mapper(OrderPayload.CreateMapsterConfig());
+        _autoMapper = new AutoMapper.MapperConfiguration(OrderPayload.ConfigureAutoMapper).CreateMapper();
+        Preflight();
+    }
+
+    public void Preflight()
+    {
+        OrderPayload.Verify(nameof(Manual), _source, Manual());
+        OrderPayload.Verify(nameof(MeridianInterpreted), _source, MeridianInterpreted());
+        OrderPayload.Verify(nameof(MeridianCompiled), _source, MeridianCompiled());
+        OrderPayload.Verify(nameof(MeridianGeneratedDirect), _source, MeridianGeneratedDirect());
+        OrderPayload.Verify(nameof(MeridianGeneratedRuntime), _source, MeridianGeneratedRuntime());
+        OrderPayload.Verify(nameof(Mapster), _source, Mapster());
+        OrderPayload.Verify(nameof(Mapperly), _source, Mapperly());
+        OrderPayload.Verify(nameof(AutoMapperV14), _source, AutoMapperV14());
+    }
+
+    [Benchmark(Baseline = true)]
+    public DestOrder Manual() => OrderPayload.ManualMap(_source);
+
+    [Benchmark]
+    public DestOrder MeridianInterpreted() => _interpreted.Map<SourceOrder, DestOrder>(_source);
+
+    [Benchmark]
+    public DestOrder MeridianCompiled() => _compiled.Map<SourceOrder, DestOrder>(_source);
+
+    [Benchmark]
+    public DestOrder MeridianGeneratedRuntime() => _generatedRuntime.Map<SourceOrder, DestOrder>(_source);
+
+    [Benchmark]
+    public DestOrder Mapster() => _mapster.Map<SourceOrder, DestOrder>(_source);
+
+    [Benchmark]
+    public DestOrder AutoMapperV14() => _autoMapper.Map<SourceOrder, DestOrder>(_source);
+}
+
+/// <summary>
+/// A basket of 0, 1, 32 or 256 lines, each with a nested product. The root has a collection destination, so Meridian keeps it
+/// on the interpreter in every runtime mode; the per-line maps are the eligible compiled maps.
+/// </summary>
+[Config(typeof(E3HotConfig))]
+[BenchmarkCategory("E3", "mapping")]
+public partial class E3MappingCollectionPayload
+{
+    private Basket _source = default!;
+    private MeridianAlias.IMapper _compiled = default!;
+    private MeridianAlias.IMapper _interpreted = default!;
+    private MeridianAlias.IMapper _generatedRuntime = default!;
+    private global::MapsterMapper.Mapper _mapster = default!;
+    private AutoMapper.IMapper _autoMapper = default!;
+
+    [Params(0, 1, 32, 256)]
+    public int Items { get; set; }
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        _source = BasketPayload.Create(Items);
+        (_compiled, _interpreted) = NestedPathSupport.Create(BasketPayload.Configure, expectedCompiledMaps: 2);
+        _generatedRuntime = Generated.GeneratedMappingSupport.CreateRuntimeMapper(new Generated.E3GeneratedBasketMaps.GeneratedResolver());
+
+        var mapster = new Mapster.TypeAdapterConfig();
+        mapster.NewConfig<BasketProduct, BasketProductDto>();
+        mapster.NewConfig<BasketLine, BasketLineDto>();
+        mapster.NewConfig<Basket, BasketDto>();
+        mapster.Compile();
+        _mapster = new global::MapsterMapper.Mapper(mapster);
+
+        _autoMapper = new AutoMapper.MapperConfiguration(cfg =>
+        {
+            cfg.CreateMap<BasketProduct, BasketProductDto>();
+            cfg.CreateMap<BasketLine, BasketLineDto>();
+            cfg.CreateMap<Basket, BasketDto>();
+        }).CreateMapper();
+        Preflight();
+    }
+
+    public void Preflight()
+    {
+        BasketPayload.Verify(nameof(Manual), Items, _source, Manual());
+        BasketPayload.Verify(nameof(MeridianInterpreted), Items, _source, MeridianInterpreted());
+        BasketPayload.Verify(nameof(MeridianCompiled), Items, _source, MeridianCompiled());
+        BasketPayload.Verify(nameof(MeridianGeneratedDirect), Items, _source, MeridianGeneratedDirect());
+        BasketPayload.Verify(nameof(MeridianGeneratedRuntime), Items, _source, MeridianGeneratedRuntime());
+        BasketPayload.Verify(nameof(Mapster), Items, _source, Mapster());
+        BasketPayload.Verify(nameof(Mapperly), Items, _source, Mapperly());
+        BasketPayload.Verify(nameof(AutoMapperV14), Items, _source, AutoMapperV14());
+    }
+
+    [Benchmark(Baseline = true)]
+    public BasketDto Manual() => BasketPayload.ManualMap(_source);
+
+    [Benchmark]
+    public BasketDto MeridianInterpreted() => _interpreted.Map<Basket, BasketDto>(_source);
+
+    [Benchmark]
+    public BasketDto MeridianCompiled() => _compiled.Map<Basket, BasketDto>(_source);
+
+    [Benchmark]
+    public BasketDto MeridianGeneratedRuntime() => _generatedRuntime.Map<Basket, BasketDto>(_source);
+
+    [Benchmark]
+    public BasketDto Mapster() => _mapster.Map<Basket, BasketDto>(_source);
+
+    [Benchmark]
+    public BasketDto AutoMapperV14() => _autoMapper.Map<Basket, BasketDto>(_source);
+}
+
+/// <summary>A chain of 4 or 16 nested objects, each its own explicit pair (bounded far below the depth cap of 64).</summary>
+[Config(typeof(E3HotConfig))]
+[BenchmarkCategory("E3", "mapping")]
+public partial class E3MappingDeep
+{
+    private S01 _source = default!;
+    private MeridianAlias.IMapper _compiled = default!;
+    private MeridianAlias.IMapper _interpreted = default!;
+    private MeridianAlias.IMapper _generatedRuntime = default!;
+    private global::MapsterMapper.Mapper _mapster = default!;
+    private AutoMapper.IMapper _autoMapper = default!;
+
+    [Params(4, 16)]
+    public int Depth { get; set; }
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        _source = DeepChain.BuildDeepSource(Depth);
+        (_compiled, _interpreted) = NestedPathSupport.Create(DeepChain.Configure, expectedCompiledMaps: 16);
+        _generatedRuntime = Generated.GeneratedMappingSupport.CreateRuntimeMapper(new Generated.E3GeneratedDeepMaps.GeneratedResolver());
+
+        var mapster = new Mapster.TypeAdapterConfig();
+        foreach (var (source, destination) in DeepChain.Pairs)
+            mapster.NewConfig(source, destination);
+        mapster.Compile();
+        _mapster = new global::MapsterMapper.Mapper(mapster);
+
+        _autoMapper = new AutoMapper.MapperConfiguration(cfg =>
+        {
+            foreach (var (source, destination) in DeepChain.Pairs)
+                cfg.CreateMap(source, destination);
+        }).CreateMapper();
+        Preflight();
+    }
+
+    public void Preflight()
+    {
+        DeepChain.Verify(nameof(Manual), Depth, _source, Manual());
+        DeepChain.Verify(nameof(MeridianInterpreted), Depth, _source, MeridianInterpreted());
+        DeepChain.Verify(nameof(MeridianCompiled), Depth, _source, MeridianCompiled());
+        DeepChain.Verify(nameof(MeridianGeneratedDirect), Depth, _source, MeridianGeneratedDirect());
+        DeepChain.Verify(nameof(MeridianGeneratedRuntime), Depth, _source, MeridianGeneratedRuntime());
+        DeepChain.Verify(nameof(Mapster), Depth, _source, Mapster());
+        DeepChain.Verify(nameof(Mapperly), Depth, _source, Mapperly());
+        DeepChain.Verify(nameof(AutoMapperV14), Depth, _source, AutoMapperV14());
+    }
+
+    [Benchmark(Baseline = true)]
+    public D01 Manual() => DeepChain.ManualD01(_source);
+
+    [Benchmark]
+    public D01 MeridianInterpreted() => _interpreted.Map<S01, D01>(_source);
+
+    [Benchmark]
+    public D01 MeridianCompiled() => _compiled.Map<S01, D01>(_source);
+
+    [Benchmark]
+    public D01 MeridianGeneratedRuntime() => _generatedRuntime.Map<S01, D01>(_source);
+
+    [Benchmark]
+    public D01 Mapster() => _mapster.Map<S01, D01>(_source);
+
+    [Benchmark]
+    public D01 AutoMapperV14() => _autoMapper.Map<S01, D01>(_source);
+}
+
+/// <summary>
+/// Repeated-reference graph: every contender preserves source reference identity inside one map operation (the same source
+/// node maps to one destination node; an equal-valued but distinct source node maps to a distinct destination node). The
+/// hand-written floor implements the same identity tracking. Reference preservation keeps Meridian on the interpreter, which
+/// is asserted, so there is a single runtime row. Generated runtime integration is omitted for this shape: only the direct
+/// generated call is timed (see the results README).
+/// </summary>
+[Config(typeof(E3HotConfig))]
+[BenchmarkCategory("E3", "mapping")]
+public partial class E3MappingReferences
+{
+    private RefGraph _source = default!;
+    private MeridianAlias.IMapper _runtime = default!;
+    private global::MapsterMapper.Mapper _mapster = default!;
+    private AutoMapper.IMapper _autoMapper = default!;
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        _source = ReferencePayload.Create();
+        (_runtime, _) = NestedPathSupport.Create(cfg =>
+        {
+            cfg.CreateMap<RefNode, RefNodeDto>().PreserveReferences();
+            cfg.CreateMap<RefGraph, RefGraphDto>().PreserveReferences();
+        }, expectedCompiledMaps: 0);
+
+        var mapster = new Mapster.TypeAdapterConfig();
+        mapster.NewConfig<RefNode, RefNodeDto>().PreserveReference(true);
+        mapster.NewConfig<RefGraph, RefGraphDto>().PreserveReference(true);
+        mapster.Compile();
+        _mapster = new global::MapsterMapper.Mapper(mapster);
+
+        _autoMapper = new AutoMapper.MapperConfiguration(cfg =>
+        {
+            cfg.CreateMap<RefNode, RefNodeDto>().PreserveReferences();
+            cfg.CreateMap<RefGraph, RefGraphDto>().PreserveReferences();
+        }).CreateMapper();
+        Preflight();
+    }
+
+    public void Preflight()
+    {
+        ReferencePayload.Verify(nameof(Manual), _source, Manual());
+        ReferencePayload.Verify(nameof(MeridianRuntime), _source, MeridianRuntime());
+        ReferencePayload.Verify(nameof(MeridianGeneratedDirect), _source, MeridianGeneratedDirect());
+        ReferencePayload.Verify(nameof(Mapster), _source, Mapster());
+        ReferencePayload.Verify(nameof(Mapperly), _source, Mapperly());
+        ReferencePayload.Verify(nameof(AutoMapperV14), _source, AutoMapperV14());
+    }
+
+    [Benchmark(Baseline = true)]
+    public RefGraphDto Manual() => ReferencePayload.ManualMap(_source);
+
+    [Benchmark]
+    public RefGraphDto MeridianRuntime() => _runtime.Map<RefGraph, RefGraphDto>(_source);
+
+    [Benchmark]
+    public RefGraphDto Mapster() => _mapster.Map<RefGraph, RefGraphDto>(_source);
+
+    [Benchmark]
+    public RefGraphDto AutoMapperV14() => _autoMapper.Map<RefGraph, RefGraphDto>(_source);
+}
