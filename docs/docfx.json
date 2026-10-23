@@ -47,7 +47,8 @@
     ],
     "template": [
       "default",
-      "modern"
+      "modern",
+      "templates/meridian"
     ],
     "globalMetadata": {
       "_appTitle": "Meridian",

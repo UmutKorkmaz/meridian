@@ -192,6 +192,15 @@ try {
 
     # 6. Build the site twice from the same inputs into fresh directories and compare the output.
     $source = Get-Content -Raw (Join-Path $repo 'docs/docfx.json') | ConvertFrom-Json -AsHashtable
+    $templates = @($source.build.template | ForEach-Object {
+        if ($_ -in @('default', 'modern')) { $_ }
+        else {
+            # Effective configs live in the output run, not beside docs/docfx.json.
+            $custom = Resolve-RepositoryPath $repo "docs/$_"
+            if (-not (Test-Path -LiteralPath $custom -PathType Container)) { throw "Missing documentation template: $_" }
+            $custom
+        }
+    })
     $authored = @($source.build.content[0].files)
     # DocFX resolves TOC folder links physically, so authored pages and API metadata share one content folder.
     $content = Join-Path $run 'content'
@@ -202,7 +211,7 @@ try {
     foreach ($label in 'a', 'b') {
         $build = [ordered]@{
             content = @([ordered]@{ files = $authored; src = 'content' }, [ordered]@{ files = @('api/*.yml'); src = 'content' })
-            template = $source.build.template
+            template = $templates
             globalMetadata = $source.build.globalMetadata
             disableGitFeatures = $true
             output = "site-$label"
