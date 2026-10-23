@@ -5,11 +5,14 @@ The control is collected by the real collector before one boundary is changed.
 """
 
 import copy
+import base64
 import hashlib
+import io
 import json
 import struct
 import types
 import unittest
+import zipfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest import mock
@@ -153,6 +156,49 @@ class EvidenceBoundaryTests(unittest.TestCase):
     def test_baseline_archive_bytes_must_match_the_retained_hash(self):
         lane, raw, _, _ = self.consumer_control()
         (raw / "Meridian.Mapping.2.1.3.baseline-nupkg").write_bytes(b"changed baseline archive")
+        self.rejected(lane, raw)
+
+    def signed_baseline_control(self):
+        lane, raw, path, rows = self.consumer_control()
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, 'w') as archive:
+            archive.writestr('payload.txt', b'published baseline parser fixture')
+        unsigned = buffer.getvalue()
+        with zipfile.ZipFile(buffer, 'a') as archive:
+            # Parser fixture only; no certificate/signature-trust claim.
+            archive.writestr('.signature.p7s', b'synthetic signature bytes')
+        signed = buffer.getvalue()
+        records_path = raw / 'baseline-hashes.json'
+        records = json.loads(records_path.read_text())
+        (raw / records[0]['artifact']).write_bytes(signed)
+        records[0]['sha256'] = hashlib.sha256(signed).hexdigest()
+        records_path.write_text(json.dumps(records))
+        content_hash = base64.b64encode(hashlib.sha512(unsigned).digest()).decode()
+        for row in rows:
+            if row['variant'] != 'baseline':
+                continue
+            for key in ('depsArtifact', 'assetsArtifact'):
+                artifact = raw / row[key]
+                data = json.loads(artifact.read_text())
+                data['libraries']['Meridian.Mapping/2.1.3']['sha512'] = content_hash
+                artifact.write_text(json.dumps(data))
+        return lane, raw, records_path, records
+
+    def test_signed_baseline_uses_nuget_content_hash_for_deps_and_assets(self):
+        lane, raw, _, _ = self.signed_baseline_control()
+        self.passing(lane, raw)
+
+    def test_signed_baseline_payload_change_cannot_reuse_the_old_content_hash(self):
+        lane, raw, records_path, records = self.signed_baseline_control()
+        self.passing(lane, raw)
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, 'w') as archive:
+            archive.writestr('payload.txt', b'changed baseline parser fixture')
+            archive.writestr('.signature.p7s', b'synthetic signature bytes')
+        changed = buffer.getvalue()
+        (raw / records[0]['artifact']).write_bytes(changed)
+        records[0]['sha256'] = hashlib.sha256(changed).hexdigest()
+        records_path.write_text(json.dumps(records))
         self.rejected(lane, raw)
 
     def native_control(self):

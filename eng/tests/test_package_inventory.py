@@ -856,5 +856,71 @@ class PackageInventoryTests(unittest.TestCase):
                         probe.doCleanups()
 
 
+class ProjectEvaluationBannerTests(unittest.TestCase):
+    def test_first_use_banner_is_suppressed_and_environment_is_restored(self):
+        pwsh = shutil.which('pwsh')
+        self.assertIsNotNone(pwsh, 'PowerShell is required for project evaluation checks.')
+        for prior in (None, '', 'previous-value'):
+            with self.subTest(prior=prior), tempfile.TemporaryDirectory() as directory:
+                work = Path(directory)
+                shim = work / 'first-use-dotnet.ps1'
+                shim.write_text(
+                    "if ($env:DOTNET_NOLOGO -ne '1') { Write-Output 'Welcome to .NET 8.0!' }\n"
+                    "Write-Output '{\"Properties\":{\"AssemblyName\":\"Probe\",\"TargetFramework\":\"net8.0\"}}'\n"
+                    '$global:LASTEXITCODE = 0\n')
+                driver = work / 'driver.ps1'
+                module = str(ROOT / 'eng/package-inventory.psm1').replace("'", "''")
+                executable = str(shim).replace("'", "''")
+                initial = ("Remove-Item Env:DOTNET_NOLOGO -ErrorAction Ignore" if prior is None
+                           else f"$env:DOTNET_NOLOGO = '{prior}'")
+                driver.write_text(
+                    "$ErrorActionPreference = 'Stop'\n" + initial + '\n'
+                    "$before = @{present=(Test-Path Env:DOTNET_NOLOGO); value=$env:DOTNET_NOLOGO}\n"
+                    f"Import-Module '{module}' -Force -DisableNameChecking\n"
+                    f"$result = Invoke-ProjectEvaluation '{executable}' 'unused.csproj' @('AssemblyName','TargetFramework')\n"
+                    "@{name=$result.Properties.AssemblyName; framework=$result.Properties.TargetFramework; "
+                    "before=$before; present=(Test-Path Env:DOTNET_NOLOGO); value=$env:DOTNET_NOLOGO} | ConvertTo-Json -Compress\n")
+                result = subprocess.run([pwsh, '-NoProfile', '-File', str(driver)],
+                                        capture_output=True, text=True)
+                self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+                report = json.loads(result.stdout)
+                self.assertEqual(('Probe', 'net8.0'), (report['name'], report['framework']))
+                if prior != '':
+                    self.assertEqual(prior is not None, report['before']['present'])
+                    self.assertEqual(prior, report['before']['value'])
+                # Older hosts cannot represent a present-but-empty variable.
+                # Restore the actual caller state on either representation.
+                self.assertEqual(report['before']['present'], report['present'])
+                self.assertEqual(report['before']['value'], report['value'])
+
+    def test_evaluation_failure_restores_the_callers_environment(self):
+        pwsh = shutil.which('pwsh')
+        self.assertIsNotNone(pwsh, 'PowerShell is required for project evaluation checks.')
+        for prior in (None, 'previous-value'):
+            with self.subTest(prior=prior), tempfile.TemporaryDirectory() as directory:
+                work = Path(directory)
+                shim = work / 'failed-dotnet.ps1'
+                shim.write_text('$global:LASTEXITCODE = 23\n')
+                module = str(ROOT / 'eng/package-inventory.psm1').replace("'", "''")
+                executable = str(shim).replace("'", "''")
+                initial = ("Remove-Item Env:DOTNET_NOLOGO -ErrorAction Ignore" if prior is None
+                           else "$env:DOTNET_NOLOGO = 'previous-value'")
+                driver = work / 'driver.ps1'
+                driver.write_text(
+                    "$ErrorActionPreference = 'Stop'\n" + initial + '\n'
+                    f"Import-Module '{module}' -Force -DisableNameChecking\n"
+                    "$failure = $null\ntry {\n"
+                    f"Invoke-ProjectEvaluation '{executable}' 'unused.csproj' @('AssemblyName') | Out-Null\n"
+                    "} catch { $failure = $_.Exception.Message }\n"
+                    "@{failure=$failure; present=(Test-Path Env:DOTNET_NOLOGO); value=$env:DOTNET_NOLOGO} | ConvertTo-Json -Compress\n")
+                result = subprocess.run([pwsh, '-NoProfile', '-File', str(driver)],
+                                        capture_output=True, text=True)
+                self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+                report = json.loads(result.stdout)
+                self.assertIn('exit=23', report['failure'])
+                self.assertEqual(prior is not None, report['present'])
+                self.assertEqual(prior, report['value'])
+
+
 if __name__ == "__main__":
     unittest.main()

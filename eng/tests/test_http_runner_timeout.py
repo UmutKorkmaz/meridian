@@ -56,8 +56,21 @@ def owned_groups(work, runner_group):
 def cleanup_session(process, work):
     failures = []
     groups = {process.pid}
+    owned = {}
+    deadline = time.monotonic() + 5
     try:
         groups = owned_groups(work, process.pid)
+        candidates = set(groups)
+        if (work / 'pids.json').exists():
+            ids = json.loads((work / 'pids.json').read_text())
+            candidates.update(ids[name] for name in ('parent', 'child'))
+        for pid in candidates:
+            try:
+                group = os.getpgid(pid)
+                if group in groups:
+                    owned[pid] = group
+            except ProcessLookupError:
+                pass
     except Exception as error:
         failures.append(error)
     # Each group is signalled once; an exited leader never gates cleanup.
@@ -67,9 +80,23 @@ def cleanup_session(process, work):
         except Exception as error:
             failures.append(error)
     try:
-        process.communicate(timeout=5)
+        process.communicate(timeout=max(.01, deadline - time.monotonic()))
     except Exception as error:
         failures.append(error)
+    # Joining the direct runner does not observe orphaned descendants' exits.
+    # Use the same cleanup budget and only the privately recorded identities.
+    while owned and time.monotonic() < deadline:
+        for pid, group in list(owned.items()):
+            try:
+                state = status(pid)
+                if not state or state.startswith('Z') or os.getpgid(pid) != group:
+                    del owned[pid]
+            except ProcessLookupError:
+                del owned[pid]
+        if owned:
+            time.sleep(min(.01, max(0, deadline - time.monotonic())))
+    if owned:
+        failures.append(TimeoutError(f'Owned fixture descendants did not exit: {sorted(owned)}'))
     if failures:
         raise ExceptionGroup('Owned fixture cleanup failed.', failures)
     (work / 'cleanup-complete.json').write_text(json.dumps({'groups': sorted(groups)}))
@@ -122,6 +149,49 @@ raise SystemExit(124)
 
 
 class HttpRunnerTimeoutTests(unittest.TestCase):
+    def test_cleanup_observes_owned_descendant_exit_before_marking_complete(self):
+        with tempfile.TemporaryDirectory(prefix='meridian-http-delayed-exit-') as directory:
+            work = Path(directory)
+            ready = work / 'child-ready'
+            child_code = (
+                'import signal,time\nfrom pathlib import Path\n'
+                'def stop(*_):\n    time.sleep(.25)\n    raise SystemExit(0)\n'
+                'signal.signal(signal.SIGTERM,stop)\n'
+                f'Path({str(ready)!r}).write_text("ready")\n'
+                'while True: time.sleep(.01)\n')
+            launcher = work / 'launcher.py'
+            launcher.write_text(
+                'import json,os,subprocess,sys,time\nfrom pathlib import Path\n'
+                f'child=subprocess.Popen([sys.executable,"-c",{child_code!r}])\n'
+                f'while not Path({str(ready)!r}).exists(): time.sleep(.01)\n'
+                f'receipt=Path({str(work / "pids.json")!r})\n'
+                'receipt.with_suffix(".tmp").write_text(json.dumps('
+                '{"parent":os.getpid(),"child":child.pid,"group":os.getpgrp()}))\n'
+                'receipt.with_suffix(".tmp").replace(receipt)\n'
+                'child.wait()\n')
+            process = subprocess.Popen([sys.executable, str(launcher)], start_new_session=True,
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                deadline = time.monotonic() + 5
+                while not (work / 'pids.json').exists():
+                    if time.monotonic() >= deadline:
+                        self.fail('Delayed-exit fixture did not become ready.')
+                    time.sleep(.01)
+                ids = json.loads((work / 'pids.json').read_text())
+                self.assertTrue(status(ids['child']))
+                # A controlled delayed exit proves cleanup observes the descendant,
+                # independently of the direct runner's earlier exit.
+                with mock.patch(__name__ + '.kill_group',
+                                side_effect=lambda group: os.killpg(group, signal.SIGTERM)):
+                    cleanup_session(process, work)
+                self.assertIsNotNone(process.returncode)
+                self.assertTrue((work / 'cleanup-complete.json').is_file())
+                state = status(ids['child'])
+                self.assertTrue(not state or state.startswith('Z'), state)
+            finally:
+                kill_group(process.pid)
+                process.wait(timeout=5)
+
     def test_live_launcher_timeout_terminates_owned_tree_and_observes_drains(self):
         with tempfile.TemporaryDirectory(prefix='meridian-http-live-') as directory:
             self.run_watchdog(Path(directory), False, observe_topology=True)
@@ -207,6 +277,9 @@ else:
             capture.seek(0)
             output = capture.read()
             elapsed = time.monotonic() - started
+            print(json.dumps({'runnerObservation': {'exit': process.returncode,
+                              'elapsedSeconds': elapsed, 'diagnosis': diagnosis,
+                              'topology': topology}}), flush=True)
             self.assertEqual(124, process.returncode, output)
             self.assertLess(elapsed, RUNNER_BOUND_SECONDS, output)
             self.assertTrue((work / 'pids.json').is_file(),

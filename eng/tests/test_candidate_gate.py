@@ -11,6 +11,7 @@ policy), so an evaluator that trusts a recorded summary, a partial binding or a 
 import copy
 import base64
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -21,6 +22,7 @@ import tempfile
 import threading
 import types
 import unittest
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -366,7 +368,10 @@ class Fixture:
         inventory = json.loads(self.inventory_path.read_text())
         packages = {p["id"]: p for p in inventory["packages"]}
         contracts = {c["id"]: c for c in inventory["consumers"]}
-        baseline_data = b"published-baseline-byte-fixture"
+        baseline_buffer = io.BytesIO()
+        with zipfile.ZipFile(baseline_buffer, 'w') as baseline_archive:
+            baseline_archive.writestr('parser-fixture.txt', b'published-baseline-byte-fixture')
+        baseline_data = baseline_buffer.getvalue()
         baseline_file = "Meridian.Mapping.2.1.3.baseline-nupkg"
         (raw / baseline_file).write_bytes(baseline_data)
         (raw / "baseline-hashes.json").write_text(json.dumps([{"id": "Meridian.Mapping", "version": "2.1.3", "file": "meridian.mapping.2.1.3.nupkg", "artifact": baseline_file, "sha256": sha(baseline_data)}]))

@@ -39,7 +39,9 @@ import importlib.util
 import json
 import ipaddress
 import re
+import struct
 import sys
+import zipfile
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 from pathlib import Path, PurePosixPath, PureWindowsPath
@@ -105,6 +107,79 @@ def sha512_file(path: Path) -> str:
         for block in iter(lambda: stream.read(1 << 20), b""):
             digest.update(block)
     return "sha512-" + base64.b64encode(digest.digest()).decode("ascii")
+
+
+def nuget_content_sha512(path: Path) -> str:
+    """Derive NuGet's signature-independent content hash, not signature trust.
+
+    Baseline SHA-256 still binds the complete retained archive. Signed ZIP32
+    layouts up to 64 MiB are supported; ambiguous/unsupported layouts fail.
+    NuGet's algorithm removes the signature entry and repairs ZIP offsets:
+    https://github.com/NuGet/NuGet.Client/blob/dev/src/NuGet.Core/NuGet.Packaging/Signing/Archive/SignedPackageArchiveUtility.cs
+    """
+    with zipfile.ZipFile(path) as archive:
+        entries = archive.infolist()
+        signed = [entry for entry in entries if entry.orig_filename == '.signature.p7s']
+        if not signed:
+            return sha512_file(path)
+        if len(signed) != 1 or path.stat().st_size > 64 * 1024 * 1024:
+            raise ValueError('unsupported signed baseline size or duplicate signature')
+        comment = archive.comment
+    data = path.read_bytes()
+    end = len(data) - 22 - len(comment)
+    marker, disk, cd_disk, disk_count, count, cd_size, cd_start, comment_size = struct.unpack_from('<4s4H2IH', data, end)
+    if (marker != b'PK\x05\x06' or disk or cd_disk or disk_count != count or count != len(entries)
+            or count == 0xffff or cd_start + cd_size != end or comment_size != len(comment)):
+        raise ValueError('unsupported signed baseline ZIP directory')
+    records, cursor, names, offsets = [], cd_start, set(), set()
+    for _ in range(count):
+        fields = struct.unpack_from('<4s6H3I5H2I', data, cursor)
+        size = 46 + sum(fields[10:13])
+        name = data[cursor + 46:cursor + 46 + fields[10]]
+        offset = fields[16]
+        if (fields[0] != b'PK\x01\x02' or cursor + size > end or fields[13] or fields[3] & 1
+                or 0xffffffff in (fields[8], fields[9], offset) or not name or b'\0' in name
+                or name in names or offset in offsets or offset >= cd_start):
+            raise ValueError('ambiguous or unsupported signed baseline entry')
+        if name == b'.signature.p7s' and fields[3] & (1 << 11):
+            raise ValueError('signature name must use the NuGet signing encoding')
+        names.add(name)
+        offsets.add(offset)
+        records.append((name, offset, data[cursor:cursor + size], fields))
+        cursor += size
+    if cursor != end or not records or min(offsets) != 0:
+        raise ValueError('unsupported signed baseline directory bounds')
+    ordered = sorted(records, key=lambda row: row[1])
+    payload, adjusted = bytearray(), {}
+    for index, (name, offset, _, fields) in enumerate(ordered):
+        boundary = ordered[index + 1][1] if index + 1 < len(ordered) else cd_start
+        local = struct.unpack_from('<4s5H3I2H', data, offset)
+        body = offset + 30 + local[9] + local[10]
+        body_end = body + fields[8]
+        if (local[0] != b'PK\x03\x04' or local[2] != fields[3] or local[3] != fields[4]
+                or data[offset + 30:offset + 30 + local[9]] != name or body_end > boundary):
+            raise ValueError('baseline local header disagrees with its directory')
+        descriptor = data[body_end:boundary]
+        if fields[3] & 8:
+            if descriptor.startswith(b'PK\x07\x08'):
+                descriptor = descriptor[4:]
+            if len(descriptor) != 12 or struct.unpack('<3I', descriptor) != fields[7:10]:
+                raise ValueError('unsupported signed baseline data descriptor')
+        elif descriptor or local[6:9] != fields[7:10]:
+            raise ValueError('unsupported padding or baseline local sizes')
+        if name != b'.signature.p7s':
+            adjusted[offset] = len(payload)
+            payload.extend(data[offset:boundary])
+    directory = bytearray()
+    for name, offset, header, _ in records:
+        if name != b'.signature.p7s':
+            repaired = bytearray(header)
+            struct.pack_into('<I', repaired, 42, adjusted[offset])
+            directory.extend(repaired)
+    trailer = bytearray(data[end:])
+    struct.pack_into('<HHII', trailer, 8, count - 1, count - 1, len(directory), len(payload))
+    digest = hashlib.sha512(payload + directory + trailer).digest()
+    return 'sha512-' + base64.b64encode(digest).decode('ascii')
 
 
 def lane_directory_name(lane_id: str) -> str:
@@ -726,7 +801,10 @@ def _derive_consumers(policy: dict, lane: dict, files: list[Path], version: str,
                 if archive is not None:
                     if item.get("sha256") != sha256_file(archive):
                         problems.append(f"baseline {name} archive bytes differ from the receipt")
-                    baseline_hashes[name] = sha512_file(archive)
+                    try:
+                        baseline_hashes[name] = nuget_content_sha512(archive)
+                    except (OSError, ValueError, struct.error, zipfile.BadZipFile) as error:
+                        problems.append(f'baseline {name} content hash cannot be derived: {error}')
                     baseline_versions[name] = baseline_version
     contract = "currentServicing" if lane.get("toolchainRootEnvironment") else "pinnedCompatibility"
     runtime_rows = {row["framework"]: row for row in policy.get("toolchains", {}).get(contract, {}).get("lanes", [])}

@@ -83,9 +83,20 @@ function Read-PackageInventory([string] $Repo, [string] $Manifest) {
 function Invoke-ProjectEvaluation([string] $Dotnet, [string] $Project, [string[]] $Properties, [string[]] $Items = @(), [string[]] $Extra = @()) {
     $arguments = @('msbuild', $Project, '-nologo', "-getProperty:$($Properties -join ',')") + $Extra
     if ($Items.Count) { $arguments += "-getItem:$($Items -join ',')" }
-    $output = & $Dotnet @arguments
-    if ($LASTEXITCODE -ne 0) { throw "Could not evaluate $Project (exit=$LASTEXITCODE)" }
-    return ($output -join "`n" | ConvertFrom-Json)
+    $previousNoLogo = [Environment]::GetEnvironmentVariable('DOTNET_NOLOGO', 'Process')
+    try {
+        # A fresh SDK/CLI home may print a first-use welcome before MSBuild's JSON.
+        [Environment]::SetEnvironmentVariable('DOTNET_NOLOGO', '1', 'Process')
+        $output = & $Dotnet @arguments
+        if ($LASTEXITCODE -ne 0) { throw "Could not evaluate $Project (exit=$LASTEXITCODE)" }
+        return ($output -join "`n" | ConvertFrom-Json)
+    } finally {
+        if ($null -eq $previousNoLogo) {
+            Remove-Item Env:DOTNET_NOLOGO -ErrorAction SilentlyContinue
+        } else {
+            [Environment]::SetEnvironmentVariable('DOTNET_NOLOGO', $previousNoLogo, 'Process')
+        }
+    }
 }
 
 function Assert-SameSet([object[]] $Actual, [object[]] $Expected, [string] $Message) {
