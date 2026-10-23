@@ -22,7 +22,7 @@ execution unavailable:
 | Final cumulative E4 evidence (**E4d**) for the final bytes | The `e4-aggregate` row is `blocked` (lanes missing) or `fail` until the final campaign passes every required lane for the exact candidate. |
 | E6 maintenance and final-review receipts for the final source commit | The `e6-maintenance` and `final-review` rows are `blocked` until receipts exist. |
 | A fresh read-only remote availability check | `3.0.0` is a proposal. The `remote-availability` row records which snapshot was used and marks it stale-able. |
-| A stable pack produced by the root-owned engine with `-ReleasePreparation` | No stable bytes exist; the frozen probe feed (`3.0.0-toolprobe.*`, `sourceDirty: true`) is never release evidence. |
+| An accepted stable pack produced by the root-owned engine with `-ReleasePreparation` | A local stable pack can exist without being accepted or prepared. Its clean source and cumulative receipts must match the exact bytes; a dirty probe feed (`3.0.0-toolprobe.*`, `sourceDirty: true`) is never release evidence. |
 | NuGet signature trust, symbol processing and fresh signed-remote consumer verification | External steps (pinned `dotnet nuget verify --all`, the symbol server, the root-owned package engine). The tools record them as pending, never as passed. |
 
 ## Exit codes

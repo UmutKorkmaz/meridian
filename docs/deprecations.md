@@ -84,8 +84,9 @@ every gated action fails closed on the command line. The command line always use
   qualifying minor line has been counted.
 * The Structural mode, `CacheKeyComposer` namespacing and the atomic/leased idempotency contracts are not in any
   published stable release yet, so their stable-replacement facts are pending.
-* **Old/new consumer proof is pending.** `tests/consumers/Meridian.DeprecationConsumer` (variants `legacy` and
-  `migrated`, compiled separately) asserts matching intended values. It has not yet been executed against an exact
+* **Old/new consumer acceptance is candidate-specific.** `tests/consumers/Meridian.DeprecationConsumer` (variants
+  `legacy` and `migrated`, compiled separately) asserts matching intended values. A local execution against one trial
+  candidate does not accept another: retain the exact package manifest and E4-validated execution proof for the final
   candidate. No `Obsolete` warning is emitted, so no warning suppression is used or claimed.
 
 Retained registration bytes are checked for package identities, listed stable versions and publication instants,
