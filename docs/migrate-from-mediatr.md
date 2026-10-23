@@ -216,7 +216,7 @@ correlation ID, and the failure record does not contain the validation message.
 3. **Composed cache and idempotency keys (2.1.4 candidate; 2.1.3 uses raw keys)**: keys are namespaced by request
    type; use `CacheKeyComposer.Compose<TQuery>` for invalidation, or the explicit `UseRequestTypeNamespacedKeys = false`
    opt-outs during migration.
-4. **Retry and publisher caps**: `IRetryableRequest` defaults to 3 retries, every request is capped at 10 retries and
+4. **Retry caps**: `IRetryableRequest` defaults to 3 retries, every request is capped at 10 retries and
    5 minutes of backoff, and cancellation or non-transient failures are never retried.
 5. **Validation**: `IValidator<T>` is Meridian's own contract. The optional `Meridian.Mediator.FluentValidation`
    package adapts FluentValidation validators (candidate package; see [Optional integrations](integrations.md#fluentvalidation)).

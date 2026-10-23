@@ -357,8 +357,8 @@ class NativeAotWorkflowTests(unittest.TestCase):
 
     def test_native_lanes_use_one_packed_feed_and_matching_runners(self):
         jobs = self.workflow["jobs"]
-        pack, lane = jobs["native-aot-pack"], jobs["native-aot"]
-        self.assertEqual(lane["needs"], "native-aot-pack")
+        pack, lane = jobs["candidate-pack"], jobs["native-aot"]
+        self.assertEqual(lane["needs"], "candidate-pack")
         matrix = lane["strategy"]["matrix"]
         self.assertEqual(matrix["rid"], ["linux-x64", "osx-arm64"])
         self.assertEqual(
@@ -368,51 +368,60 @@ class NativeAotWorkflowTests(unittest.TestCase):
         runners = {i["rid"]: i["runner"] for i in matrix["include"]}
         self.assertTrue(runners["linux-x64"].startswith("ubuntu"))
         self.assertTrue(runners["osx-arm64"].startswith("macos"))
-        # The version is derived once by the pack job and published as a job output (see the re-run test below).
-        self.assertEqual(lane["env"]["CANDIDATE_VERSION"], "${{ needs.native-aot-pack.outputs.candidate }}")
         pack_text = json.dumps(pack)
         self.assertEqual(pack_text.count("pack-packages.ps1"), 1)
-        self.assertIn("native-aot-feed", pack_text)
+        self.assertIn("candidate-feed", pack_text)
         run = "\n".join(str(step.get("run", "")) for step in lane["steps"])
-        self.assertIn("run-aot-smoke.ps1 -Combined", run)
-        self.assertIn("-Rid '${{ matrix.rid }}'", run)
-        self.assertIn("run-aot-smoke.ps1 -MappingOnly", run)
-        self.assertNotIn("pack-packages.ps1 -OutputDirectory", run)  # lanes inspect, never repack
+        # The version is derived once by the pack job and published as a job output (see the re-run test below).
+        self.assertIn("-CandidateVersion '${{ needs.candidate-pack.outputs.candidate }}'", run)
+        self.assertIn("-Lane 'native-aot/${{ matrix.rid }}/${{ matrix.host.framework }}'", run)
+        self.assertIn("verify-candidate.ps1 -Mode Run", run)
+        self.assertNotIn("pack-packages.ps1", run)  # lanes inspect, never repack
+        downloads = [s for s in lane["steps"] if str(s.get("uses", "")).startswith("actions/download-artifact")]
+        self.assertEqual([d["with"]["name"] for d in downloads], ["${{ needs.candidate-pack.outputs.feedArtifact }}"])
+        # The lane runner publishes and executes both native consumers for the lane's RID.
+        runner = (ROOT / "eng/verify-candidate.ps1").read_text()
+        branch = runner[runner.index("'native-aot' {"):runner.index("'property-counts' {")]
+        self.assertIn("'run-aot-smoke.ps1'), '-Combined')", branch)
+        self.assertIn("'run-aot-smoke.ps1'), '-MappingOnly')", branch)
+        self.assertIn("'-Rid', $LaneEntry.rid", branch)
+        self.assertIn("'-SdkVersion', $LaneEntry.sdk", branch)
         uploads = [s for s in lane["steps"] if str(s.get("uses", "")).startswith("actions/upload-artifact")]
-        self.assertTrue(uploads and uploads[-1].get("if") == "always()")
+        self.assertTrue(uploads and all(str(u.get("if", "")).startswith("always()") for u in uploads))
 
     def test_candidate_version_is_derived_once_and_survives_failed_lane_reruns(self):
         # "Re-run failed jobs" reruns only failed lanes with a larger run_attempt while the uploaded feed keeps the
         # first attempt's package-manifest.<version>.json. A lane that rebuilds the version from run_attempt would
         # then inspect a manifest that does not exist and fail falsely.
         jobs = self.workflow["jobs"]
-        pack, lane = jobs["native-aot-pack"], jobs["native-aot"]
+        pack = jobs["candidate-pack"]
         self.assertIn("candidate", pack.get("outputs", {}), "pack job must publish the candidate version as an output")
         self.assertIn("steps.", pack["outputs"]["candidate"])
-        for name, job in (("native-aot-pack", pack), ("native-aot", lane)):
+        consumers = [name for name, job in jobs.items() if "candidate-pack" in ([job["needs"]] if isinstance(job.get("needs"), str) else job.get("needs", []))]
+        self.assertIn("native-aot", consumers)
+        for name in consumers:
+            job = jobs[name]
             self.assertNotIn("run_attempt", json.dumps(job.get("env", {})), f"{name} env must not embed run_attempt")
-        for step in lane["steps"]:
-            self.assertNotIn("run_attempt", json.dumps(step), "lane steps must not recompute the version from run_attempt")
-        self.assertEqual(lane["env"]["CANDIDATE_VERSION"], "${{ needs.native-aot-pack.outputs.candidate }}")
+            for step in job["steps"]:
+                if "upload-artifact" not in str(step.get("uses", "")):
+                    self.assertNotIn("run_attempt", json.dumps(step), f"{name} steps must not recompute the version from run_attempt")
+        self.assertNotIn("run_attempt", json.dumps(pack.get("env", {})))
         # The pack step consumes the same single derivation.
-        pack_steps = json.dumps(pack["steps"])
-        self.assertIn("steps.version.outputs.candidate", pack_steps)
+        self.assertIn("steps.version.outputs.candidate", json.dumps(pack["steps"]))
 
-    def test_native_artifact_uploads_overwrite_so_reruns_do_not_collide(self):
-        # upload-artifact@v4 names are immutable within a run and artifacts of earlier attempts stay on the run.
-        # "Re-run failed jobs" re-uploads the lane evidence (if: always()) under the same name and "Re-run all jobs"
-        # re-uploads native-aot-feed; without overwrite the upload step fails with 409 and a passing lane goes red.
+    def test_native_reruns_retain_attempt_snapshots_and_current_views(self):
         jobs = self.workflow["jobs"]
-        seen = []
-        for name in ("native-aot-pack", "native-aot"):
-            for step in jobs[name]["steps"]:
-                if str(step.get("uses", "")).startswith("actions/upload-artifact"):
-                    seen.append(step["with"]["name"])
-                    overwrite = step["with"].get("overwrite")
-                    self.assertIn(
-                        overwrite, (True, "true"), f"{name} upload '{step['with']['name']}' must set overwrite: true"
-                    )
-        self.assertEqual(seen, ["native-aot-feed", "native-aot-${{ matrix.rid }}-${{ matrix.host.framework }}"])
+        feed = [s["with"] for s in jobs["candidate-pack"]["steps"] if "upload-artifact" in str(s.get("uses", ""))]
+        self.assertEqual(len(feed), 1)
+        self.assertIn("steps.version.outputs.candidate", feed[0]["name"])
+        self.assertIsNot(feed[0].get("overwrite"), True)
+        uploads = [s["with"] for s in jobs["native-aot"]["steps"] if "upload-artifact" in str(s.get("uses", ""))]
+        current = [u for u in uploads if u.get("overwrite") is True]
+        snapshots = {u["name"]: u for u in uploads if u.get("overwrite") is not True}
+        self.assertEqual(len(current), 2)
+        for view in current:
+            snapshot = snapshots["history-" + view["name"] + "-attempt-${{ github.run_attempt }}"]
+            self.assertEqual(snapshot["path"], view["path"])
 
     def test_existing_required_jobs_are_preserved(self):
         for name in ("build", "projection-postgresql", "caching-redis", "package-compatibility", "redis-package-compatibility", "ef-transactions", "http-integration"):

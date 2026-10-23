@@ -166,7 +166,7 @@ Generated pairs default to `MaxDepth = 64`, `MaxCollectionItems = 10000`, `Allow
 entry methods accept an optional `GeneratedMappingOptions` argument that carries a `CancellationToken` and may set
 `MaxDepth` and `MaxCollectionItems` (positive values only; zero or negative throws `ArgumentOutOfRangeException`). On
 a direct entry method an explicit option value **replaces** the attribute limit for that call, so it can lower or raise
-it; the safety ceiling is the attribute value you chose, not the option. Only calls that enter through the resolver
+it. Only calls that enter through the resolver
 bridge (`IMapper` with `UseGeneratedMappings`) are clamped: they take the minimum of the attribute limits and the
 effective runtime limits. Collection overflow throws `MeridianMappingLimitException`.
 

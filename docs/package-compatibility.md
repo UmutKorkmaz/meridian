@@ -1,6 +1,6 @@
 # Packaged compatibility and local compiler consumers
 
-A4 verifies an unpublished local candidate against the published **2.1.3** Mapping and Mediator packages. It does not select the next stable release version or authorize publication. `eng/packages.json` is the single package inventory (schema version 1); adapters will extend this inventory as introduced. `analyzerPaths` records both the repository-relative producer project and its package-relative asset path. The pack script verifies evaluated analyzer references/TargetPath, archive bytes, dependencies, README/MIT license and symbol assets.
+A4 verifies an unpublished local candidate against the published **2.1.3** Mapping and Mediator packages. It does not select the next stable release version or authorize publication. `eng/packages.json` is the single package inventory (schema version 1); it includes the core packages and optional adapters. `analyzerPaths` records both the repository-relative producer project and its package-relative asset path. The pack script verifies evaluated analyzer references/TargetPath, archive bytes, dependencies, README/MIT license and symbol assets.
 
 Run from the repository root, with the SDKs in the manifest installed:
 

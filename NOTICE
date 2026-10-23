@@ -1,7 +1,8 @@
 Meridian Third-Party Notices
 Copyright (c) 2026 Meridian Contributors
 
-This repository includes these NuGet packages:
+This repository produces these NuGet packages (package inventory:
+eng/packages.json):
 - Meridian.Mapping
 - Meridian.Mediator
 - Meridian.Mediator.AspNetCore
@@ -12,15 +13,18 @@ This repository includes these NuGet packages:
 - Meridian.Mediator.Redis
 
 The Meridian source code is licensed under the MIT License. See the LICENSE
-file in the repository root for the full license text.
+file in the repository root for the full license text. Each Meridian package
+declares the MIT license expression and contains that LICENSE file. This MIT
+statement covers Meridian's own code only; it is not a statement about every
+package used to build, test or run Meridian.
 
 This notice lists the direct third-party package dependencies declared in the
-package project files at the time of publication, with the license each one
-declares in its own package metadata (the NuGet license expression read from
-the restored package). Transitive dependencies are not exhaustively listed here
+package project files of this source tree, with the license each one declares
+in its own package metadata (the NuGet license expression read from the
+restored package). Transitive dependencies are not exhaustively listed here
 and may vary by target framework, SDK, or package resolution at restore time.
 
-Direct package dependencies
+Direct package dependencies (distributed as NuGet dependencies of the packages)
 
 Meridian.Mapping
 - Microsoft.Extensions.DependencyInjection.Abstractions 10.0.9 (MIT)
@@ -54,10 +58,14 @@ Compile-time analyzers shipped inside packages
 
 Meridian.Mapping also ships Meridian.Mapping.Generators, and
 Meridian.Mediator.Generators ships its own generator assembly, as compile-time
-analyzers (not runtime dependencies of consuming applications). Each package
-contains only that compiled assembly under analyzers/dotnet/cs plus the Meridian
-LICENSE and README; no third-party assembly is embedded in or copied into any
-Meridian package.
+analyzers (not runtime dependencies of consuming applications). In each of these
+packages the analyzers/dotnet/cs folder holds only that compiled Meridian
+generator assembly; the packages also contain the Meridian LICENSE and README
+(and, for Meridian.Mapping, its runtime assemblies). No third-party assembly is
+embedded in or copied into any Meridian package. eng/pack-packages.ps1 fails a
+package whose analyzer folder or nuspec dependency set differs from the
+inventory. A check that compares every packed file list with the private
+build-tooling closure below is not implemented yet.
 
 Build-time tooling that is NOT distributed
 
@@ -85,6 +93,16 @@ embedded in each package archive rather than inferred:
 
 Archive and license-text SHA-256 values and the full disposition are recorded in
 docs/package-compatibility.md ("Dependency licenses and build-time tooling").
+
+Repository-only tooling that is NOT distributed
+
+Test projects, packaged test consumers, samples, benchmarks and documentation
+tooling in this repository reference further packages (for example test
+frameworks, database providers, comparison libraries used by the benchmarks and
+the documentation generator). They are not dependencies of, or files inside, any
+Meridian package. They are not inventoried in this notice, and no license claim
+is made for them here; review their own license terms before redistributing
+them.
 
 Upstream packages remain subject to their own license terms, notices, and
 attribution requirements. Consumers should review the licenses of all direct

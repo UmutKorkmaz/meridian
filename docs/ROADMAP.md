@@ -2,6 +2,9 @@
 
 Status as of 2026-07-21. **No breaking public API or default-behavior changes** without a major version bump. See [compatibility-policy.md](./compatibility-policy.md).
 
+This historical snapshot is superseded by the maintained [capability ledger](./capabilities.md) and
+[required checks](./governance/required-checks.md). Its old open rows do not describe today's missing features or proof.
+
 ## Now (P0–P1) — adoption & truthfulness
 
 - [x] Restore `docs/PLAN.md` / this roadmap

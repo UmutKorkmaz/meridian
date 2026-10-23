@@ -1,8 +1,22 @@
 name: CI
 
-# Security review: this workflow uses only trusted inputs (matrix.os,
-# github.workflow, github.ref) in ${{ }} expressions. No attacker-controlled
-# github.event.* fields flow into `run:` blocks. Safe.
+# Security review: this workflow uses only trusted inputs (matrix values, github.run_id, github.sha, needs outputs
+# derived from github.run_id) in ${{ }} expressions. No attacker-controlled github.event.* fields flow into `run:`
+# blocks. Every job runs with the read-only token below.
+#
+# Lane model (see docs/governance/required-checks.md and eng/required-checks.json, the single source of truth):
+#   * candidate-pack packs the candidate ONCE; every lane that consumes packages downloads that exact feed, so every
+#     lane is bound to the same package hashes.
+#   * Runtime lanes (`build + test`) execute the suites and samples on each OS for each runtime family. SDK-host
+#     consumer lanes (`package consumers`, `Required Redis ...`) compile consumers with each pinned SDK on each OS.
+#     They are separate jobs because they prove different things (runtime behavior vs compiler/SDK compatibility).
+#   * Provider lanes use service containers pinned by digest; a missing service fails the lane. Native AOT lanes publish
+#     and EXECUTE a native binary on a matching real runner.
+#   * Each lane runs `eng/verify-candidate.ps1 -Mode Run -Lane <id>`, which writes lane evidence (its raw TRX files,
+#     receipts and logs plus a summary); `candidate gate` re-derives every CI-defined lane from that raw evidence.
+#     Exact SDKs (8.0.421 / 9.0.318 / 10.0.300) mirror eng/packages.json compilerHosts and are installed into a private
+#     DOTNET_INSTALL_DIR, so the build SDK is exactly 10.0.300 and each family has exactly its pinned runtime patch (the
+#     gate checks the retained toolchain receipt). No preview SDK is used by a required job.
 
 on:
   pull_request:
@@ -19,118 +33,340 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  candidate-pack:
+    name: candidate packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The candidate version is derived exactly once, here, and handed to every lane as a job output. "Re-run failed jobs"
+    # keeps this job's outputs and feed (it is not re-run); "Re-run all jobs" derives a new version from the new
+    # run_attempt and retains a separate immutable feed artifact, so every lane of one attempt uses one feed. The package
+    # manifest hash is exported as an independent anchor that the candidate gate compares with the downloaded feed.
+    outputs:
+      candidate: ${{ steps.version.outputs.candidate }}
+      feedArtifact: candidate-feed-${{ steps.version.outputs.candidate }}
+      manifestSha256: ${{ steps.anchor.outputs.manifestSha256 }}
+    env:
+      DOTNET_ROLL_FORWARD: LatestPatch
+      DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        env:
+          # Install only the pinned SDKs into a private directory so no preinstalled SDK or runtime patch can be selected.
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: 10.0.300
+      - name: Derive the candidate version once
+        id: version
+        shell: bash
+        run: echo "candidate=2.1.4-ci.${{ github.run_id }}.${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
+      - name: Pack every inventory archive once
+        shell: pwsh
+        env:
+          CANDIDATE_VERSION: ${{ steps.version.outputs.candidate }}
+        run: ./eng/pack-packages.ps1 -OutputDirectory artifacts/candidate-feed -CandidateVersion $env:CANDIDATE_VERSION
+      - name: Export the package manifest hash
+        id: anchor
+        shell: bash
+        env:
+          CANDIDATE_VERSION: ${{ steps.version.outputs.candidate }}
+        run: echo "manifestSha256=$(sha256sum "artifacts/candidate-feed/package-manifest.${CANDIDATE_VERSION}.json" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - name: Retain the immutable candidate feed
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-feed-${{ steps.version.outputs.candidate }}
+          path: artifacts/candidate-feed/**
+          retention-days: 14
+          if-no-files-found: error
+
   build:
     name: build + test (${{ matrix.os }}, ${{ matrix.framework }})
+    needs: candidate-pack
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         framework: [net8.0, net9.0, net10.0]
+        include:
+          - { os: ubuntu-latest, hostos: linux }
+          - { os: windows-latest, hostos: win }
+          - { os: macos-latest, hostos: osx }
     env:
       MeridianIncludeNet11Samples: 'false'
       DOTNET_ROLL_FORWARD: LatestPatch
       DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
-
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
           fetch-depth: 0  # keep full history for release/debug parity checks
 
-      - name: Setup .NET SDK
+      - name: Setup .NET SDKs (exact pinned patches; each installs its runtime family)
         uses: actions/setup-dotnet@v5
+        env:
+          # Install only the pinned SDKs into a private directory so no preinstalled SDK or runtime patch can be selected.
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:
-          global-json-file: global.json
-          # Each SDK installs its matching runtime family. global.json selects
-          # a stable .NET 10 SDK; tests cannot roll forward across runtime families.
           dotnet-version: |
-            8.0.x
-            9.0.x
-            10.0.x
+            8.0.421
+            9.0.318
+            10.0.300
 
-      - name: Verify stable SDK and required runtimes
+      - name: Verify the exact build SDK and required runtimes
         shell: bash
         run: |
           sdk="$(dotnet --version)"
-          [[ "$sdk" == 10.* && "$sdk" != *-* ]]
+          [[ "$sdk" == "10.0.300" ]]
           runtimes="$(dotnet --list-runtimes)"
           for family in 8 9 10; do
             echo "$runtimes" | grep -E "^Microsoft.NETCore.App $family\." > /dev/null
           done
           dotnet --info
 
-      - name: Restore
-        run: dotnet restore Meridian.sln
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.candidate-pack.outputs.feedArtifact }}
+          path: artifacts/candidate-feed
 
-      - name: Build
-        run: dotnet build Meridian.sln -c Release --no-restore
-
-      - name: Test
-        shell: bash
-        env:
-          MATRIX_OS: ${{ matrix.os }}
-          MATRIX_FRAMEWORK: ${{ matrix.framework }}
-        run: |
-          # The HTTP sample test project has a dedicated net10-only provider lane.
-          for project in tests/*/*.csproj; do
-            [[ "$project" == tests/Meridian.AspNetCore.Tests/* ]] && continue
-            dotnet test "$project" -c Release --no-build -f "$MATRIX_FRAMEWORK" \
-              --filter "Provider!=PostgreSQL&Provider!=Redis" \
-              --logger "trx;LogFilePrefix=$MATRIX_OS-$MATRIX_FRAMEWORK" \
-              --logger "console;verbosity=normal" --collect:"XPlat Code Coverage" \
-              --results-directory ./test-results
-          done
-
-      - name: Execute samples
+      - name: Execute every suite and sample for this OS and runtime family, collect lane evidence
         shell: pwsh
+        run: ./eng/verify-candidate.ps1 -Mode Run -Feed artifacts/candidate-feed -EvidenceDirectory artifacts/evidence -CandidateVersion '${{ needs.candidate-pack.outputs.candidate }}' -Lane 'runtime-tests/${{ matrix.hostos }}/${{ matrix.framework }}' -Context github-actions -RunId '${{ github.run_id }}'
+
+      - name: Retain immutable attempt evidence
+        id: snapshot-12
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: history-lane-runtime-${{ matrix.hostos }}-${{ matrix.framework }}-attempt-${{ github.run_attempt }}
+          # Two paths force the artifact root to artifacts/evidence, so the lanes/<lane>/ prefix survives the merge.
+          path: |
+            artifacts/evidence/lanes/**
+            artifacts/evidence/run-context.json
+          retention-days: 14
+
+      - name: Upload lane evidence
+        if: always() && steps.snapshot-12.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lane-runtime-${{ matrix.hostos }}-${{ matrix.framework }}
+          # Two paths force the artifact root to artifacts/evidence, so the lanes/<lane>/ prefix survives the merge.
+          path: |
+            artifacts/evidence/lanes/**
+            artifacts/evidence/run-context.json
+          overwrite: true
+          retention-days: 14
+
+      - name: Retain immutable attempt evidence
+        id: snapshot-14
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: history-work-runtime-${{ matrix.hostos }}-${{ matrix.framework }}-attempt-${{ github.run_attempt }}
+          path: |
+            artifacts/evidence/work/**/*.log
+            artifacts/evidence/work/**/*.trx
+            artifacts/evidence/summary.*
+          retention-days: 7
+
+      - name: Upload logs
+        if: always() && steps.snapshot-14.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: work-runtime-${{ matrix.hostos }}-${{ matrix.framework }}
+          path: |
+            artifacts/evidence/work/**/*.log
+            artifacts/evidence/work/**/*.trx
+            artifacts/evidence/summary.*
+          overwrite: true
+          retention-days: 7
+
+  package-compatibility:
+    name: package consumers (${{ matrix.os }}, SDK ${{ matrix.host.sdk }})
+    needs: candidate-pack
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        host:
+          - { framework: net8.0, sdk: 8.0.421 }
+          - { framework: net9.0, sdk: 9.0.318 }
+          - { framework: net10.0, sdk: 10.0.300 }
+        include:
+          - { os: ubuntu-latest, hostos: linux }
+          - { os: windows-latest, hostos: win }
+          - { os: macos-latest, hostos: osx }
+    env:
+      DOTNET_ROLL_FORWARD: LatestPatch
+      DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
         env:
-          MATRIX_FRAMEWORK: ${{ matrix.framework }}
-        run: ./eng/run-samples.ps1 -Framework $env:MATRIX_FRAMEWORK -NoBuild
-
-      - name: Upload sample logs
+          # Install only the pinned SDKs into a private directory so no preinstalled SDK or runtime patch can be selected.
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: |
+            10.0.300
+            ${{ matrix.host.sdk }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.candidate-pack.outputs.feedArtifact }}
+          path: artifacts/candidate-feed
+      - name: Run isolated native compiler consumers (backend-free partial selection)
+        shell: pwsh
+        run: ./eng/verify-candidate.ps1 -Mode Run -Feed artifacts/candidate-feed -EvidenceDirectory artifacts/evidence -CandidateVersion '${{ needs.candidate-pack.outputs.candidate }}' -Lane 'package-consumers/${{ matrix.hostos }}/${{ matrix.host.framework }}' -Context github-actions -RunId '${{ github.run_id }}'
+      - name: Retain immutable attempt evidence
+        id: snapshot-20
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sample-results-${{ matrix.os }}-${{ matrix.framework }}
-          path: ./artifacts/sample-results/**/*
-          retention-days: 7
-
-      - name: Upload test results
+          name: history-lane-consumers-${{ matrix.hostos }}-${{ matrix.host.framework }}-attempt-${{ github.run_attempt }}
+          # Two paths force the artifact root to artifacts/evidence, so the lanes/<lane>/ prefix survives the merge.
+          path: |
+            artifacts/evidence/lanes/**
+            artifacts/evidence/run-context.json
+          retention-days: 14
+      - name: Upload lane evidence
+        if: always() && steps.snapshot-20.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lane-consumers-${{ matrix.hostos }}-${{ matrix.host.framework }}
+          # Two paths force the artifact root to artifacts/evidence, so the lanes/<lane>/ prefix survives the merge.
+          path: |
+            artifacts/evidence/lanes/**
+            artifacts/evidence/run-context.json
+          overwrite: true
+          retention-days: 14
+      - name: Retain immutable attempt evidence
+        id: snapshot-22
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results-${{ matrix.os }}-${{ matrix.framework }}
-          path: ./test-results/**/*
-          retention-days: 7
+          name: history-compatibility-${{ matrix.os }}-${{ matrix.host.framework }}-attempt-${{ github.run_attempt }}
+          path: |
+            artifacts/evidence/work/**/consumer-*.json
+            artifacts/evidence/work/**/sbom-inventory.json
+            artifacts/evidence/work/**/*.log
+          retention-days: 14
 
-      - name: Pack (ubuntu only)
-        if: matrix.os == 'ubuntu-latest' && matrix.framework == 'net10.0'
-        run: |
-          dotnet pack src/Meridian.Mapping/Meridian.Mapping.csproj \
-            -c Release --no-build -o ./artifacts
-          dotnet pack src/Meridian.Mediator/Meridian.Mediator.csproj \
-            -c Release --no-build -o ./artifacts
-
-      - name: Inspect package contents
-        if: matrix.os == 'ubuntu-latest' && matrix.framework == 'net10.0'
-        run: |
-          for pkg in ./artifacts/*.nupkg; do
-            echo "=== $pkg ==="
-            unzip -l "$pkg" | head -30
-          done
-
-      - name: Upload packages
-        if: matrix.os == 'ubuntu-latest' && matrix.framework == 'net10.0'
+      - name: Retain compiler evidence
+        if: always() && steps.snapshot-22.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: packages
-          path: ./artifacts/*.*nupkg
+          name: compatibility-${{ matrix.os }}-${{ matrix.host.framework }}
+          path: |
+            artifacts/evidence/work/**/consumer-*.json
+            artifacts/evidence/work/**/sbom-inventory.json
+            artifacts/evidence/work/**/*.log
+          overwrite: true
+          retention-days: 14
+
+  redis-package-compatibility:
+    name: Required Redis all-package consumers (${{ matrix.host.framework }})
+    needs: candidate-pack
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        host:
+          - { framework: net8.0, sdk: 8.0.421 }
+          - { framework: net9.0, sdk: 9.0.318 }
+          - { framework: net10.0, sdk: 10.0.300 }
+    services:
+      postgres:
+        image: postgres:16.4-alpine@sha256:5660c2cbfea50c7a9127d17dc4e48543eedd3d7a41a595a2dfa572471e37e64c
+        env:
+          POSTGRES_PASSWORD: meridian_test_only
+          POSTGRES_DB: meridian_ef_test
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U postgres -d meridian_ef_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+      redis:
+        image: redis:7.4-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+        ports:
+          - 6379/tcp
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      DOTNET_ROLL_FORWARD: LatestPatch
+      DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
+      MERIDIAN_TEST_REDIS: 127.0.0.1:${{ job.services.redis.ports[6379] }},abortConnect=true,connectTimeout=5000
+      MERIDIAN_TEST_REDIS_REQUIRED: '1'
+      MERIDIAN_TEST_POSTGRES: Host=127.0.0.1;Port=${{ job.services.postgres.ports[5432] }};Database=meridian_ef_test;Username=postgres;Password=meridian_test_only
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        env:
+          # Install only the pinned SDKs into a private directory so no preinstalled SDK or runtime patch can be selected.
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: |
+            10.0.300
+            ${{ matrix.host.sdk }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.candidate-pack.outputs.feedArtifact }}
+          path: artifacts/candidate-feed
+      - name: Require every compiler consumer with real PostgreSQL and Redis
+        shell: pwsh
+        run: ./eng/verify-candidate.ps1 -Mode Run -Feed artifacts/candidate-feed -EvidenceDirectory artifacts/evidence -CandidateVersion '${{ needs.candidate-pack.outputs.candidate }}' -Lane 'package-consumers-redis/${{ matrix.host.framework }}' -Context github-actions -RunId '${{ github.run_id }}'
+      - name: Retain immutable attempt evidence
+        id: snapshot-28
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: history-lane-consumers-redis-${{ matrix.host.framework }}-attempt-${{ github.run_attempt }}
+          # Two paths force the artifact root to artifacts/evidence, so the lanes/<lane>/ prefix survives the merge.
+          path: |
+            artifacts/evidence/lanes/**
+            artifacts/evidence/run-context.json
+          retention-days: 14
+      - name: Upload lane evidence
+        if: always() && steps.snapshot-28.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lane-consumers-redis-${{ matrix.host.framework }}
+          # Two paths force the artifact root to artifacts/evidence, so the lanes/<lane>/ prefix survives the merge.
+          path: |
+            artifacts/evidence/lanes/**
+            artifacts/evidence/run-context.json
+          overwrite: true
+          retention-days: 14
+      - name: Retain immutable attempt evidence
+        id: snapshot-30
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: history-redis-package-compatibility-${{ matrix.host.framework }}-attempt-${{ github.run_attempt }}
+          path: |
+            artifacts/evidence/work/**/consumer-*.json
+            artifacts/evidence/work/**/*.log
+          retention-days: 14
+
+      - name: Retain all-package required provider evidence
+        if: always() && steps.snapshot-30.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: redis-package-compatibility-${{ matrix.host.framework }}
+          path: |
+            artifacts/evidence/work/**/consumer-*.json
+            artifacts/evidence/work/**/*.log
+          overwrite: true
           retention-days: 14
 
   projection-postgresql:
     name: PostgreSQL projections (${{ matrix.framework }})
+    needs: candidate-pack
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -154,31 +390,70 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-dotnet@v5
-        with:
-          global-json-file: global.json
-          dotnet-version: |
-            8.0.x
-            9.0.x
-            10.0.x
-      - name: Execute required PostgreSQL contracts
         env:
-          MATRIX_FRAMEWORK: ${{ matrix.framework }}
-        run: >-
-          dotnet test tests/Meridian.Mapping.EntityFramework.Tests/Meridian.Mapping.EntityFramework.Tests.csproj
-          -c Release -f "$MATRIX_FRAMEWORK" --filter "Provider=PostgreSQL"
-          --logger "trx;LogFileName=postgresql.trx" --logger "console;verbosity=normal"
-          --results-directory artifacts/projection-postgresql
-      - name: Retain SQL, provider versions and command evidence
+          # Install only the pinned SDKs into a private directory so no preinstalled SDK or runtime patch can be selected.
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: |
+            8.0.421
+            9.0.318
+            10.0.300
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.candidate-pack.outputs.feedArtifact }}
+          path: artifacts/candidate-feed
+      - name: Execute required PostgreSQL contracts
+        shell: pwsh
+        run: ./eng/verify-candidate.ps1 -Mode Run -Feed artifacts/candidate-feed -EvidenceDirectory artifacts/evidence -CandidateVersion '${{ needs.candidate-pack.outputs.candidate }}' -Lane 'provider-postgres/${{ matrix.framework }}' -Context github-actions -RunId '${{ github.run_id }}'
+      - name: Retain immutable attempt evidence
+        id: snapshot-36
         if: always()
         uses: actions/upload-artifact@v4
         with:
+          name: history-lane-provider-postgres-${{ matrix.framework }}-attempt-${{ github.run_attempt }}
+          # Two paths force the artifact root to artifacts/evidence, so the lanes/<lane>/ prefix survives the merge.
+          path: |
+            artifacts/evidence/lanes/**
+            artifacts/evidence/run-context.json
+          retention-days: 14
+      - name: Upload lane evidence
+        if: always() && steps.snapshot-36.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lane-provider-postgres-${{ matrix.framework }}
+          # Two paths force the artifact root to artifacts/evidence, so the lanes/<lane>/ prefix survives the merge.
+          path: |
+            artifacts/evidence/lanes/**
+            artifacts/evidence/run-context.json
+          overwrite: true
+          retention-days: 14
+      - name: Retain immutable attempt evidence
+        id: snapshot-38
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: history-projection-postgresql-${{ matrix.framework }}-attempt-${{ github.run_attempt }}
+          path: |
+            artifacts/evidence/work/**/*.log
+            artifacts/evidence/work/**/*.trx
+          retention-days: 14
+
+      - name: Retain SQL, provider versions and command evidence
+        if: always() && steps.snapshot-38.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
           name: projection-postgresql-${{ matrix.framework }}
-          path: artifacts/projection-postgresql/**
+          path: |
+            artifacts/evidence/work/**/*.log
+            artifacts/evidence/work/**/*.trx
+          overwrite: true
           retention-days: 14
 
   caching-redis:
     name: Distributed cache Redis (${{ matrix.framework }})
+    needs: candidate-pack
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -198,84 +473,482 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-dotnet@v5
+        env:
+          # Install only the pinned SDKs into a private directory so no preinstalled SDK or runtime patch can be selected.
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:
-          global-json-file: global.json
           dotnet-version: |
-            8.0.x
-            9.0.x
-            10.0.x
-      - name: Execute required isolated Redis cache contracts
-        env:
-          MATRIX_FRAMEWORK: ${{ matrix.framework }}
-        run: >-
-          dotnet test tests/Meridian.Mediator.Caching.Tests/Meridian.Mediator.Caching.Tests.csproj
-          -c Release -f "$MATRIX_FRAMEWORK" --filter "Provider=Redis"
-          --logger "trx;LogFileName=redis.trx" --logger "console;verbosity=normal"
-          --results-directory artifacts/caching-redis
-      - name: Execute required owned Redis leases and process restart proof
-        env:
-          MATRIX_FRAMEWORK: ${{ matrix.framework }}
-        run: >-
-          dotnet test tests/Meridian.Mediator.Redis.Tests/Meridian.Mediator.Redis.Tests.csproj
-          -c Release -f "$MATRIX_FRAMEWORK" --filter "Provider=Redis"
-          --logger "trx;LogFileName=leased-redis.trx" --logger "console;verbosity=normal"
-          --results-directory artifacts/caching-redis
-      - name: Retain executed provider and binary evidence
+            8.0.421
+            9.0.318
+            10.0.300
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.candidate-pack.outputs.feedArtifact }}
+          path: artifacts/candidate-feed
+      - name: Execute required isolated Redis cache contracts and owned Redis leases
+        shell: pwsh
+        run: ./eng/verify-candidate.ps1 -Mode Run -Feed artifacts/candidate-feed -EvidenceDirectory artifacts/evidence -CandidateVersion '${{ needs.candidate-pack.outputs.candidate }}' -Lane 'provider-redis-cache/${{ matrix.framework }}' -Context github-actions -RunId '${{ github.run_id }}'
+      - name: Retain immutable attempt evidence
+        id: snapshot-44
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: caching-redis-${{ matrix.framework }}
-          path: artifacts/caching-redis/**
+          name: history-lane-provider-redis-cache-${{ matrix.framework }}-attempt-${{ github.run_attempt }}
+          # Two paths force the artifact root to artifacts/evidence, so the lanes/<lane>/ prefix survives the merge.
+          path: |
+            artifacts/evidence/lanes/**
+            artifacts/evidence/run-context.json
+          retention-days: 14
+      - name: Upload lane evidence
+        if: always() && steps.snapshot-44.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lane-provider-redis-cache-${{ matrix.framework }}
+          # Two paths force the artifact root to artifacts/evidence, so the lanes/<lane>/ prefix survives the merge.
+          path: |
+            artifacts/evidence/lanes/**
+            artifacts/evidence/run-context.json
+          overwrite: true
+          retention-days: 14
+      - name: Retain immutable attempt evidence
+        id: snapshot-46
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: history-caching-redis-${{ matrix.framework }}-attempt-${{ github.run_attempt }}
+          path: |
+            artifacts/evidence/work/**/*.log
+            artifacts/evidence/work/**/*.trx
           retention-days: 14
 
-  package-compatibility:
-    name: package consumers (${{ matrix.os }}, SDK ${{ matrix.host.sdk }})
-    runs-on: ${{ matrix.os }}
+      - name: Retain executed provider and binary evidence
+        if: always() && steps.snapshot-46.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: caching-redis-${{ matrix.framework }}
+          path: |
+            artifacts/evidence/work/**/*.log
+            artifacts/evidence/work/**/*.trx
+          overwrite: true
+          retention-days: 14
+
+  ef-transactions:
+    name: EF transactions (${{ matrix.framework }})
+    needs: candidate-pack
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        framework: [net8.0, net9.0, net10.0]
+    services:
+      postgres:
+        image: postgres:16.4-alpine@sha256:5660c2cbfea50c7a9127d17dc4e48543eedd3d7a41a595a2dfa572471e37e64c
+        env:
+          POSTGRES_PASSWORD: meridian_test_only
+          POSTGRES_DB: meridian_ef_test
+        ports: ['5432/tcp']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d meridian_ef_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+      redis:
+        image: redis:7.4-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+        ports: ['6379/tcp']
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      DOTNET_ROLL_FORWARD: LatestPatch
+      DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
+      MERIDIAN_TEST_POSTGRES: Host=127.0.0.1;Port=${{ job.services.postgres.ports[5432] }};Database=meridian_ef_test;Username=postgres;Password=meridian_test_only
+      MERIDIAN_TEST_REDIS: 127.0.0.1:${{ job.services.redis.ports[6379] }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        env:
+          # Install only the pinned SDKs into a private directory so no preinstalled SDK or runtime patch can be selected.
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: |
+            8.0.421
+            9.0.318
+            10.0.300
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.candidate-pack.outputs.feedArtifact }}
+          path: artifacts/candidate-feed
+      - name: Execute required EF8 transactions and real provider contracts
+        shell: pwsh
+        run: ./eng/verify-candidate.ps1 -Mode Run -Feed artifacts/candidate-feed -EvidenceDirectory artifacts/evidence -CandidateVersion '${{ needs.candidate-pack.outputs.candidate }}' -Lane 'ef-transactions/${{ matrix.framework }}' -Context github-actions -RunId '${{ github.run_id }}'
+      - name: Retain immutable attempt evidence
+        id: snapshot-52
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: history-lane-ef-transactions-${{ matrix.framework }}-attempt-${{ github.run_attempt }}
+          # Two paths force the artifact root to artifacts/evidence, so the lanes/<lane>/ prefix survives the merge.
+          path: |
+            artifacts/evidence/lanes/**
+            artifacts/evidence/run-context.json
+          retention-days: 14
+      - name: Upload lane evidence
+        if: always() && steps.snapshot-52.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lane-ef-transactions-${{ matrix.framework }}
+          # Two paths force the artifact root to artifacts/evidence, so the lanes/<lane>/ prefix survives the merge.
+          path: |
+            artifacts/evidence/lanes/**
+            artifacts/evidence/run-context.json
+          overwrite: true
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        id: snapshot-54
+        if: always()
+        with:
+          name: history-ef-transactions-${{ matrix.framework }}-attempt-${{ github.run_attempt }}
+          path: |
+            artifacts/evidence/work/**/*.log
+            artifacts/evidence/work/**/*.trx
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.snapshot-54.outcome == 'success'
+        with:
+          name: ef-transactions-${{ matrix.framework }}
+          path: |
+            artifacts/evidence/work/**/*.log
+            artifacts/evidence/work/**/*.trx
+          overwrite: true
+          retention-days: 14
+
+  ef10-compatibility:
+    name: EF10 compatibility (net10.0)
+    needs: candidate-pack
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16.4-alpine@sha256:5660c2cbfea50c7a9127d17dc4e48543eedd3d7a41a595a2dfa572471e37e64c
+        env:
+          POSTGRES_PASSWORD: meridian_test_only
+          POSTGRES_DB: meridian_ef_test
+        ports: ['5432/tcp']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d meridian_ef_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+      redis:
+        image: redis:7.4-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+        ports: ['6379/tcp']
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      DOTNET_ROLL_FORWARD: LatestPatch
+      DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
+      MERIDIAN_TEST_POSTGRES: Host=127.0.0.1;Port=${{ job.services.postgres.ports[5432] }};Database=meridian_ef_test;Username=postgres;Password=meridian_test_only
+      MERIDIAN_TEST_REDIS: 127.0.0.1:${{ job.services.redis.ports[6379] }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        env:
+          # Install only the pinned SDKs into a private directory so no preinstalled SDK or runtime patch can be selected.
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: 10.0.300
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.candidate-pack.outputs.feedArtifact }}
+          path: artifacts/candidate-feed
+      - name: Execute isolated EF10 compatibility against the packed candidate
+        shell: pwsh
+        run: ./eng/verify-candidate.ps1 -Mode Run -Feed artifacts/candidate-feed -EvidenceDirectory artifacts/evidence -CandidateVersion '${{ needs.candidate-pack.outputs.candidate }}' -Lane 'ef10-compatibility/net10.0' -Context github-actions -RunId '${{ github.run_id }}'
+      - name: Retain immutable attempt evidence
+        id: snapshot-60
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: history-lane-ef10-compatibility-attempt-${{ github.run_attempt }}
+          # Two paths force the artifact root to artifacts/evidence, so the lanes/<lane>/ prefix survives the merge.
+          path: |
+            artifacts/evidence/lanes/**
+            artifacts/evidence/run-context.json
+          retention-days: 14
+      - name: Upload lane evidence
+        if: always() && steps.snapshot-60.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lane-ef10-compatibility
+          # Two paths force the artifact root to artifacts/evidence, so the lanes/<lane>/ prefix survives the merge.
+          path: |
+            artifacts/evidence/lanes/**
+            artifacts/evidence/run-context.json
+          overwrite: true
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        id: snapshot-62
+        if: always()
+        with:
+          name: history-ef10-compatibility-attempt-${{ github.run_attempt }}
+          path: |
+            artifacts/evidence/work/**/*.log
+            artifacts/evidence/work/**/*.trx
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.snapshot-62.outcome == 'success'
+        with:
+          name: ef10-compatibility
+          path: |
+            artifacts/evidence/work/**/*.log
+            artifacts/evidence/work/**/*.trx
+          overwrite: true
+          retention-days: 14
+
+  http-integration:
+    name: HTTP orders, real Redis and SQLite (net10.0)
+    needs: candidate-pack
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      redis:
+        image: redis:7.4-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+        ports: ['6379/tcp']
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      MERIDIAN_TEST_REDIS: 127.0.0.1:${{ job.services.redis.ports[6379] }}
+      DOTNET_ROLL_FORWARD: LatestPatch
+      DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        env:
+          # Install only the pinned SDKs into a private directory so no preinstalled SDK or runtime patch can be selected.
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: 10.0.300
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.candidate-pack.outputs.feedArtifact }}
+          path: artifacts/candidate-feed
+      - name: HTTP composition, real socket lifecycle and bounded HTTP process smoke
+        shell: pwsh
+        run: ./eng/verify-candidate.ps1 -Mode Run -Feed artifacts/candidate-feed -EvidenceDirectory artifacts/evidence -CandidateVersion '${{ needs.candidate-pack.outputs.candidate }}' -Lane 'http-integration/net10.0' -Context github-actions -RunId '${{ github.run_id }}'
+      - name: Retain immutable attempt evidence
+        id: snapshot-68
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: history-lane-http-integration-attempt-${{ github.run_attempt }}
+          # Two paths force the artifact root to artifacts/evidence, so the lanes/<lane>/ prefix survives the merge.
+          path: |
+            artifacts/evidence/lanes/**
+            artifacts/evidence/run-context.json
+          retention-days: 14
+      - name: Upload lane evidence
+        if: always() && steps.snapshot-68.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lane-http-integration
+          # Two paths force the artifact root to artifacts/evidence, so the lanes/<lane>/ prefix survives the merge.
+          path: |
+            artifacts/evidence/lanes/**
+            artifacts/evidence/run-context.json
+          overwrite: true
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        id: snapshot-70
+        if: always()
+        with:
+          name: history-http-integration-net10-attempt-${{ github.run_attempt }}
+          path: |
+            artifacts/evidence/work/**/*.log
+            artifacts/evidence/work/**/*.trx
+            artifacts/evidence/work/**/samples-summary.json
+            artifacts/evidence/work/**/http-ownership.json
+            artifacts/C6/socket/**
+          retention-days: 14
+
+  # Publishes the packaged consumer with PublishAot/trimming and EXECUTES the native binary on a matching real runner
+  # (linux-x64 on an x64 runner, osx-arm64 on an Apple-silicon runner). The runner refuses a mismatching OS or
+  # architecture, macOS Rosetta translation and Linux qemu-user/Rosetta/box64/FEX emulation it can see in procfs; those
+  # probes are best effort, so the rows are only claimed from the provisioned real runners named below.
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.snapshot-70.outcome == 'success'
+        with:
+          name: http-integration-net10
+          path: |
+            artifacts/evidence/work/**/*.log
+            artifacts/evidence/work/**/*.trx
+            artifacts/evidence/work/**/samples-summary.json
+            artifacts/evidence/work/**/http-ownership.json
+            artifacts/C6/socket/**
+          overwrite: true
+          retention-days: 14
+
+  # Publishes the packaged consumer with PublishAot/trimming and EXECUTES the native binary on a matching real runner
+  # (linux-x64 on an x64 runner, osx-arm64 on an Apple-silicon runner). The runner refuses a mismatching OS or
+  # architecture, macOS Rosetta translation and Linux qemu-user/Rosetta/box64/FEX emulation it can see in procfs; those
+  # probes are best effort, so the rows are only claimed from the provisioned real runners named below.
+  native-aot:
+    name: native AOT ${{ matrix.rid }} (${{ matrix.host.framework }})
+    needs: candidate-pack
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        rid: [linux-x64, osx-arm64]
         host:
           - { framework: net8.0, sdk: 8.0.421 }
           - { framework: net9.0, sdk: 9.0.318 }
           - { framework: net10.0, sdk: 10.0.300 }
+        include:
+          - { rid: linux-x64, runner: ubuntu-24.04 }
+          - { rid: osx-arm64, runner: macos-14 }
     env:
-      CANDIDATE_VERSION: 2.1.4-a4.${{ github.run_id }}.${{ github.run_attempt }}
       DOTNET_ROLL_FORWARD: LatestPatch
+      DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-dotnet@v5
+        env:
+          # Install only the pinned SDKs into a private directory so no preinstalled SDK or runtime patch can be selected.
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:
           dotnet-version: |
             10.0.300
             ${{ matrix.host.sdk }}
-      - name: Pack and validate stable API baseline
+      - name: Install Linux native toolchain
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang zlib1g-dev
+      - name: Record host and native toolchain
+        shell: bash
+        run: |
+          uname -a
+          clang --version
+          if [ "$RUNNER_OS" = "macOS" ]; then xcode-select -p; sw_vers; fi
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.candidate-pack.outputs.feedArtifact }}
+          path: artifacts/candidate-feed
+      - name: Run the readable sample with the same assertions (managed)
+        run: dotnet run --project samples/Meridian.NativeAot/Meridian.NativeAot.csproj -c Release -f '${{ matrix.host.framework }}'
+      - name: Publish and execute the combined and mapping-only native consumers
         shell: pwsh
-        run: ./eng/pack-packages.ps1 -OutputDirectory artifacts/packages -CandidateVersion $env:CANDIDATE_VERSION
-      - name: Run isolated native compiler consumers
-        shell: pwsh
-        run: ./eng/verify-packages.ps1 -Feed artifacts/packages -CandidateVersion $env:CANDIDATE_VERSION -Framework '${{ matrix.host.framework }}' -SdkVersion '${{ matrix.host.sdk }}' -ExcludeConsumerIds Meridian.RedisIdempotencyConsumer
-      - name: Retain package hashes and compiler evidence
+        run: ./eng/verify-candidate.ps1 -Mode Run -Feed artifacts/candidate-feed -EvidenceDirectory artifacts/evidence -CandidateVersion '${{ needs.candidate-pack.outputs.candidate }}' -Lane 'native-aot/${{ matrix.rid }}/${{ matrix.host.framework }}' -Context github-actions -RunId '${{ github.run_id }}'
+      - name: Retain immutable attempt evidence
+        id: snapshot-79
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: compatibility-${{ matrix.os }}-${{ matrix.host.framework }}
+          name: history-lane-native-aot-${{ matrix.rid }}-${{ matrix.host.framework }}-attempt-${{ github.run_attempt }}
+          # Two paths force the artifact root to artifacts/evidence, so the lanes/<lane>/ prefix survives the merge.
           path: |
-            artifacts/packages/**
-            artifacts/package-consumers/**
+            artifacts/evidence/lanes/**
+            artifacts/evidence/run-context.json
+          retention-days: 14
+      - name: Upload lane evidence
+        if: always() && steps.snapshot-79.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lane-native-aot-${{ matrix.rid }}-${{ matrix.host.framework }}
+          # Two paths force the artifact root to artifacts/evidence, so the lanes/<lane>/ prefix survives the merge.
+          path: |
+            artifacts/evidence/lanes/**
+            artifacts/evidence/run-context.json
+          overwrite: true
+          retention-days: 14
+      - name: Retain immutable attempt evidence
+        id: snapshot-81
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: history-native-aot-${{ matrix.rid }}-${{ matrix.host.framework }}-attempt-${{ github.run_attempt }}
+          path: |
+            artifacts/evidence/work/**/native-result.json
+            artifacts/evidence/work/**/warnings.json
+            artifacts/evidence/work/**/restore-receipt.json
+            artifacts/evidence/work/**/toolchain.json
+            artifacts/evidence/work/**/*.log
           retention-days: 14
 
-  redis-package-compatibility:
-    name: Required Redis all-package consumers (${{ matrix.host.framework }})
+      - name: Retain native publish, warning, case and binary evidence
+        if: always() && steps.snapshot-81.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-aot-${{ matrix.rid }}-${{ matrix.host.framework }}
+          path: |
+            artifacts/evidence/work/**/native-result.json
+            artifacts/evidence/work/**/warnings.json
+            artifacts/evidence/work/**/restore-receipt.json
+            artifacts/evidence/work/**/toolchain.json
+            artifacts/evidence/work/**/*.log
+          overwrite: true
+          retention-days: 14
+
+  property-counts:
+    name: property counts (net10.0)
+    needs: candidate-pack
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        host:
-          - { framework: net8.0, sdk: 8.0.421 }
-          - { framework: net9.0, sdk: 9.0.318 }
-          - { framework: net10.0, sdk: 10.0.300 }
+    timeout-minutes: 30
+    env:
+      DOTNET_ROLL_FORWARD: LatestPatch
+      DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        env:
+          # Install only the pinned SDKs into a private directory so no preinstalled SDK or runtime patch can be selected.
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: 10.0.300
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.candidate-pack.outputs.feedArtifact }}
+          path: artifacts/candidate-feed
+      - name: Execute the elevated FsCheck budgets and record the actual case counts
+        shell: pwsh
+        run: ./eng/verify-candidate.ps1 -Mode Run -Feed artifacts/candidate-feed -EvidenceDirectory artifacts/evidence -CandidateVersion '${{ needs.candidate-pack.outputs.candidate }}' -Lane 'property-counts/net10.0' -Context github-actions -RunId '${{ github.run_id }}'
+      - name: Retain immutable attempt evidence
+        id: snapshot-87
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: history-lane-property-counts-attempt-${{ github.run_attempt }}
+          # Two paths force the artifact root to artifacts/evidence, so the lanes/<lane>/ prefix survives the merge.
+          path: |
+            artifacts/evidence/lanes/**
+            artifacts/evidence/run-context.json
+          retention-days: 14
+
+      - name: Upload lane evidence
+        if: always() && steps.snapshot-87.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lane-property-counts
+          # Two paths force the artifact root to artifacts/evidence, so the lanes/<lane>/ prefix survives the merge.
+          path: |
+            artifacts/evidence/lanes/**
+            artifacts/evidence/run-context.json
+          overwrite: true
+          retention-days: 14
+
+  coverage:
+    name: coverage gate (net10.0)
+    needs: candidate-pack
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     services:
+      postgres:
+        image: postgres:16.4-alpine@sha256:5660c2cbfea50c7a9127d17dc4e48543eedd3d7a41a595a2dfa572471e37e64c
+        env:
+          POSTGRES_USER: meridian_test
+          POSTGRES_PASSWORD: meridian_test_only
+          POSTGRES_DB: meridian_projection_test
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U meridian_test -d meridian_projection_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
       redis:
         image: redis:7.4-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
         ports:
@@ -284,33 +957,239 @@ jobs:
           --health-cmd "redis-cli ping"
           --health-interval 5s --health-timeout 5s --health-retries 12
     env:
-      CANDIDATE_VERSION: 2.1.4-c4.${{ github.run_id }}.${{ github.run_attempt }}
       DOTNET_ROLL_FORWARD: LatestPatch
       DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
+      MERIDIAN_TEST_POSTGRES: Host=127.0.0.1;Port=${{ job.services.postgres.ports[5432] }};Database=meridian_projection_test;Username=meridian_test;Password=meridian_test_only
       MERIDIAN_TEST_REDIS: 127.0.0.1:${{ job.services.redis.ports[6379] }},abortConnect=true,connectTimeout=5000
-      MERIDIAN_TEST_REDIS_REQUIRED: '1'
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-dotnet@v5
+        env:
+          # Install only the pinned SDKs into a private directory so no preinstalled SDK or runtime patch can be selected.
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:
-          dotnet-version: |
-            10.0.300
-            ${{ matrix.host.sdk }}
-      - name: Pack every inventory archive
+          dotnet-version: 10.0.300
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.candidate-pack.outputs.feedArtifact }}
+          path: artifacts/candidate-feed
+      - name: Measure coverage (coverlet) and enforce the ratchet and hot-path targets
         shell: pwsh
-        run: ./eng/pack-packages.ps1 -OutputDirectory artifacts/redis-packages -CandidateVersion $env:CANDIDATE_VERSION
-      - name: Require every selected compiler consumer with real Redis
-        shell: pwsh
-        run: ./eng/verify-packages.ps1 -Feed artifacts/redis-packages -CandidateVersion $env:CANDIDATE_VERSION -Framework '${{ matrix.host.framework }}' -SdkVersion '${{ matrix.host.sdk }}' -OutputDirectory artifacts/redis-package-consumers
-      - name: Retain all-package required provider evidence
+        run: ./eng/verify-candidate.ps1 -Mode Run -Feed artifacts/candidate-feed -EvidenceDirectory artifacts/evidence -CandidateVersion '${{ needs.candidate-pack.outputs.candidate }}' -Lane 'coverage/net10.0' -Context github-actions -RunId '${{ github.run_id }}'
+      - name: Retain immutable attempt evidence
+        id: snapshot-93
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: redis-package-compatibility-${{ matrix.host.framework }}
+          name: history-lane-coverage-attempt-${{ github.run_attempt }}
+          # Two paths force the artifact root to artifacts/evidence, so the lanes/<lane>/ prefix survives the merge.
           path: |
-            artifacts/redis-packages/**
-            artifacts/redis-package-consumers/**
+            artifacts/evidence/lanes/**
+            artifacts/evidence/run-context.json
           retention-days: 14
+
+      - name: Upload lane evidence
+        if: always() && steps.snapshot-93.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lane-coverage
+          # Two paths force the artifact root to artifacts/evidence, so the lanes/<lane>/ prefix survives the merge.
+          path: |
+            artifacts/evidence/lanes/**
+            artifacts/evidence/run-context.json
+          overwrite: true
+          retention-days: 14
+
+  warning-ratchet:
+    name: warning ratchet (net10.0)
+    needs: candidate-pack
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DOTNET_ROLL_FORWARD: LatestPatch
+      DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        env:
+          # Install only the pinned SDKs into a private directory so no preinstalled SDK or runtime patch can be selected.
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: |
+            8.0.421
+            9.0.318
+            10.0.300
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.candidate-pack.outputs.feedArtifact }}
+          path: artifacts/candidate-feed
+      - name: Full non-incremental build and warning ratchet (all baseline projects must be built)
+        shell: pwsh
+        run: ./eng/verify-candidate.ps1 -Mode Run -Feed artifacts/candidate-feed -EvidenceDirectory artifacts/evidence -CandidateVersion '${{ needs.candidate-pack.outputs.candidate }}' -Lane 'warning-ratchet/net10.0' -Context github-actions -RunId '${{ github.run_id }}'
+      - name: Retain immutable attempt evidence
+        id: snapshot-99
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: history-lane-warning-ratchet-attempt-${{ github.run_attempt }}
+          # Two paths force the artifact root to artifacts/evidence, so the lanes/<lane>/ prefix survives the merge.
+          path: |
+            artifacts/evidence/lanes/**
+            artifacts/evidence/run-context.json
+          retention-days: 14
+
+  # Required infrastructure check (eng/required-checks.json infrastructureChecks). The suite builds and packs fixture
+  # projects, so it uses the same exact SDKs; the full discovery takes about 25 minutes on a developer machine.
+      - name: Upload lane evidence
+        if: always() && steps.snapshot-99.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: lane-warning-ratchet
+          # Two paths force the artifact root to artifacts/evidence, so the lanes/<lane>/ prefix survives the merge.
+          path: |
+            artifacts/evidence/lanes/**
+            artifacts/evidence/run-context.json
+          overwrite: true
+          retention-days: 14
+
+  # Required infrastructure check (eng/required-checks.json infrastructureChecks). The suite builds and packs fixture
+  # projects, so it uses the same exact SDKs; the full discovery takes about 25 minutes on a developer machine.
+  eng-tooling-tests:
+    name: eng tooling tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      DOTNET_ROLL_FORWARD: LatestPatch
+      DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v5
+        env:
+          # Install only the pinned SDKs into a private directory so no preinstalled SDK or runtime patch can be selected.
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
+        with:
+          dotnet-version: |
+            8.0.421
+            9.0.318
+            10.0.300
+      - name: Install the pinned YAML parser used by the structural workflow tests
+        run: python3 -m pip install --user pyyaml==6.0.3
+      - name: Run the gate, collector, coverage, workflow and inventory tests
+        run: python3 -B -m unittest discover -s eng/tests -p 'test_*.py'
+      - name: Validate retained APIs and the deprecation lifecycle ledger
+        shell: pwsh
+        run: ./eng/verify-deprecations.ps1 -Output artifacts/deprecation-validation.json
+
+  # Aggregates the evidence of every lane that this workflow defines. The verdict is SCOPED (CI-defined lanes only):
+  # current-servicing lanes need the isolated local toolchains, so a CI pass is never the whole candidate verdict. The
+  # full verdict is `verify-candidate.ps1 -Mode Aggregate` over all evidence (docs/governance/required-checks.md).
+  candidate-gate:
+    name: candidate gate
+    if: ${{ !cancelled() }}
+    needs:
+      - candidate-pack
+      - eng-tooling-tests
+      - build
+      - package-compatibility
+      - redis-package-compatibility
+      - projection-postgresql
+      - caching-redis
+      - ef-transactions
+      - ef10-compatibility
+      - http-integration
+      - native-aot
+      - property-counts
+      - coverage
+      - warning-ratchet
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.candidate-pack.outputs.feedArtifact }}
+          path: artifacts/candidate-feed
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: lane-*
+          merge-multiple: true
+          path: artifacts/evidence
+      - name: Require all dependency jobs to succeed
+        shell: pwsh
+        env:
+          MERIDIAN_CI_NEEDS: ${{ toJSON(needs) }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $policy = Get-Content -Raw eng/required-checks.json | ConvertFrom-Json
+          $expected = @(@($policy.lanes | Where-Object { $_.ci -and $_.ci.workflow -eq 'ci.yml' } | ForEach-Object { $_.ci.job }) +
+              @($policy.infrastructureChecks | Where-Object { $_.workflow -eq 'ci.yml' -and $_.job -ne 'candidate-gate' } | ForEach-Object job) | Sort-Object -Unique)
+          $actual = $env:MERIDIAN_CI_NEEDS | ConvertFrom-Json -AsHashtable
+          if ($actual -isnot [Collections.IDictionary] -or $expected.Count -eq 0 -or $actual.Count -ne $expected.Count -or
+              @(Compare-Object @($actual.Keys | Sort-Object) $expected).Count -ne 0) { throw 'Required dependency job identities are missing or unexpected.' }
+          foreach ($name in $expected) {
+              if ($actual[$name] -isnot [Collections.IDictionary] -or $actual[$name]['result'] -isnot [string] -or $actual[$name]['result'] -cne 'success') {
+                  throw "Required dependency $name did not succeed. Earlier artifact evidence cannot replace this attempt."
+              }
+          }
+      - name: Evaluate every CI-defined lane against the policy and the candidate hashes
+        id: evaluate-candidate
+        shell: pwsh
+        run: ./eng/verify-candidate.ps1 -Mode Aggregate -CiLanesOnly -Feed artifacts/candidate-feed -EvidenceDirectory artifacts/evidence -CandidateVersion '${{ needs.candidate-pack.outputs.candidate }}' -PackageManifestSha256 '${{ needs.candidate-pack.outputs.manifestSha256 }}' -SourceCommit '${{ github.sha }}' -Context github-actions -RunId '${{ github.run_id }}'
+      - name: Bind the summary to this attempt and retain dependency failures
+        id: finalize-summary
+        if: always()
+        shell: pwsh
+        env:
+          EVALUATION_OUTCOME: ${{ steps.evaluate-candidate.outcome }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $directory = 'artifacts/evidence'
+          $null = New-Item -ItemType Directory -Force $directory
+          $path = Join-Path $directory 'summary.json'
+          $summary = $null
+          if (Test-Path -LiteralPath $path) {
+            try { $summary = Get-Content -Raw -LiteralPath $path | ConvertFrom-Json -AsHashtable } catch { $summary = $null }
+          }
+          if ($summary -isnot [Collections.IDictionary]) {
+            $summary = @{ schema='meridian-candidate-summary/2'; overall='FAIL'; exitCode=1; wholeCandidate=$false;
+              releaseEligible=$false; failures=@('This attempt produced no valid candidate summary.'); lanes=@() }
+          }
+          if ($env:EVALUATION_OUTCOME -cne 'success') {
+            $summary.overall = 'FAIL'; $summary.exitCode = 1; $summary.releaseEligible = $false
+            $summary.failures = @($summary.failures) + @('Candidate evaluation did not succeed in this attempt; earlier artifacts cannot replace it.')
+          }
+          $summary.ciAttempt = @{runId=$env:GITHUB_RUN_ID; runAttempt=$env:GITHUB_RUN_ATTEMPT}
+          $summary | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath $path
+          $markdown = Join-Path $directory 'summary.md'
+          if ($summary.overall -eq 'FAIL' -or -not (Test-Path -LiteralPath $markdown)) {
+            @("# Candidate summary: $($summary.overall)", '', "Run $env:GITHUB_RUN_ID, attempt $env:GITHUB_RUN_ATTEMPT",
+              '', 'See summary.json for the retained lane facts and failures.') + @($summary.failures | ForEach-Object { "* $_" }) |
+              Set-Content -LiteralPath $markdown
+          }
+          if ($summary.overall -eq 'FAIL') { exit 1 }
+      - name: Retain immutable attempt evidence
+        id: snapshot-122
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: history-candidate-summary-attempt-${{ github.run_attempt }}
+          if-no-files-found: error
+          path: |
+            artifacts/evidence/summary.json
+            artifacts/evidence/summary.md
+          retention-days: 30
+
+      - name: Upload candidate summary
+        if: always() && steps.snapshot-122.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-summary
+          if-no-files-found: error
+          path: |
+            artifacts/evidence/summary.json
+            artifacts/evidence/summary.md
+          overwrite: true
+          retention-days: 30
 
   preview:
     name: preview samples (net11.0, optional)
@@ -339,196 +1218,3 @@ jobs:
 
       - name: Build preview samples
         run: dotnet build Meridian.sln -c Release
-
-  ef-transactions:
-    name: EF transactions (${{ matrix.framework }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        framework: [net8.0, net9.0, net10.0]
-    services:
-      postgres:
-        image: postgres:16.4-alpine@sha256:5660c2cbfea50c7a9127d17dc4e48543eedd3d7a41a595a2dfa572471e37e64c
-        env:
-          POSTGRES_PASSWORD: meridian_test_only
-          POSTGRES_DB: meridian_ef_test
-        ports: ['5432/tcp']
-        options: >-
-          --health-cmd "pg_isready -U postgres -d meridian_ef_test"
-          --health-interval 5s --health-timeout 5s --health-retries 12
-      redis:
-        image: redis:7.4-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
-        ports: ['6379/tcp']
-        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 12
-    env:
-      DOTNET_ROLL_FORWARD: LatestPatch
-      DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
-      MERIDIAN_TEST_POSTGRES: Host=127.0.0.1;Port=${{ job.services.postgres.ports[5432] }};Database=meridian_ef_test;Username=postgres;Password=meridian_test_only
-      MERIDIAN_TEST_REDIS: 127.0.0.1:${{ job.services.redis.ports[6379] }}
-      MATRIX_FRAMEWORK: ${{ matrix.framework }}
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-dotnet@v5
-        with:
-          dotnet-version: |
-            8.0.421
-            9.0.318
-            10.0.300
-      - name: Execute required EF8 transactions and real provider contracts
-        run: >-
-          dotnet test tests/Meridian.Mediator.EntityFrameworkCore.Tests/Meridian.Mediator.EntityFrameworkCore.Tests.csproj
-          -c Release -f "$MATRIX_FRAMEWORK" --logger "trx;LogFileName=ef8.trx"
-          --results-directory artifacts/ef-transactions
-      - name: Pack all packages and execute isolated EF10 compatibility
-        if: matrix.framework == 'net10.0'
-        shell: pwsh
-        run: |
-          ./eng/pack-packages.ps1 -CandidateVersion 2.1.4-ci.ef -OutputDirectory artifacts/ef-feed
-          ./eng/verify-packages.ps1 -CandidateVersion 2.1.4-ci.ef -Feed artifacts/ef-feed -OutputDirectory artifacts/ef-consumers
-          ./eng/test-ef10-compatibility.ps1 -CandidateVersion 2.1.4-ci.ef -Feed artifacts/ef-feed
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: ef-transactions-${{ matrix.framework }}
-          path: |
-            artifacts/ef-transactions/**
-            artifacts/ef10-compatibility/**
-            artifacts/ef-consumers/**
-
-  http-integration:
-    name: HTTP orders, real Redis and SQLite (net10.0)
-    runs-on: ubuntu-latest
-    services:
-      redis:
-        image: redis:7.4-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
-        ports: ['6379/tcp']
-        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 12
-    env:
-      MERIDIAN_TEST_REDIS: 127.0.0.1:${{ job.services.redis.ports[6379] }}
-      DOTNET_ROLL_FORWARD: LatestPatch
-      DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-dotnet@v5
-        with:
-          dotnet-version: 10.0.300
-      - name: HTTP composition and real socket lifecycle
-        run: dotnet test tests/Meridian.AspNetCore.Tests -c Release --logger "trx;LogFileName=http.trx" --results-directory artifacts/http-results
-      - name: Preserve console samples and run bounded HTTP process smoke
-        shell: pwsh
-        run: ./eng/run-samples.ps1 -Framework net10.0 -IncludeHttp
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: http-integration-net10
-          path: |
-            artifacts/http-results/**
-            artifacts/C6/socket/**
-            artifacts/sample-results/**
-
-  native-aot-pack:
-    name: native AOT candidate packages
-    runs-on: ubuntu-latest
-    # The candidate version is derived exactly once, here, and handed to every lane as a job output. A lane re-run
-    # ("Re-run failed jobs") keeps the first attempt's feed and therefore the first attempt's version; recomputing it
-    # from github.run_attempt in each lane would look for a package-manifest that was never packed.
-    outputs:
-      candidate: ${{ steps.version.outputs.candidate }}
-    env:
-      DOTNET_ROLL_FORWARD: LatestPatch
-      DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-dotnet@v5
-        with:
-          dotnet-version: 10.0.300
-      - name: Derive the candidate version once
-        id: version
-        shell: bash
-        run: echo "candidate=2.1.4-d4.${{ github.run_id }}.${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
-      # One packaging job from one frozen source snapshot. Both native lanes download and inspect this exact feed;
-      # independent repacks would be different archives and are never merged into one exact-artifact claim.
-      - name: Pack every inventory archive once
-        shell: pwsh
-        env:
-          CANDIDATE_VERSION: ${{ steps.version.outputs.candidate }}
-        run: ./eng/pack-packages.ps1 -OutputDirectory artifacts/native-feed -CandidateVersion $env:CANDIDATE_VERSION
-      - name: Retain the immutable candidate feed
-        uses: actions/upload-artifact@v4
-        with:
-          name: native-aot-feed
-          path: artifacts/native-feed/**
-          # Artifact names are immutable within a run and earlier attempts' artifacts stay on it; without overwrite a
-          # "Re-run all jobs" attempt would fail this upload with a name conflict.
-          overwrite: true
-          retention-days: 14
-          if-no-files-found: error
-
-  # Publishes the packaged consumer with PublishAot/trimming and EXECUTES the native binary on a matching real runner
-  # (linux-x64 on an x64 runner, osx-arm64 on an Apple-silicon runner). The runner refuses a mismatching OS or
-  # architecture, macOS Rosetta translation and Linux qemu-user/Rosetta/box64/FEX emulation it can see in procfs; those
-  # probes are best effort, so the rows are only claimed from the provisioned real runners named below.
-  # Existing runtime, sample, package and provider jobs are unchanged.
-  native-aot:
-    name: native AOT ${{ matrix.rid }} (${{ matrix.host.framework }})
-    needs: native-aot-pack
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        rid: [linux-x64, osx-arm64]
-        host:
-          - { framework: net8.0, sdk: 8.0.421 }
-          - { framework: net9.0, sdk: 9.0.318 }
-          - { framework: net10.0, sdk: 10.0.300 }
-        include:
-          - { rid: linux-x64, runner: ubuntu-24.04 }
-          - { rid: osx-arm64, runner: macos-14 }
-    env:
-      CANDIDATE_VERSION: ${{ needs.native-aot-pack.outputs.candidate }}
-      DOTNET_ROLL_FORWARD: LatestPatch
-      DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-dotnet@v5
-        with:
-          dotnet-version: |
-            10.0.300
-            ${{ matrix.host.sdk }}
-      - name: Install Linux native toolchain
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang zlib1g-dev
-      - name: Record host and native toolchain
-        shell: bash
-        run: |
-          uname -a
-          clang --version
-          if [ "$RUNNER_OS" = "macOS" ]; then xcode-select -p; sw_vers; fi
-      - uses: actions/download-artifact@v4
-        with:
-          name: native-aot-feed
-          path: artifacts/native-feed
-      - name: Publish and execute the combined mediator and mapping consumer
-        shell: pwsh
-        run: ./eng/run-aot-smoke.ps1 -Combined -Feed artifacts/native-feed -CandidateVersion $env:CANDIDATE_VERSION -Framework '${{ matrix.host.framework }}' -SdkVersion '${{ matrix.host.sdk }}' -Rid '${{ matrix.rid }}' -OutputDirectory artifacts/native-aot
-      - name: Publish and execute the unchanged mapping-only consumer
-        shell: pwsh
-        run: ./eng/run-aot-smoke.ps1 -MappingOnly -Feed artifacts/native-feed -CandidateVersion $env:CANDIDATE_VERSION -Framework '${{ matrix.host.framework }}' -SdkVersion '${{ matrix.host.sdk }}' -RuntimeIdentifier '${{ matrix.rid }}' -OutputDirectory artifacts/native-aot-mapping
-      - name: Run the readable sample with the same assertions (managed)
-        run: dotnet run --project samples/Meridian.NativeAot/Meridian.NativeAot.csproj -c Release -f '${{ matrix.host.framework }}'
-      - name: Retain native publish, warning, case and binary evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: native-aot-${{ matrix.rid }}-${{ matrix.host.framework }}
-          path: |
-            artifacts/native-aot/**
-            artifacts/native-aot-mapping/**
-            !artifacts/native-aot/**/packages/**
-            !artifacts/native-aot-mapping/**/packages/**
-          # A re-run lane uploads under the same name as its first attempt; replace instead of failing with a conflict.
-          overwrite: true
-          retention-days: 14

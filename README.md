@@ -144,11 +144,14 @@ See [samples/README.md](./samples/README.md).
 ```bash
 dotnet restore Meridian.sln
 dotnet build Meridian.sln -c Release
-dotnet test Meridian.sln -c Release
+# Run the backend-free suites and filters from the required-check policy (PowerShell):
+pwsh -NoProfile -Command '$p = Get-Content -Raw eng/required-checks.json | ConvertFrom-Json; foreach ($t in "net8.0", "net9.0", "net10.0") { foreach ($e in $p.countProfiles.runtime.$t) { dotnet test "tests/$($e.suite)/$($e.suite).csproj" -c Release -f $t --no-build --filter $e.filter; if ($LASTEXITCODE -ne 0) { throw "Runtime tests failed" } } }'
 ```
 
-Use the SDK version in `global.json` (or a compatible roll-forward install). Provider-backed suites need
-`MERIDIAN_TEST_REDIS` / `MERIDIAN_TEST_POSTGRES` ([details](./docs/integrations.md#providers)).
+Install the exact SDK/runtime families in [CONTRIBUTING](./CONTRIBUTING.md#installing-sdks-and-runtimes).
+The runtime profile above deliberately excludes provider cases. The full solution requires both
+`MERIDIAN_TEST_REDIS` and `MERIDIAN_TEST_POSTGRES`; missing backends fail rather than skip
+([owned provider setup](./docs/provider-testing.md)).
 
 ## Documentation index
 

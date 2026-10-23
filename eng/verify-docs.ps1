@@ -4,7 +4,9 @@ param(
     [ValidateSet('Release')][string] $Configuration = 'Release',
     [Parameter(Mandatory)][string] $Feed,
     # Optional disambiguation when the feed holds more than one package manifest.
-    [ValidatePattern('^\d+\.\d+\.\d+-[0-9A-Za-z.-]+$')][string] $CandidateVersion,
+    [ValidatePattern('\A\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\z')][string] $CandidateVersion,
+    # Intent for a stable local candidate; never authorization to publish.
+    [switch] $ReleasePreparation,
     [string] $Manifest = 'eng/packages.json',
     [string] $OutputDirectory = 'artifacts/docs',
     # Reuse an existing full-scope eng/verify-packages.ps1 run for this feed instead of running it again.
@@ -37,10 +39,12 @@ if ($CandidateVersion) {
 $packageRecord = Get-Content -Raw -LiteralPath $records[0].FullName | ConvertFrom-Json
 if ($records[0].Name -ne "package-manifest.$($packageRecord.candidateVersion).json") { throw 'Package manifest name does not match its candidateVersion' }
 $CandidateVersion = $packageRecord.candidateVersion
+Assert-CandidateVersion $CandidateVersion ([bool] $ReleasePreparation)
+$releaseArguments = @(); if ($ReleasePreparation) { $releaseArguments += '-ReleasePreparation' }
 $python = (Get-Command python3 -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $dotnet = (Get-Command dotnet -CommandType Application | Select-Object -First 1).Source
 $checker = Join-Path $PSScriptRoot 'check-docs.py'
-$run = Join-Path ([IO.Path]::GetFullPath((Join-Path $repo $OutputDirectory))) "$CandidateVersion/$([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ'))"
+$run = Join-Path (Resolve-OutputDirectory $repo $OutputDirectory) "$CandidateVersion/$([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffZ'))"
 $null = New-Item -ItemType Directory -Force $run
 $steps = [Collections.Generic.List[object]]::new()
 function Write-Step([string] $Name, [string] $Detail) {
@@ -70,7 +74,7 @@ function Invoke-Logged([string] $File, [string[]] $Arguments, [string] $Log, [st
 function Get-Sha256([string] $Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
 
 # 1. The feed must still match its pack-time hash manifest and the current package inventory.
-$null = Invoke-Logged 'pwsh' @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'pack-packages.ps1'), '-OutputDirectory', $Feed, '-CandidateVersion', $CandidateVersion, '-Manifest', $manifestPath, '-InspectOnly') (Join-Path $run 'feed-inspection.log')
+$null = Invoke-Logged 'pwsh' (@('-NoProfile', '-File', (Join-Path $PSScriptRoot 'pack-packages.ps1'), '-OutputDirectory', $Feed, '-CandidateVersion', $CandidateVersion, '-Manifest', $manifestPath, '-InspectOnly') + $releaseArguments) (Join-Path $run 'feed-inspection.log')
 Write-Step 'feed-inspection' "candidate=$CandidateVersion packages=$(@($packageRecord.packages).Count)"
 
 # 2. Restore the pinned private DocFX tool into a run-local package folder from an explicit NuGet configuration.
@@ -279,7 +283,7 @@ Write-Step 'warnings' "unique=$($warningReport.unique) new=0 explained=$(@($warn
 
 # 10. The DocumentationConsumer (and every other inventoried consumer) must pass on every compiler host.
 if (-not $PackageEvidence) {
-    $null = Invoke-Logged 'pwsh' @('-NoProfile', '-File', (Join-Path $PSScriptRoot 'verify-packages.ps1'), '-Feed', $Feed, '-CandidateVersion', $CandidateVersion, '-Manifest', $manifestPath, '-OutputDirectory', (Join-Path $run 'consumers')) (Join-Path $run 'verify-packages.log')
+    $null = Invoke-Logged 'pwsh' (@('-NoProfile', '-File', (Join-Path $PSScriptRoot 'verify-packages.ps1'), '-Feed', $Feed, '-CandidateVersion', $CandidateVersion, '-Manifest', $manifestPath, '-OutputDirectory', (Join-Path $run 'consumers')) + $releaseArguments) (Join-Path $run 'verify-packages.log')
     $PackageEvidence = @(Get-ChildItem (Join-Path $run "consumers/$CandidateVersion") -Directory | Sort-Object Name)[-1].FullName
 }
 $PackageEvidence = [IO.Path]::GetFullPath($PackageEvidence)

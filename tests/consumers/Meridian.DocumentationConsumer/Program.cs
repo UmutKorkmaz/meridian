@@ -70,7 +70,7 @@ static void MappingLimits()
     #region mapping-limits
     var limited = new MapperConfiguration(cfg =>
     {
-        cfg.DefaultMaxCollectionItems = 2; // demo only: a tiny cap to show the failure; real configurations raise, never lower, it
+        cfg.DefaultMaxCollectionItems = 2; // demo only: a tiny cap to show the failure; choose a positive cap for your workload
         cfg.CreateMap<Order, OrderDto>();
         cfg.CreateMap<OrderLine, OrderLineDto>();
     });

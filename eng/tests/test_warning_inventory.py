@@ -64,6 +64,71 @@ class WarningInventoryTests(unittest.TestCase):
             warning(self.TESTS, "tests/Lib.Tests/T.cs", 7, "CA1861"),
         ]
 
+    def built(self, *names):
+        return [f"  {name} -> {REPO}/src/{name}/bin/Release/net8.0/{name}.dll" for name in names]
+
+    def test_require_built_projects_fails_on_a_partial_log(self):
+        baseline = self.write_baseline([self.log("b.log", self.base_lines())])
+        partial = self.log("partial.log", self.base_lines() + self.built("Lib"))
+        result = self.run_tool("check", "--repo", REPO, "--baseline", baseline, "--require-built-projects",
+                               "--output", self.tmp / "report.json", partial)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        report = json.loads((self.tmp / "report.json").read_text())
+        self.assertEqual(report["missingProjects"], ["Lib.Tests"])
+        self.assertIn("not built", result.stdout)
+
+    def test_require_built_projects_passes_when_every_baseline_project_was_built(self):
+        baseline = self.write_baseline([self.log("b.log", self.base_lines())])
+        full = self.log("full.log", self.base_lines() + self.built("Lib", "Lib.Tests"))
+        result = self.run_tool("check", "--repo", REPO, "--baseline", baseline, "--require-built-projects",
+                               "--output", self.tmp / "report.json", full)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(json.loads((self.tmp / "report.json").read_text())["missingProjects"], [])
+
+    def test_a_fixed_project_that_was_still_built_is_an_improvement_not_a_failure(self):
+        baseline = self.write_baseline([self.log("b.log", self.base_lines())])
+        fixed = self.log("fixed.log", [w for w in self.base_lines() if "Lib.Tests" not in w] + self.built("Lib", "Lib.Tests"))
+        result = self.run_tool("check", "--repo", REPO, "--baseline", baseline, "--require-built-projects",
+                               "--output", self.tmp / "report.json", fixed)
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+    def solution(self, *projects):
+        body = 'Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{11111111-0000-0000-0000-000000000000}"\nEndProject\n'
+        for index, project in enumerate(projects):
+            body += (f'Project("{{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}}") = "{Path(project).stem}", "{project.replace("/", chr(92))}", '
+                     f'"{{{index:08d}-0000-0000-0000-000000000000}}"\nEndProject\n')
+        path = self.tmp / "All.sln"
+        path.write_text("Microsoft Visual Studio Solution File, Format Version 12.00\n" + body)
+        return path
+
+    def test_with_a_solution_every_project_must_be_built_including_projects_without_warnings(self):
+        baseline = self.write_baseline([self.log("b.log", self.base_lines())])
+        solution = self.solution(self.LIB, self.TESTS, "src/Clean/Clean.csproj")
+        partial = self.log("partial.log", self.base_lines() + self.built("Lib", "Lib.Tests"))
+        result = self.run_tool("check", "--repo", REPO, "--baseline", baseline, "--require-built-projects", "--solution", solution,
+                               "--output", self.tmp / "report.json", partial)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        report = json.loads((self.tmp / "report.json").read_text())
+        self.assertEqual(report["missingProjects"], ["Clean"])
+        self.assertEqual(report["repo"], REPO)
+        self.assertIn("solution project not built in this log: Clean", result.stdout)
+        full = self.log("full.log", self.base_lines() + self.built("Lib", "Lib.Tests", "Clean"))
+        result = self.run_tool("check", "--repo", REPO, "--baseline", baseline, "--require-built-projects", "--solution", solution,
+                               "--output", self.tmp / "report.json", full)
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+    def test_solution_folders_are_not_projects(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("warning_inventory", SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        self.assertEqual(module.solution_projects(self.solution(self.LIB, self.TESTS)), [self.LIB, self.TESTS])
+        self.assertEqual(len(module.solution_projects(ROOT / "Meridian.sln")), 30)
+
+    def test_without_the_flag_a_partial_log_still_passes_as_before(self):
+        baseline = self.write_baseline([self.log("b.log", self.base_lines())])
+        self.assertEqual(self.check(baseline, [self.log("partial.log", self.base_lines())]).returncode, 0)
+
     def test_inventory_counts_unique_locations_not_repetitions(self):
         out = self.tmp / "inventory.json"
         result = self.run_tool("inventory", "--repo", REPO, "--output", out, self.log("b.log", self.base_lines()))
@@ -75,6 +140,39 @@ class WarningInventoryTests(unittest.TestCase):
         first = next(l for l in document["locations"] if l["line"] == 10)
         self.assertEqual(first["tfms"], ["net8.0", "net9.0"])
         self.assertEqual(first["file"], "src/Lib/A.cs")
+
+    def test_msbuild_node_prefix_and_summary_are_the_same_warning_location(self):
+        first = warning(self.LIB, "src/Lib/A.cs", 10, "CA1305", tfm="net8.0")
+        second = warning(self.LIB, "src/Lib/A.cs", 10, "CA1305", tfm="net9.0")
+        out = self.tmp / "inventory.json"
+        log = self.log("normal-verbosity.log", ["    29>" + first, first, "  30> " + second, second])
+        result = self.run_tool("inventory", "--repo", REPO, "--output", out, log)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        document = json.loads(out.read_text())
+        self.assertEqual(document["total"], 1)
+        self.assertEqual(document["locations"][0]["file"], "src/Lib/A.cs")
+        self.assertEqual(document["locations"][0]["tfms"], ["net8.0", "net9.0"])
+
+    def test_msbuild_node_prefix_preserves_build_and_warning_ratchet_checks(self):
+        baseline = self.write_baseline([self.log("baseline.log", self.base_lines())])
+        lines = ["   29>" + line for line in self.base_lines() + self.built("Lib", "Lib.Tests")]
+        full = self.log("prefixed.log", lines)
+        result = self.run_tool("check", "--repo", REPO, "--baseline", baseline, "--require-built-projects",
+                               "--output", self.tmp / "report.json", full)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        report = json.loads((self.tmp / "report.json").read_text())
+        self.assertEqual(report["current"]["total"], 4)
+        self.assertEqual(report["missingProjects"], [])
+
+        # A real added location and an unreadable warning still fail under the same logger prefix.
+        grown = self.check(baseline, [self.log("grown-prefixed.log", lines + [
+            "   30>" + warning(self.LIB, "src/Lib/C.cs", 1, "CA1305")])])
+        self.assertEqual(grown.returncode, 1, grown.stdout)
+        self.assertIn(f"INCREASE CA1305 in {self.LIB}: 3 > baseline 2", grown.stdout)
+        garbled = self.check(baseline, [self.log("garbled-prefixed.log", lines + [
+            "   30>Foo.cs: warning CA1305: changed format without a project"])])
+        self.assertEqual(garbled.returncode, 1, garbled.stdout)
+        self.assertIn("unparsed warning line", garbled.stdout)
 
     def test_identical_log_passes_and_fewer_warnings_pass_as_improvement(self):
         baseline = self.write_baseline([self.log("b.log", self.base_lines())])

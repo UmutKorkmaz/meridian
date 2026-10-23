@@ -1,145 +1,108 @@
-name: Release
+name: Release promotion plan
 
-# Security review:
-# - Trigger restricted to tag pattern vX.Y.Z / vX.Y.Z-*, so only a maintainer
-#   pushing a matching tag can fire the workflow.
-# - github.ref_name is used only after stripping the trusted `v` prefix to
-#   match package versions declared in repository csproj files.
-# - NUGET_API_KEY is consumed via env:, never via ${{ secrets.* }} in run:.
-# - No attacker-controllable github.event.* fields flow anywhere.
+# Security review (E5 exact-candidate promotion):
+# - The former workflow fired on a v* tag push, rebuilt and re-packed from the tag, attested that rebuild, generated new
+#   SBOMs, created a public GitHub release and pushed NuGet packages with --skip-duplicate. Those were not the bytes the
+#   candidate gate verified, so that publisher is REMOVED. There is no push/tag trigger: a tag event can never start a
+#   builder or an uploader again.
+# - workflow_dispatch only. Token permissions: contents read; actions read only to download the supplied bundle artifact.
+# - This workflow never builds, packs, attests, signs, tags, creates releases or publishes packages. It downloads a
+#   prepared candidate bundle (eng/prepare-release.ps1), verifies it against the approved SHA-256 of the exact
+#   candidate.json bytes and writes a READ-ONLY promotion plan (eng/promote-release.ps1) computed from GET requests.
+# - Executing a promotion requires trusted authorization bound to the candidate digest, repository, version, targets and
+#   source commit. No trusted authorization verifier exists in this repository, so execution is not available here and
+#   fails closed. A self-authored approval document or possession of the digest is not authority.
+# - Inputs reach the shell only through env:, never by interpolation into run: blocks.
 
 on:
-  push:
-    tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
-      - 'v[0-9]+.[0-9]+.[0-9]+-*'
+  workflow_dispatch:
+    inputs:
+      bundle_run_id:
+        description: Run id of the workflow run whose artifact holds the prepared candidate bundle
+        required: true
+        type: string
+      bundle_artifact:
+        description: Artifact name of the prepared candidate bundle
+        required: true
+        type: string
+      candidate_path:
+        description: Relative path of candidate.json inside the artifact
+        required: true
+        default: candidate.json
+        type: string
+      approved_manifest_sha256:
+        description: SHA-256 of the exact candidate.json bytes that were presented for authorization
+        required: true
+        type: string
+      release_preparation:
+        description: Stable candidate intent (required for a stable version; never authorization)
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-plan-${{ inputs.approved_manifest_sha256 }}
   cancel-in-progress: false
 
 jobs:
-  release:
-    name: Build + sign + publish
+  promotion-plan:
+    name: Verify the supplied bundle and write a read-only promotion plan
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
-      contents: write      # GitHub Release + asset upload
-      id-token: write      # Sigstore OIDC
-      attestations: write  # Provenance attestation
-
+      contents: read
+      actions: read   # read-only: download the supplied bundle artifact
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          fetch-depth: 0
+          persist-credentials: false
 
-      - name: Setup .NET SDK
-        uses: actions/setup-dotnet@v5
+      - name: Download the prepared candidate bundle
+        uses: actions/download-artifact@v4
         with:
-          dotnet-version: '10.0.x'
+          name: ${{ inputs.bundle_artifact }}
+          run-id: ${{ inputs.bundle_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/candidate
 
-      - name: Ignore preview SDK pin for release
-        run: mv global.json global.json.release-ignored
-
-      - name: Select packages for this tag from inventory
-        id: versions
+      - name: Verify the bundle and plan the promotion (read-only)
         shell: pwsh
+        env:
+          APPROVED_SHA256: ${{ inputs.approved_manifest_sha256 }}
+          CANDIDATE_PATH: ${{ inputs.candidate_path }}
+          RELEASE_PREPARATION: ${{ inputs.release_preparation }}
+          BUNDLE_ROOT: ${{ runner.temp }}/candidate
+          PLAN_PATH: ${{ runner.temp }}/promotion-plan/promotion-plan.json
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          Import-Module ./eng/package-inventory.psm1 -Force -DisableNameChecking
-          $inventory = Read-PackageInventory (Get-Location).Path 'eng/packages.json'
-          $tagVersion = $env:GITHUB_REF_NAME -replace '^v', ''
-          $selected = @(Select-ReleasePackages $inventory (Get-Location).Path (Get-Command dotnet).Source $tagVersion)
-          New-Item -ItemType Directory -Force ./artifacts | Out-Null
-          ConvertTo-Json -InputObject $selected -Depth 10 | Set-Content ./artifacts/selected-packages.json
-          "tag_version=$tagVersion" >> $env:GITHUB_OUTPUT
-
-      - name: Restore selected inventory and test projects
-        shell: pwsh
-        run: |
-          $selected = @(Get-Content -Raw ./artifacts/selected-packages.json | ConvertFrom-Json)
-          foreach ($project in @($selected.project) + @('tests/Meridian.Mapping.Tests/Meridian.Mapping.Tests.csproj', 'tests/Meridian.Mediator.Tests/Meridian.Mediator.Tests.csproj')) {
-            dotnet restore $project
-            if ($LASTEXITCODE -ne 0) { throw "Restore failed: $project" }
+          $ErrorActionPreference = 'Stop'
+          if ($env:CANDIDATE_PATH -cnotmatch '\A[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*\z' -or $env:CANDIDATE_PATH -match '(^|/)\.\.?(/|$)') {
+            Write-Host '::error::candidate_path must be a relative path inside the downloaded artifact'
+            exit 2
           }
-
-      - name: Build selected inventory (Release, deterministic)
-        shell: pwsh
-        run: |
-          $selected = @(Get-Content -Raw ./artifacts/selected-packages.json | ConvertFrom-Json)
-          foreach ($package in $selected) {
-            dotnet build $package.project -c Release --no-restore -p:ContinuousIntegrationBuild=true
-            if ($LASTEXITCODE -ne 0) { throw "Build failed: $($package.id)" }
+          New-Item -ItemType Directory -Force (Split-Path -Parent $env:PLAN_PATH) | Out-Null
+          $arguments = @{
+            Manifest = (Join-Path $env:BUNDLE_ROOT $env:CANDIDATE_PATH)
+            ApprovedManifestSha256 = $env:APPROVED_SHA256
+            Output = $env:PLAN_PATH
           }
+          if ($env:RELEASE_PREPARATION -eq 'true') { $arguments.ReleasePreparation = $true }
+          & ./eng/promote-release.ps1 @arguments
+          $code = $LASTEXITCODE
+          Write-Host "Promotion plan exit code $code (0 plan ready, 1 integrity failure or stop condition, 2 invalid input, 3 blocked)."
+          Write-Host 'Execution is not available: it requires trusted authorization bound to the candidate digest, repository, version, targets and source commit, and no trusted verifier exists in this repository.'
+          exit $code
 
-      - name: Test (final gate)
-        run: |
-          dotnet test tests/Meridian.Mapping.Tests/Meridian.Mapping.Tests.csproj \
-            -c Release -f net10.0 --no-restore --nologo
-          dotnet test tests/Meridian.Mediator.Tests/Meridian.Mediator.Tests.csproj \
-            -c Release -f net10.0 --no-restore --nologo
-
-      - name: Pack selected inventory packages
-        shell: pwsh
-        run: |
-          $selected = @(Get-Content -Raw ./artifacts/selected-packages.json | ConvertFrom-Json)
-          foreach ($package in $selected) {
-            dotnet pack $package.project -c Release --no-build -o ./artifacts -p:ContinuousIntegrationBuild=true
-            if ($LASTEXITCODE -ne 0) { throw "Pack failed: $($package.id)" }
-          }
-
-      - name: Attest build provenance (Sigstore)
-        uses: actions/attest-build-provenance@v4
-        with:
-          subject-path: |
-            ./artifacts/*.nupkg
-            ./artifacts/*.snupkg
-
-      - name: Install CycloneDX SBOM tool
-        run: dotnet tool install --global CycloneDX
-
-      - name: Generate SBOMs for selected inventory
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force ./sbom | Out-Null
-          $selected = @(Get-Content -Raw ./artifacts/selected-packages.json | ConvertFrom-Json)
-          foreach ($package in $selected) {
-            dotnet CycloneDX $package.project -o ./sbom -fn "$($package.id).sbom.json" -F Json
-            if ($LASTEXITCODE -ne 0) { throw "SBOM failed: $($package.id)" }
-          }
-
-      - name: Upload packages artifact
+      - name: Upload the promotion plan
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: packages
-          path: |
-            ./artifacts/*.nupkg
-            ./artifacts/*.snupkg
-            ./sbom/*.sbom.json
-          retention-days: 90
-
-      - name: Create GitHub Release with packages + SBOMs
-        uses: softprops/action-gh-release@v3
-        with:
-          files: |
-            ./artifacts/*.nupkg
-            ./artifacts/*.snupkg
-            ./sbom/*.sbom.json
-          generate_release_notes: true
-          draft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
-
-      - name: Publish to NuGet.org
-        env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-        run: |
-          if [ -z "$NUGET_API_KEY" ]; then
-            echo "::error::NUGET_API_KEY secret is not set. Configure via: gh secret set NUGET_API_KEY"
-            exit 1
-          fi
-          dotnet nuget push "./artifacts/*.nupkg" \
-            --api-key "$NUGET_API_KEY" \
-            --source https://api.nuget.org/v3/index.json \
-            --skip-duplicate
+          name: promotion-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/promotion-plan
+          if-no-files-found: warn
+          overwrite: true
+          retention-days: 30

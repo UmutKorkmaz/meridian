@@ -6,7 +6,9 @@
       "src": [
         {
           "src": "../artifacts/docs/api-input/net8.0",
-          "files": [ "*.dll" ]
+          "files": [
+            "*.dll"
+          ]
         }
       ],
       "dest": "api",
@@ -32,14 +34,21 @@
           "projection-providers.md",
           "compatibility-policy.md",
           "package-compatibility.md",
+          "warning-dispositions.md",
+          "deprecations.md",
           "security-model.md"
         ]
       },
       {
-        "files": [ "api/*.yml" ]
+        "files": [
+          "api/*.yml"
+        ]
       }
     ],
-    "template": [ "default", "modern" ],
+    "template": [
+      "default",
+      "modern"
+    ],
     "globalMetadata": {
       "_appTitle": "Meridian",
       "_appName": "Meridian",

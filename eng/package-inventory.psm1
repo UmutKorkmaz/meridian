@@ -295,3 +295,34 @@ function Test-RecordedBuildTooling($Inventory, $Record, [string] $CandidateVersi
     return $decoded
 }
 Export-ModuleMember -Function Read-RestoredComponents,Get-BytesHash,New-AnalyzerBuildEvidence,Test-RecordedBuildTooling
+
+# A path parameter may be relative to the repository or already absolute. Join-Path of a rooted second argument appends
+# it to the first on POSIX, so fully qualified paths are returned unchanged (normalised); every other path, including a
+# drive- or root-relative Windows path, is resolved against the repository rather than the process working directory.
+function Resolve-OutputDirectory([string] $Repo, [string] $Path) {
+    if ([IO.Path]::IsPathFullyQualified($Path)) { return [IO.Path]::GetFullPath($Path) }
+    return [IO.Path]::GetFullPath([IO.Path]::Combine($Repo, $Path.TrimStart('\', '/')))
+}
+Export-ModuleMember -Function Resolve-OutputDirectory
+
+# Stable identities are accepted only for an explicit local release-preparation flow. This is an intent guard,
+# not publication approval or evidence that the source/candidate is eligible for release.
+function Assert-CandidateVersion([string] $CandidateVersion, [bool] $ReleasePreparation = $false) {
+    $canonical = '\A(?<major>0|[1-9][0-9]*)\.(?<minor>0|[1-9][0-9]*)\.(?<patch>0|[1-9][0-9]*)(?:-(?<labels>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?\z'
+    if ($CandidateVersion -cnotmatch $canonical) { throw 'CandidateVersion must be canonical three-part SemVer without aliases or build metadata.' }
+    $parts = @($Matches['major'], $Matches['minor'], $Matches['patch'])
+    $labels = $Matches['labels']
+    foreach ($part in $parts) {
+        $number = 0
+        if (-not [int]::TryParse($part, [ref] $number)) { throw 'CandidateVersion components exceed NuGet version bounds.' }
+    }
+    if ($labels) {
+        foreach ($label in $labels.Split('.')) {
+            if ($label -cmatch '^0[0-9]+$') { throw 'Numeric prerelease identifiers must not have leading zeroes.' }
+        }
+        if ($ReleasePreparation) { throw 'ReleasePreparation requires a stable identity; ordinary probes must remain prereleases.' }
+    } elseif (-not $ReleasePreparation) {
+        throw 'Stable CandidateVersion requires explicit -ReleasePreparation; this does not authorize publication.'
+    }
+}
+Export-ModuleMember -Function Assert-CandidateVersion

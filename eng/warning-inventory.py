@@ -38,6 +38,13 @@ LOCATIONLESS = re.compile(
     r"^(?:.*?: )?warning (?P<code>[A-Za-z]+[0-9]+): (?P<message>.*?)(?: \[(?P<project>[^\]]+?)(?:::TargetFramework=(?P<tfm>[^\]]+))?\])?\s*$"
 )
 LOOSE_WARNING = re.compile(r"\bwarning\s+[A-Za-z]{2,}[0-9]+\b")
+# Normal-verbosity MSBuild output prefixes node lines with e.g. "29>"; its final
+# summary repeats the same diagnostic without that logger prefix.
+MSBUILD_NODE_PREFIX = re.compile(r"^[0-9]+>")
+
+
+def without_node_prefix(raw: str) -> str:
+    return MSBUILD_NODE_PREFIX.sub("", raw.strip(), count=1).strip()
 
 
 def relative(path: str, repo: str) -> str:
@@ -51,7 +58,7 @@ def parse(logs: list[Path], repo: str):
     unparsed: list[str] = []
     for log in logs:
         for raw in log.read_text(encoding="utf-8", errors="replace").splitlines():
-            line = raw.strip()
+            line = without_node_prefix(raw)
             match = WARNING.match(line)
             if match:
                 key = (
@@ -162,6 +169,35 @@ def check(unique: dict, unparsed: list[str], baseline: dict) -> tuple[list[str],
     return failures, {"improved": improved, "current": summary}
 
 
+BUILT = re.compile(r"^\s*(?P<name>[A-Za-z0-9_.\-]+) -> ")
+
+
+def built_project_names(logs: list[Path]) -> set[str]:
+    built = set()
+    for log in logs:
+        for raw in log.read_text(encoding="utf-8", errors="replace").splitlines():
+            match = BUILT.match(without_node_prefix(raw))
+            if match:
+                built.add(match["name"])
+    return built
+
+
+def solution_projects(solution: Path) -> list[str]:
+    """Every C# project a solution build compiles (solution folders are not projects)."""
+    text = solution.read_text(encoding="utf-8-sig")
+    return sorted(m.replace("\\", "/") for m in re.findall(r'^Project\("[^"]*"\)\s*=\s*"[^"]*",\s*"([^"]+\.csproj)"', text, re.MULTILINE))
+
+
+def missing_built_projects(logs: list[Path], baseline: dict, solution: Path | None = None) -> list[str]:
+    """Projects with no ``Name -> output`` line: they were not built, so absent warnings prove nothing.
+
+    With a solution every project in it is required (a project without warnings can still gain one); without, only the
+    baseline projects are.
+    """
+    required = solution_projects(solution) if solution else list(baseline["projects"])
+    return sorted({Path(project).stem for project in required} - built_project_names(logs))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -174,6 +210,13 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("--scope", default="Release build of Meridian.sln, every target framework")
         if name == "check":
             command.add_argument("--baseline", required=True, type=Path)
+            command.add_argument(
+                "--require-built-projects",
+                action="store_true",
+                help="fail unless every required project has a 'Name -> output' build line in the logs (rejects partial logs; "
+                "it cannot detect an incremental build, which the producer must exclude with --no-incremental)",
+            )
+            command.add_argument("--solution", type=Path, help="with --require-built-projects: require every project of this solution")
     args = parser.parse_args(argv)
 
     unique, unparsed = parse(args.logs, args.repo)
@@ -194,6 +237,12 @@ def main(argv: list[str] | None = None) -> int:
 
     baseline = json.loads(args.baseline.read_text(encoding="utf-8"))
     failures, report = check(unique, unparsed, baseline)
+    report["missingProjects"] = []
+    report["repo"] = args.repo
+    if args.require_built_projects:
+        report["missingProjects"] = missing_built_projects(args.logs, baseline, args.solution)
+        scope = "solution" if args.solution else "baseline"
+        failures.extend(f"{scope} project not built in this log: {name}" for name in report["missingProjects"])
     if args.output:
         Path(args.output).write_text(json.dumps(dict(report, failures=failures), indent=2) + "\n", encoding="utf-8")
     for failure in failures:

@@ -1,21 +1,47 @@
-# Default ownership — every PR needs @UmutKorkmaz approval unless narrower
-# patterns below apply.
+# Review ownership for UmutKorkmaz/meridian.
+#
+# This file names who is asked to review. By itself it enforces nothing: a code-owner
+# review blocks a merge only when branch protection or a ruleset turns on "Require
+# review from Code Owners". The read-only check on 2026-10-23 found no required
+# reviews, no required status checks and no rulesets on `main`; see
+# docs/governance/required-checks.md and docs/governance/branch-protection.md.
+#
+# There is one maintainer. No second maintainer exists yet, so every pattern below names
+# the same account. When a real second maintainer is onboarded (docs/PLAN.md §8.4,
+# docs/maintainer-checklist.md), add them at least to the security-sensitive paths.
+# Later patterns take precedence over earlier ones.
+
+# Default ownership.
 * @UmutKorkmaz
 
-# Security-sensitive hot paths: per docs/PLAN.md quality gate, changes to the
-# mapping execution engine and mediator pipeline require explicit attention.
-# When a second maintainer is recruited (docs/PLAN.md §8.4), add them here so
-# both reviewers are required on these paths.
+# Security-sensitive hot paths: changes to the mapping execution engine and the
+# mediator pipeline require explicit attention (docs/PLAN.md quality gates).
 /src/Meridian.Mapping/Execution/   @UmutKorkmaz
 /src/Meridian.Mediator/Pipeline/   @UmutKorkmaz
 /src/Meridian.Mediator/Wrappers/   @UmutKorkmaz
 
-# Supply-chain configuration — changes here affect every release.
+# Source generators: diagnostics, emitted code and the C# 12 consumer floor.
+/src/Meridian.Mapping.Generators/  @UmutKorkmaz
+/src/Meridian.Mediator.Generators/ @UmutKorkmaz
+
+# Supply chain and release: changes here affect every candidate and release.
+/.github/workflows/                @UmutKorkmaz
+/.github/dependabot.yml            @UmutKorkmaz
 /.github/workflows/release.yml     @UmutKorkmaz
 /Directory.Build.props             @UmutKorkmaz
 /Directory.Build.targets           @UmutKorkmaz
+/global.json                       @UmutKorkmaz
+/eng/                              @UmutKorkmaz
+/eng/packages.json                 @UmutKorkmaz
+/eng/required-checks.json          @UmutKorkmaz
 
-# Governance — changes should be announced in the issue tracker.
+# Governance and policy: changes should be announced in the issue tracker.
+/.github/CODEOWNERS                @UmutKorkmaz
 /LICENSE                           @UmutKorkmaz
+/NOTICE                            @UmutKorkmaz
 /SECURITY.md                       @UmutKorkmaz
+/CONTRIBUTING.md                   @UmutKorkmaz
 /CHANGELOG.md                      @UmutKorkmaz
+/docs/governance/                  @UmutKorkmaz
+/docs/compatibility-policy.md      @UmutKorkmaz
+/docs/maintainer-checklist.md      @UmutKorkmaz

@@ -1,7 +1,8 @@
 # Meridian Plan (historical)
 
 This document records the phased plan that shaped Meridian 2.x.
-Forward work lives in [ROADMAP.md](./ROADMAP.md).
+Current capability and verification status live in [capabilities.md](./capabilities.md) and
+[required checks](./governance/required-checks.md); [ROADMAP.md](./ROADMAP.md) is a dated historical snapshot.
 Compatibility rules live in [compatibility-policy.md](./compatibility-policy.md).
 
 ## Goals
@@ -39,7 +40,8 @@ Compatibility rules live in [compatibility-policy.md](./compatibility-policy.md)
 When a second maintainer is onboarded:
 
 1. Add them to [`.github/CODEOWNERS`](../.github/CODEOWNERS) on the security-sensitive paths above.
-2. Raise branch-protection required approvals from 1 → 2 (see [governance/branch-protection.md](./governance/branch-protection.md)).
+2. Require one independent approval with two eligible maintainers; two required approvals need at least three,
+   since a PR author cannot self-approve (see [governance/branch-protection.md](./governance/branch-protection.md)).
 3. Share release secrets / NuGet ownership via least privilege.
 
 Until then, `@UmutKorkmaz` remains sole required owner.

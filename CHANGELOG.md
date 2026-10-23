@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   enabling stack traces re-exposed exactly the text the first flag exists to withhold.
 
 ### Fixed
+- **Failed cache invalidation no longer replays a successful command.** Removal failures, including caller cancellation after success, preserve the original exception, suppress Meridian retries and retain an outer atomic idempotency claim for reconciliation. Later keys are not attempted, and the failed removal may have an uncertain outcome. Because Meridian does not identify the failing key, applications must reconcile provider state and re-invalidate all of the request's keys without replaying the completed command.
 - **Idempotent requests are no longer executed concurrently.** `IdempotencyBehavior`
   checked, ran the handler, then stored, with nothing reserving the key in between, so
   every concurrent request with the same key executed. Twenty concurrent sends ran the

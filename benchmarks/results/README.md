@@ -3,7 +3,8 @@
 Selected, reproducible summary of the E3 performance evidence for `Meridian.Mapping` and `Meridian.Mediator`.
 **This is not a performance claim.** Every figure below was measured once, on one machine, under heavy competing load
 (see [Measurement window](#measurement-window)), so **all time figures are INCONCLUSIVE as release evidence**: they are
-indicative for this host and window only. Allocation figures (`Alloc B/op`) are deterministic and host independent.
+indicative for this host and window only. Allocation observations (`Alloc B/op`) apply to the measured runtime,
+architecture, configuration and workload.
 Nothing here is a statement about other hardware, other runtimes, released packages, asynchronous or I/O-bound handlers, or
 the current (commercially licensed) AutoMapper and MediatR releases. How the scenarios work and what they omit is documented in
 [../Meridian.Benchmarks/README.md](../Meridian.Benchmarks/README.md).
@@ -40,7 +41,7 @@ a different host will not reproduce these numbers, only their structure.
 | --- | --- |
 | Run id | `1daaf780dead4b5b8e5919be8de68228` (profile `Fixed`, filter `*.E3*`, 133 benchmark cases: 122 hot, 11 cold) |
 | Candidate | project references to source; git HEAD `329b2443fd002532d1fcdd6534f13872fb7bbd55` plus the inherited uncommitted worktree and the uncommitted fix-round-1 harness changes (git status sha256 `077bd051...`); product source sha256 `00cb0758331bfcac708d21f68381d70c1e6c15c0c8aaab70753e6808e5820f3d` (unchanged from W1); harness sha256 `8b4920633242d5cb2edeafe733890ecf210dd08868a0ecc1729237576e9da36c` (documentation files were edited after the workspace copy). **Source lane only: no packed-package run exists.** |
-| Toolchain | .NET SDK 10.0.300, runtime 10.0.8 (Arm64 RyuJIT), BenchmarkDotNet 0.15.8, concurrent server GC, tiered compilation on |
+| Toolchain | .NET SDK 10.0.300, runtime 10.0.8 (Arm64 RyuJIT), BenchmarkDotNet 0.15.8; harness configured for concurrent server GC and tiered compilation, measured-child settings not independently verified |
 | Job | hot: 3 launches, 6 warmup, 15 iterations of 250 ms; cold: 10 fresh launches, 1 invocation each; `MemoryDiagnoser` |
 | Preflight | passed for all 18 scenario classes before timing (`preflight.log`); its self-test rejects 12 classes of wrong result, including a factory-registered scoped handler and a publisher whose cap differs from its row label |
 | Competitors | Mapster 10.0.13 (MIT), Riok.Mapperly 4.3.1 (Apache-2.0), **AutoMapper 14.0.0 (MIT, historical pin, advisory GHSA-rvv3-g6hj-g44x)**, **MediatR 12.5.0 (Apache-2.0, historical pin; not MIT)** |
@@ -66,8 +67,10 @@ two windows are not comparable with each other (W2 times are lower across the bo
 
 No baseline exists for the new E3 rows, so there is no regression decision for them; the entries below record what the data
 shows, including unfavorable workloads. Owners decide whether any of it needs work. All statements are for this window.
+Contenders ran in separate processes across a drifting load/power window, rather than an interleaved comparison.
+Small differences between rows are indicative; they establish neither equivalence nor release acceptance.
 
-1. **Mapping, Meridian runtime versus the others.** Mapperly is indistinguishable from the hand-written floor (ratio 0.95 to
+1. **Mapping, Meridian runtime versus the others.** Mapperly is close to the hand-written floor in these measured rows (ratio 0.95 to
    1.18; one noisy row, `Items=1` at 17.7% CV, shows 1.38) and Mapster is 1.4 to 2.6 times the floor on single objects and 3.0 on the reference graph. Meridian compiled is 2.7 to
    3.8 times the floor on flat, nested and deep payloads; on collections it carries a fixed cost (about 220 ns for an empty basket),
    so its ratio ranges from 3.0 (256 lines) to 19 (empty). Meridian interpreted is 19 to 29 times the floor on single objects.
@@ -100,16 +103,17 @@ shows, including unfavorable workloads. Owners decide whether any of it needs wo
 6. **Behavior overhead (in-process providers).** A primed in-memory cache hit costs 96.8 ns against 30.5 ns with no behavior
    (+576 B versus 160 B); a synthetic miss 92.2 ns (+600 B); idempotency replay 101 to 112 ns and a synthetic new claim 105 ns
    (608 to 656 B). These are behavior overhead, not provider latency.
-7. **Metrics.** Enabled-without-listener (39.1 ns, 256 B) is indistinguishable from disabled (38.4 ns, 256 B); an attached
+7. **Metrics.** Enabled-without-listener (39.1 ns, 256 B) is close to disabled (38.4 ns, 256 B) in this window; an attached
    in-process listener adds about 20 ns and no allocation. The exact expected events were verified before timing.
 8. **Startup.** Warmed process, ready for the first map: AutoMapper 14.0.0 0.64 ms, Mapster 0.92 ms, Meridian runtime 1.19 ms (236 KB
    allocated), Meridian generated runtime 0.29 us (nothing to compile). First mediator send including provider build: Meridian runtime 2.8 us,
    Meridian strict generated 5.4 us, MediatR 12.5.0 7.6 us. **The "configure" rows are not comparable across libraries**:
    AutoMapper defers compilation to the first map, Mapster compiles eagerly, Meridian compiles at construction; compare the "ready"
-   rows. Cold, fresh process, first map including configuration: Meridian generated runtime 6.3 ms, Meridian runtime 19.0 ms, AutoMapper
+   mapping rows. MediatR startup and cold rows also include an assembly scan, so mediator startup is not an equal-work ranking.
+   Cold, fresh process, first map including configuration: Meridian generated runtime 6.3 ms, Meridian runtime 19.0 ms, AutoMapper
    27.5 ms, Mapster 34.1 ms; first mediator send: MediatR 12.5 ms, Meridian runtime 16.5 ms, Meridian strict generated 28.2 ms (an
-   unfavorable result; the generated registry path does more first-use work than the reflection path). Cold rows include JIT and are
-   dominated by it; the direct-handler cold row has a launch spread above 100%.
+   unfavorable result). Extra generated first-use work is a hypothesis requiring profiling. Cold rows include JIT, type loading and
+   static initialization; their individual contributions were not profiled. The direct-handler cold row has a launch spread above 100%.
 
 Variance policy: rows with a coefficient of variation above 5% or a launch spread above 10% (several startup, cold, `Items=0`,
 reference and metrics rows) should be read as order of magnitude only.
@@ -301,6 +305,8 @@ Method names ending in `V14` or `V12` are the historical pins. Complete data inc
 
 ### Mediator: idempotency behavior overhead (in-process stores; not a Redis or EF number)
 
+The truncated `atomi(...)claim [22]` label below is the synthetic always-claim scenario; the retained report label is unchanged.
+
 | Scenario | Mean | +- 99.9% CI | CV | Launch spread | Ratio | Alloc B/op |
 |---|---:|---:|---:|---:|---:|---:|
 | Send(Mode=atomi(...)claim [22]) | 104.88 ns | 1.27 ns | 2.2% | 2.5% | - | 656 |
@@ -349,6 +355,8 @@ Method names ending in `V14` or `V12` are the historical pins. Complete data inc
 
 ### Startup, warmed process: mediator
 
+MediatR includes an extra assembly scan; these rows do not establish an equal-work startup ranking.
+
 | Scenario | Mean | +- 99.9% CI | CV | Launch spread | Ratio | Alloc B/op |
 |---|---:|---:|---:|---:|---:|---:|
 | MediatRV12Configure | 5,712.63 ns | 40.50 ns | 1.3% | 2.3% | - | 29504 |
@@ -372,12 +380,15 @@ Method names ending in `V14` or `V12` are the historical pins. Complete data inc
 
 ### Cold: first use in a fresh process, mediator (10 fresh launches)
 
+MediatR includes an extra assembly scan. The direct-handler floor is unstable (CV 31.7%, launch spread 139.4%),
+so derived ratios are omitted; these means cannot support an equal-work startup ranking.
+
 | Scenario | Mean | +- 99.9% CI | CV | Launch spread | Ratio | Alloc B/op |
 |---|---:|---:|---:|---:|---:|---:|
-| DirectHandlerFirstCall | 559.04 us | 267.96 us | 31.7% | 139.4% | 1.00 (baseline) | 120 |
-| MediatRV12ReadyFirstSend | 12.483 ms | 2.571 ms | 13.6% | 50.8% | 22.33 | 56240 |
-| MeridianRuntimeReadyFirstSend | 16.541 ms | 2.762 ms | 11.0% | 37.7% | 29.59 | 18720 |
-| MeridianStrictGeneratedReadyFirstSend | 28.215 ms | 1.772 ms | 4.2% | 13.7% | 50.47 | 41864 |
+| DirectHandlerFirstCall | 559.04 us | 267.96 us | 31.7% | 139.4% | - | 120 |
+| MediatRV12ReadyFirstSend | 12.483 ms | 2.571 ms | 13.6% | 50.8% | - | 56240 |
+| MeridianRuntimeReadyFirstSend | 16.541 ms | 2.762 ms | 11.0% | 37.7% | - | 18720 |
+| MeridianStrictGeneratedReadyFirstSend | 28.215 ms | 1.772 ms | 4.2% | 13.7% | - | 41864 |
 
 ## Not covered (recorded, not hidden)
 

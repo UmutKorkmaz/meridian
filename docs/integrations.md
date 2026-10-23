@@ -2,9 +2,9 @@
 
 The two core packages, `Meridian.Mapping` and `Meridian.Mediator`, depend only on `Microsoft.Extensions.*`
 abstractions. FluentValidation, caching providers, Redis, Entity Framework Core and ASP.NET Core live in separate
-optional packages so that an application only takes the dependencies it uses. Every package below targets
-net8.0, net9.0 and net10.0, is an **unpublished candidate** (no stable version yet), and is exercised by its own
-packaged consumer on its own dependency closure.
+optional packages so that an application only takes the dependencies it uses. Every runtime package below targets
+net8.0, net9.0 and net10.0; `Meridian.Mediator.Generators` is a netstandard2.0 analyzer. All are **unpublished candidates**
+(no stable version yet), exercised by their own packaged consumers on their own dependency closures.
 
 | Package | Adds | Direct dependencies (minimum versions) | Required at runtime | Runnable proof |
 | --- | --- | --- | --- | --- |
@@ -38,7 +38,8 @@ Setting `MERIDIAN_TEST_REDIS_REQUIRED=1` makes a missing Redis endpoint fail. Ev
 
 ## Redis
 
-`AddMeridianRedisIdempotency(registry, options)` registers leased idempotency: a claim, renewal loop, completion and
+`AddMeridianRedisIdempotency(registry, configure)` takes a contract registry and an optional configuration callback
+(see the package README). It registers leased idempotency: a claim, renewal loop, completion and
 explicit reconciliation, using Redis server time. A handler failure or an uncertain completion retains the claim; it
 is never automatically re-executed. There is no exactly-once guarantee for external effects and no guarantee against
 data loss on Redis failover. The provider suite requires `MERIDIAN_TEST_REDIS` and fails, never skips, when it is
@@ -58,7 +59,8 @@ Q12, task C5.
 
 `AddMeridianProblemDetails()` plus `UseExceptionHandler()` maps Meridian exceptions to fixed, redacted problem
 responses (400 `validation_failed`, 401/403, 409 idempotency, 500 otherwise) without exception messages, keys or
-payloads. Authentication, correlation middleware and status-code pages remain application responsibilities; the
+payloads. A missing authorization handler is a configuration failure mapped to 500. Authentication, correlation
+middleware and status-code pages remain application responsibilities; the
 orders sample (`samples/Meridian.AspNetCore`, net10.0) shows them together with EF transactions, FluentValidation,
 caching and Redis idempotency. In the sample's OpenAPI document `GET /orders` returns 200 with a `oneOf` schema: an
 `OrderDto` array without `orderId`, a single `OrderDto` with `orderId` (404 when not visible). The `POST /orders` 201

@@ -55,7 +55,7 @@ line and a run never mixes jobs.
 | --- | --- | --- |
 | Launches | 3 | 10 |
 | Warmup / measured iterations | 6 / 15 (250 ms each) | 0 / 1 (one invocation per launch) |
-| Runtime configuration | the project's: concurrent server GC, tiered compilation on, `MemoryDiagnoser` | same |
+| Configured runtime settings | concurrent server GC, tiered compilation on, `MemoryDiagnoser`; measured-child settings were not independently verified | same |
 | Measures | one complete operation per call after full warmup | the first operation in a fresh process; process launch and runtime start are excluded, JIT, type loading and static initialization of the library code are included |
 
 This is a deliberately short fixed job so that the complete scenario set has a bounded runtime. It is a reviewed starting
@@ -141,8 +141,9 @@ the generator-emitted internal attribute types appear twice.
 - **Assembly-scanning registration**: the two mediators would scan different handler inventories in this assembly, which is not equal
   work. MediatR's API requires one assembly to be named, so its startup rows include a scan of the small MediatR assembly itself.
 - **Configure-only startup rows are not comparable across libraries**: AutoMapper defers compilation to the first map, Mapster compiles
-  eagerly and Meridian compiles when the configuration is constructed. Only the "ready" rows (configuration plus first result) and the
-  cold rows are equal work.
+  eagerly and Meridian compiles when the configuration is constructed. The mapping "ready" rows (configuration plus first result)
+  and mapping cold rows cover comparable work. Mediator startup and cold rows retain MediatR's extra assembly scan and cannot
+  establish an equal-work startup ranking.
 - **Asynchronous latency, parallel throughput and I/O**: every handler completes synchronously; the task-when-all rows measure
   the publisher's own fan-out (unbounded rows) and the cost of its concurrency cap (bounded row) only. No Redis, EF Core or other provider latency is measured: cache and idempotency rows are
   behavior overhead with in-process providers.
@@ -155,7 +156,8 @@ The machine used here is a developer laptop that is also doing other work. A run
 power and the 1-minute load average stayed at or below 3 (about 15% of its 18 logical cores) for the whole timed region.
 `manifest.json` records the power source, load before, during (every 30 s) and after, and the busiest processes, so a result
 can always be classified afterwards; a result from a window that was not quiet is labeled **INCONCLUSIVE for time** in the
-results README. Allocation figures are deterministic and host independent. Rules applied to every paired comparison:
+results README. Allocation observations apply to the measured runtime, architecture, configuration and workload.
+Rules applied to every paired comparison:
 
 - identical harness, scenario, runtime and settings on both sides; a different harness is never compared;
 - `(candidate mean / baseline mean - 1) * 100`; **more than 10% regression is investigated even when the row is noisy**, and so is
@@ -317,7 +319,7 @@ Reading the table:
 - Investigate the unfavorable workloads recorded in the results (Meridian compiled and generated-runtime mapping against Mapster and
   Mapperly, fixed collection overhead, the opt-in task-when-all publisher, strict generated dispatch and its cold first send).
 - Run the same scenarios against the packed candidate packages to support any release statement (all current runs use project references).
-- [P5+] Source generator expansions (nested types, collections, conversions): opt-in `[GenerateMapper]` only; runtime `IMapper` remains
-  unchanged for existing apps. See `docs/source-gen-guide.md`.
+- Structural generation already supports nested types, collections and conversions through explicit opt-in; see the maintained
+  [source-generator guide](../../docs/source-gen-guide.md). The performance follow-ups above remain open.
 
 Roadmap tracking: [docs/ROADMAP.md](../../docs/ROADMAP.md).

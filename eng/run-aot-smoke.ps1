@@ -4,7 +4,9 @@ param(
     [Parameter(Mandatory, ParameterSetName='MappingOnly')][switch] $MappingOnly,
     [Parameter(Mandatory, ParameterSetName='Combined')][switch] $Combined,
     [Parameter(Mandatory)][string] $Feed,
-    [Parameter(Mandatory)][ValidatePattern('^\d+\.\d+\.\d+-[0-9A-Za-z.-]+$')][string] $CandidateVersion,
+    [Parameter(Mandatory)][ValidatePattern('\A\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\z')][string] $CandidateVersion,
+    # Intent for a stable local candidate; never authorization to publish.
+    [switch] $ReleasePreparation,
     [Parameter(Mandatory)][ValidateSet('net8.0','net9.0','net10.0')][string] $Framework,
     [Parameter(Mandatory)][ValidatePattern('^\d+\.\d+\.\d+$')][string] $SdkVersion,
     [Parameter(Mandatory)][Alias('Rid')][ValidateSet('osx-arm64','linux-x64','linux-arm64','win-x64','win-arm64')][string] $RuntimeIdentifier,
@@ -13,6 +15,8 @@ param(
     [string] $OutputDirectory = 'artifacts/aot-smoke'
 )
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'package-inventory.psm1') -Force -DisableNameChecking
+Assert-CandidateVersion $CandidateVersion ([bool] $ReleasePreparation)
 if ($SdkVersion.Split('.')[0] -ne $Framework.Substring(3).Split('.')[0]) { throw 'Framework and SDK major version must match.' }
 $repo = Split-Path -Parent $PSScriptRoot
 $Feed = [IO.Path]::GetFullPath($Feed)
@@ -38,7 +42,6 @@ function Execute([string] $File, [string[]] $Arguments, [string] $Log) {
     } finally { $process.Dispose() }
 }
 if ($Combined) {
-    Import-Module (Join-Path $PSScriptRoot 'package-inventory.psm1') -Force -DisableNameChecking
     Import-Module (Join-Path $PSScriptRoot 'native-aot.psm1') -Force -DisableNameChecking
     if ($RuntimeIdentifier -notin @('linux-x64', 'osx-arm64')) { throw "Combined mode supports only linux-x64 and osx-arm64; got $RuntimeIdentifier." }
     # Fail before touching the feed unless this really is the matching native host.
@@ -57,7 +60,7 @@ if ($Combined) {
     $closure = @(Get-PackageClosure $inventory @($entry.packageIds))
     Assert-NativeAotParity $repo
     # Inspect every inventory archive and analyzer producer record. Combined mode never repacks or restamps a candidate.
-    & (Join-Path $PSScriptRoot 'pack-packages.ps1') -OutputDirectory $Feed -CandidateVersion $CandidateVersion -Manifest $manifestPath -InspectOnly
+    & (Join-Path $PSScriptRoot 'pack-packages.ps1') -OutputDirectory $Feed -CandidateVersion $CandidateVersion -Manifest $manifestPath -InspectOnly -ReleasePreparation:$ReleasePreparation
     $record = Get-Content -Raw (Join-Path $Feed "package-manifest.$CandidateVersion.json") | ConvertFrom-Json
     $dotnet = (Get-Command dotnet -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
     $work = Join-Path ([IO.Path]::GetFullPath($OutputDirectory)) "$CandidateVersion/combined-$Framework-$SdkVersion-$RuntimeIdentifier-$([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffffffZ'))"
@@ -182,10 +185,13 @@ if ($Combined) {
     Write-Host $executeOutput
     if ((Get-Sha $binary) -ne $before) { throw 'The executable changed while it ran.' }
     $proof = Test-NativeAotCaseOutput $executeOutput (Get-NativeAotExpectedCases) $exitCode $RuntimeIdentifier $Framework
+    $retainedFile = 'combined.native-executable'
+    Copy-Item -LiteralPath $binary -Destination (Join-Path $work $retainedFile)
+    if ((Get-Sha (Join-Path $work $retainedFile)) -ne $before) { throw 'The retained native executable differs from the executed bytes.' }
     [ordered]@{
         mode = 'combined'; consumer = $Consumer; candidateVersion = $CandidateVersion
         framework = $Framework; sdk = $actualSdk; compiler = $compilerVersion; rid = $RuntimeIdentifier
-        file = $binary; sha256 = $before; format = $format; exit = $exitCode
+        file = $binary; retainedFile = $retainedFile; sha256 = $before; format = $format; exit = $exitCode
         nativeRuntime = $proof.runtime; caseIds = $proof.caseIds; caseCount = $proof.caseIds.Count
         hostOs = $nativeHost.os; hostArch = $nativeHost.arch
         manifestSha256 = (Get-Sha $manifestPath); packageRecordSha256 = (Get-Sha (Join-Path $Feed "package-manifest.$CandidateVersion.json"))
@@ -197,7 +203,7 @@ if ($Combined) {
 }
 # MappingOnly: unchanged fixture, assertions and result contract.
 # Inspection validates existing pack receipts and hashes. It never repacks a candidate.
-& (Join-Path $PSScriptRoot 'pack-packages.ps1') -OutputDirectory $Feed -CandidateVersion $CandidateVersion -InspectOnly
+& (Join-Path $PSScriptRoot 'pack-packages.ps1') -OutputDirectory $Feed -CandidateVersion $CandidateVersion -InspectOnly -ReleasePreparation:$ReleasePreparation
 $dotnet = (Get-Command dotnet -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
 $work = Join-Path ([IO.Path]::GetFullPath($OutputDirectory)) "$CandidateVersion/$Framework-$SdkVersion-$RuntimeIdentifier-$([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffffffZ'))"
 $null = New-Item -ItemType Directory -Force $work
@@ -229,7 +235,12 @@ if ((Get-FileHash $packed).Hash -ne (Get-FileHash $restored).Hash) { throw 'Rest
 $null = Execute $dotnet (@('publish', $project, '-c', 'Release', '-r', $RuntimeIdentifier, '--no-restore', '-o', (Join-Path $work 'publish')) + $properties) 'publish.log'
 $binary = Join-Path $work 'publish/Meridian.GeneratedOnlyConsumer'
 if ($RuntimeIdentifier.StartsWith('win-')) { $binary += '.exe' }
+$before = (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant()
 $output = Execute $binary @() 'execute.log'
 if (-not $output.Contains('generated-only: value=42 cycle=true collectionIdentity=true depth=true limit=true cancellation=true')) { throw 'Native execution did not return the expected semantic proof.' }
-@{file=$binary;sha256=(Get-FileHash $binary -Algorithm SHA256).Hash.ToLowerInvariant();sdk=$actualSdk;framework=$Framework;rid=$RuntimeIdentifier} | ConvertTo-Json | Set-Content (Join-Path $work 'native-result.json')
+if ((Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant() -ne $before) { throw 'The mapping executable changed while it ran.' }
+$retainedFile = 'mapping.native-executable'
+Copy-Item -LiteralPath $binary -Destination (Join-Path $work $retainedFile)
+if ((Get-FileHash -LiteralPath (Join-Path $work $retainedFile) -Algorithm SHA256).Hash.ToLowerInvariant() -ne $before) { throw 'The retained mapping executable differs from the executed bytes.' }
+@{file=$binary;retainedFile=$retainedFile;sha256=$before;sdk=$actualSdk;framework=$Framework;rid=$RuntimeIdentifier} | ConvertTo-Json | Set-Content (Join-Path $work 'native-result.json')
 Write-Host "PASS mapping-only native consumer: $work"

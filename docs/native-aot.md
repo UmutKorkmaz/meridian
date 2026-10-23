@@ -31,11 +31,12 @@ including an enabled-metrics sub-check) and B8 (`2.1.4-b8fix1.20261005.1`, net10
   `warnings.json`, `restore-receipt.json`, `generated-sources.json`, `fixture-hashes.json`, `toolchain.json`,
   `publish.log`, `publish.binlog`, `execute.log`) and `artifacts/D4-fix2/final/aot-mapping/...` for the unchanged mapping-only runs.
 * **linux-x64 is PENDING, not PASS.** D4 was accepted with these three rows recorded as PENDING; they stay PENDING until real runs fill them. The development
-  machine is Apple Silicon with an aarch64 Docker daemon; there is no linux-x64 runner. The CI jobs `native-aot-pack`
-  and `native-aot` in `.github/workflows/ci.yml` build the three linux-x64 rows on `ubuntu-24.04` and the three
-  osx-arm64 rows on `macos-14` from one immutable feed artifact. They have not run on a real runner yet. To close the
-  gate: run both jobs on real runners, attach the `native-aot-<rid>-<tfm>` artifacts and change the PENDING rows to the
-  observed result. Nothing is emulated or cross-published to fill them in.
+  machine is Apple Silicon with an aarch64 Docker daemon; there is no linux-x64 runner. The CI job `native-aot`
+  in `.github/workflows/ci.yml` runs `eng/verify-candidate.ps1 -Mode Run -Lane native-aot/<rid>/<tfm>` (which invokes
+  `run-aot-smoke.ps1 -Combined` and `-MappingOnly`) for the three linux-x64 rows on `ubuntu-24.04` and the three
+  osx-arm64 rows on `macos-14`, all from the one immutable `candidate-feed` artifact packed by `candidate-pack`. It has not
+  run on a real runner yet. To close the gate: run it on real runners, keep the `lane-native-aot-<rid>-<tfm>` evidence and
+  `native-aot-<rid>-<tfm>` artifacts and change the PENDING rows to the observed result. Nothing is emulated or cross-published to fill them in.
 * What the host check refuses before it publishes: a mismatching OS or process architecture, macOS Rosetta translation
   (`sysctl.proc_translated`) and, on Linux, qemu-user, Rosetta for Linux, box64 and FEX as visible in procfs: an enabled
   `binfmt_misc` registration for such an emulator, an emulator image mapped in `/proc/self/maps`, and a virtual
@@ -44,9 +45,9 @@ including an enabled-metrics sub-check) and B8 (`2.1.4-b8fix1.20261005.1`, net10
   provisioned runner (an x64 `ubuntu-24.04` machine, an Apple-silicon `macos-14` machine) plus the executable's own
   `NATIVE` marker and the ELF/Mach-O header check. Unit cases cover the Linux branch with recorded process trees; an
   actual emulated Linux environment was not available to execute.
-* The CI candidate version is derived once by `native-aot-pack` and passed to the lanes as a job output, so re-running
-  only failed lanes keeps using the feed and manifest from the first attempt. Both artifact uploads (`native-aot-feed`
-  and the per-lane `native-aot-<rid>-<tfm>` evidence) set `overwrite: true`: upload-artifact v4 names are immutable within
+* The CI candidate version is derived once by `candidate-pack` and passed to every lane as a job output, so re-running
+  only failed lanes keeps using the feed and manifest from the first attempt. Every artifact upload (`candidate-feed`, the
+  per-lane `lane-native-aot-<rid>-<tfm>` evidence and the `native-aot-<rid>-<tfm>` receipts) sets `overwrite: true`: upload-artifact v4 names are immutable within
   a run and artifacts of earlier attempts stay on it, so without overwrite a re-run lane (evidence upload is
   `if: always()`) or a "Re-run all jobs" pack upload would fail with a name conflict even when the native execution
   passed. A structural test asserts this; the workflow itself has still not run on GitHub.

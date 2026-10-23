@@ -1,15 +1,24 @@
-[CmdletBinding()]
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [Parameter(Mandatory)][string] $Feed,
-    [Parameter(Mandatory)][ValidatePattern('^\d+\.\d+\.\d+-[0-9A-Za-z.-]+$')][string] $CandidateVersion,
+    [Parameter(Mandatory)][ValidatePattern('\A\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\z')][string] $CandidateVersion,
+    # Intent for a stable local candidate; never authorization to publish.
+    [switch] $ReleasePreparation,
     [string] $Framework,
     [string] $SdkVersion,
     [string] $Manifest = 'eng/packages.json',
+    [switch] $CurrentServicing,
+    [string] $RequiredChecksPolicy = 'eng/required-checks.json',
+    # Lists the approved compiler/reference plan without inspecting feeds, restoring, building or running a consumer.
+    [switch] $PlanOnly,
     [string] $BaselineFeed,
     [string[]] $ExcludeConsumerIds = @(),
     [string] $OutputDirectory = 'artifacts/package-consumers'
 )
 $ErrorActionPreference = 'Stop'
+# PowerShell -File binds a string[] parameter from one argv token. Keep the
+# process boundary unambiguous while preserving normal in-process array calls.
+$ExcludeConsumerIds = @($ExcludeConsumerIds | ForEach-Object { $_.Split(',') | ForEach-Object { $_.Trim() } })
 function Select-PackageConsumers([object[]] $Consumers, [string[]] $Excluded) {
     $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     foreach ($id in $Excluded) {
@@ -20,29 +29,61 @@ function Select-PackageConsumers([object[]] $Consumers, [string[]] $Excluded) {
     if ($Consumers.Count -and -not $selected.Count) { throw 'Consumer exclusion cannot empty the selected inventory' }
     return [pscustomobject]@{ Consumers=$selected; SelectedIds=@($selected.id); OmittedIds=@($Consumers | Where-Object { $seen.Contains($_.id) } | ForEach-Object id); Scope=$(if ($seen.Count) { 'partial' } else { 'all' }) }
 }
+function Get-ConsumerCompilerPlan($Inventory, $Selection, [string] $Framework, [string] $SdkVersion, [bool] $Servicing, $PolicyDocument) {
+    if ([bool]$Framework -ne [bool]$SdkVersion) { throw 'Framework and SdkVersion must be specified together' }
+    $contract = if ($Servicing) { 'currentServicing' } else { 'pinnedCompatibility' }
+    $approved = if ($Servicing) {
+        @($PolicyDocument.toolchains.currentServicing.lanes | ForEach-Object { [pscustomobject]@{framework=$_.framework;sdkVersion=$_.sdk} })
+    } else { @($Inventory.compilerHosts) }
+    if (-not $approved.Count) { throw "No approved compiler hosts in $contract" }
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($entry in $approved) {
+        if (-not $seen.Add($entry.framework) -or $entry.framework -notmatch '^net(8|9|10)\.0$' -or
+            $entry.sdkVersion -notmatch '^\d+\.\d+\.\d+$' -or $entry.sdkVersion.Split('.')[0] -ne $entry.framework.Substring(3).Split('.')[0]) {
+            throw "Invalid approved compiler contract: $contract"
+        }
+    }
+    $candidate = if ($Framework) { @($approved | Where-Object { $_.framework -ceq $Framework -and $_.sdkVersion -ceq $SdkVersion }) } else { $approved }
+    if (-not $candidate.Count) { throw "Compiler SDK/framework pair is not approved by $contract" }
+    $reference = @($approved | Where-Object framework -EQ 'net10.0')
+    $lanes = @()
+    if (@($Selection.Consumers | Where-Object baselineComparison).Count) {
+        if ($reference.Count -ne 1) { throw 'Exactly one approved SDK 10 reference lane is required' }
+        # Compare the published stable API under the same operational host family. Historical lanes retain their
+        # historical reference; servicing lanes never require or inject an old runtime into the current-only root.
+        $lanes += [pscustomobject]@{framework=$reference[0].framework;sdkVersion=$reference[0].sdkVersion;baselineOnly=$true}
+    }
+    $lanes += @($candidate | ForEach-Object { [pscustomobject]@{framework=$_.framework;sdkVersion=$_.sdkVersion;baselineOnly=$false} })
+    return [pscustomobject]@{compilerContract=$contract;executionProven=$false;lanes=$lanes}
+}
 Import-Module (Join-Path $PSScriptRoot 'package-inventory.psm1') -Force -DisableNameChecking
+Assert-CandidateVersion $CandidateVersion ([bool] $ReleasePreparation)
 $repo = Split-Path -Parent $PSScriptRoot
 $Feed = [IO.Path]::GetFullPath($Feed)
 $manifestPath = if ([IO.Path]::IsPathRooted($Manifest)) { $Manifest } else { Join-Path $repo $Manifest }
-& (Join-Path $PSScriptRoot 'pack-packages.ps1') -OutputDirectory $Feed -CandidateVersion $CandidateVersion -Manifest $manifestPath -InspectOnly
 $inventory = Read-PackageInventory $repo $manifestPath
-if ([bool]$Framework -ne [bool]$SdkVersion) { throw 'Framework and SdkVersion must be specified together' }
-$candidateLanes = if ($Framework) { @([pscustomobject]@{ framework=$Framework; sdkVersion=$SdkVersion }) } else { @($inventory.compilerHosts) }
 # Published 2.1.3 old-host failures remain A4 historical evidence. The baseline
 # operational comparison runs on SDK 10; all candidate compiler hosts must pass.
 $selection = Select-PackageConsumers @($inventory.consumers) $ExcludeConsumerIds
+$policyPath = Resolve-OutputDirectory $repo $RequiredChecksPolicy
+$compilerPolicy = if ($CurrentServicing) { Get-Content -Raw -LiteralPath $policyPath | ConvertFrom-Json } else { $null }
+$compilerPlan = Get-ConsumerCompilerPlan $inventory $selection $Framework $SdkVersion ([bool]$CurrentServicing) $compilerPolicy
+if ($PlanOnly) {
+    $compilerPlan | Add-Member -NotePropertyName selectedIds -NotePropertyValue @($selection.SelectedIds)
+    $compilerPlan | Add-Member -NotePropertyName omittedIds -NotePropertyValue @($selection.OmittedIds)
+    $compilerPlan | Add-Member -NotePropertyName consumerScope -NotePropertyValue $selection.Scope
+    $compilerPlan | ConvertTo-Json -Depth 8
+    return
+}
+& (Join-Path $PSScriptRoot 'pack-packages.ps1') -OutputDirectory $Feed -CandidateVersion $CandidateVersion -Manifest $manifestPath -InspectOnly -ReleasePreparation:$ReleasePreparation
 $baselineConsumers = @($selection.Consumers | Where-Object baselineComparison)
 $baselinePackages = @(Get-PackageClosure $inventory @($baselineConsumers.packageIds | Select-Object -Unique))
-$referenceLane = @($inventory.compilerHosts | Where-Object framework -EQ 'net10.0')
-if ($baselineConsumers.Count -and $referenceLane.Count -ne 1) { throw 'Exactly one SDK 10 reference lane is required' }
-$lanes = @()
-if ($baselineConsumers.Count) { $lanes += [pscustomobject]@{ framework=$referenceLane[0].framework; sdkVersion=$referenceLane[0].sdkVersion; baselineOnly=$true } }
-$lanes += @($candidateLanes | ForEach-Object { [pscustomobject]@{framework=$_.framework;sdkVersion=$_.sdkVersion;baselineOnly=$false} })
+$lanes = @($compilerPlan.lanes)
 $common = @{}
 $dotnet = (Get-Command dotnet -CommandType Application | Select-Object -First 1).Source
 $run = Join-Path ([IO.Path]::GetFullPath($OutputDirectory)) "$CandidateVersion/$([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffffffZ'))"
 $null = New-Item -ItemType Directory -Force $run
-[ordered]@{ scope=$selection.Scope; selectedIds=$selection.SelectedIds; omittedIds=$selection.OmittedIds; archiveInspection='all-manifest-packages'; toolingInspection='all-manifest-producers' } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $run 'consumer-selection.json')
+[ordered]@{ scope=$selection.Scope; selectedIds=$selection.SelectedIds; omittedIds=$selection.OmittedIds; compilerContract=$compilerPlan.compilerContract; archiveInspection='all-manifest-packages'; toolingInspection='all-manifest-producers' } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $run 'consumer-selection.json')
 '<Project />' | Set-Content (Join-Path $run 'Directory.Build.props')
 '<Project />' | Set-Content (Join-Path $run 'Directory.Build.targets')
 if ($baselinePackages.Count -and -not $BaselineFeed) {
@@ -57,7 +98,9 @@ if ($baselinePackages.Count -and -not $BaselineFeed) {
 if ($BaselineFeed) { $BaselineFeed = [IO.Path]::GetFullPath($BaselineFeed) }
 $baselineHashes = @($baselinePackages | ForEach-Object {
     $path = Join-Path $BaselineFeed "$($_.id.ToLowerInvariant()).$($_.baselineVersion).nupkg"
-    [ordered]@{ id=$_.id; version=$_.baselineVersion; file=[IO.Path]::GetFileName($path); sha256=(Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant() }
+    $artifact = "$($_.id).$($_.baselineVersion).baseline-nupkg"
+    Copy-Item -LiteralPath $path -Destination (Join-Path $run $artifact)
+    [ordered]@{ id=$_.id; version=$_.baselineVersion; file=[IO.Path]::GetFileName($path); artifact=$artifact; sha256=(Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant() }
 })
 ConvertTo-Json -InputObject $baselineHashes -Depth 5 | Set-Content (Join-Path $run 'baseline-hashes.json')
 function Execute([string[]] $Arguments, [string] $Log) {
@@ -86,7 +129,7 @@ $results = @()
 $components = @{}
 $graphs = @()
 foreach ($lane in $lanes) {
-    if (@($inventory.compilerHosts | Where-Object { $_.framework -eq $lane.framework -and $_.sdkVersion -eq $lane.sdkVersion }).Count -ne 1) { throw 'Invalid compiler lane: must match a pinned manifest host' }
+    if (@($compilerPlan.lanes | Where-Object { $_.framework -ceq $lane.framework -and $_.sdkVersion -ceq $lane.sdkVersion -and $_.baselineOnly -eq $lane.baselineOnly }).Count -ne 1) { throw 'Invalid compiler lane: must match exactly one approved compiler plan row' }
     $dir = Join-Path $run "$($lane.framework)-$($lane.sdkVersion)-$($lane.baselineOnly)"
     $null = New-Item -ItemType Directory -Force $dir
     @{ sdk=@{ version=$lane.sdkVersion; rollForward='disable'; allowPrerelease=$false } } | ConvertTo-Json | Set-Content (Join-Path $dir 'global.json')
@@ -152,7 +195,16 @@ foreach ($lane in $lanes) {
                 $graphs += [ordered]@{consumer=$consumer.id;variant=$variant;framework=$lane.framework;assetsSha256=(Get-FileHash $assetsPath -Algorithm SHA256).Hash.ToLowerInvariant();dependencies=$graph}
                 $null = Execute (@('build',$project,'-c','Release','--no-restore','-warnaserror') + $properties) (Join-Path $work 'build.log')
                 $binary = Join-Path $work "bin/Release/$($lane.framework)/$($evaluated.Properties.AssemblyName).dll"
+                $binaryBefore = (Get-FileHash $binary -Algorithm SHA256).Hash.ToLowerInvariant()
+                $stem = "$($consumer.id)-$variant-$($lane.framework)"
+                $binaryArtifact = "$stem.consumer-binary"
+                $depsArtifact = "$stem.consumer-deps.json"
+                $assetsArtifact = "$stem.consumer-assets.json"
+                Copy-Item -LiteralPath $binary -Destination (Join-Path $run $binaryArtifact)
+                Copy-Item -LiteralPath ([IO.Path]::ChangeExtension($binary, '.deps.json')) -Destination (Join-Path $run $depsArtifact)
+                Copy-Item -LiteralPath $assetsPath -Destination (Join-Path $run $assetsArtifact)
                 $output = Execute @($binary) (Join-Path $work 'run.log')
+                if ((Get-FileHash $binary -Algorithm SHA256).Hash.ToLowerInvariant() -ne $binaryBefore) { throw 'The consumer executable changed while it ran.' }
                 $runtimeLine = @($output -split "`r?`n" | Where-Object { $_.StartsWith('HOST runtime=') })
                 $family = $lane.framework.Substring(3).Split('.')[0]
                 if ($runtimeLine.Count -ne 1 -or $runtimeLine[0] -notmatch "^HOST runtime=$family\.") { throw "Wrong actual consumer runtime: $runtimeLine" }
@@ -161,7 +213,7 @@ foreach ($lane in $lanes) {
                 if ($consumer.baselineComparison) {
                     if ($variant -eq 'baseline') { $common[$consumer.id] = $lines } else { Assert-SameSet @($common[$consumer.id]) $lines "Old/new common output mismatch: $($consumer.id)" }
                 }
-                $results += [ordered]@{ framework=$lane.framework; sdkVersion=$sdk; compilerVersion=$compilerVersion; runtime=$runtimeLine[0]; consumer=$consumer.id; variant=$variant; baselineComparison=$consumer.baselineComparison; packageVersion=$version; packageIds=@($closure.id); exit=0; commonOutput=$lines; binarySha256=(Get-FileHash $binary -Algorithm SHA256).Hash.ToLowerInvariant(); sourceFiles=@($fixture); directory=$work }
+                $results += [ordered]@{ framework=$lane.framework; sdkVersion=$sdk; compilerVersion=$compilerVersion; runtime=$runtimeLine[0]; consumer=$consumer.id; variant=$variant; baselineComparison=$consumer.baselineComparison; packageVersion=$version; packageIds=@($closure.id); exit=0; commonOutput=$lines; binarySha256=$binaryBefore; binaryArtifact=$binaryArtifact; depsArtifact=$depsArtifact; assetsArtifact=$assetsArtifact; sourceFiles=@($fixture); directory=$work }
                 ConvertTo-Json -InputObject $results -Depth 10 | Set-Content (Join-Path $run 'consumer-results.json')
                 Write-Host "PASS $variant $($consumer.id) SDK=$sdk framework=$($lane.framework) CSharp=12 warningsAsErrors=true hashes=matched"
             }

@@ -141,11 +141,51 @@ public sealed class LeasedIdempotencyTests(Xunit.Abstractions.ITestOutputHelper 
     [Fact]
     public async Task Renewal_Uses_Original_Duration_And_Immutable_Effective_Key()
     {
-        await using var f = await RedisFixture.Create(); var key = f.Key("renew"); var owner = f.Store(leaseMs: 700); var other = f.Store(true, leaseMs: 50);
-        var c = await owner.ClaimAsync("renew", typeof(string), default); await Task.Delay(200); Assert.True(await other.RenewAsync(c.Lease!, default));
-        await Task.Delay(550); Assert.True(await owner.RenewAsync(c.Lease!, default));
-        Assert.Equal("700", (string?)await f.First.GetDatabase().HashGetAsync(key, "leaseMs"));
-        await owner.CompleteAsync(c.Lease!, "done", default);
+        const int leaseMilliseconds = 30_000;
+        await using var f = await RedisFixture.Create();
+        var key = f.Key("renew");
+        var owner = f.Store(leaseMs: leaseMilliseconds);
+        var other = f.Store(true, leaseMs: 50);
+        var claim = await owner.ClaimAsync("renew", typeof(string), default);
+        var lease = Assert.IsType<IdempotencyLease>(claim.Lease);
+        Assert.Equal(key, lease.Key);
+
+        // Redis TIME is the transition authority. Bound the stored deadline by
+        // server observations around renewal instead of sleeping near expiry.
+        var database = f.Second.GetDatabase();
+        var previousDeadline = (long)await database.HashGetAsync(key, "leaseUntilMs");
+        var before = await AfterLeaseStart(database, previousDeadline, leaseMilliseconds);
+        Assert.True(await other.RenewAsync(lease, default));
+        var after = await ServerMilliseconds(database);
+        var renewedDeadline = (long)await database.HashGetAsync(key, "leaseUntilMs");
+        Assert.True(renewedDeadline > previousDeadline);
+        Assert.InRange(renewedDeadline, before + leaseMilliseconds, after + leaseMilliseconds);
+        Assert.Equal("30000", (string?)await database.HashGetAsync(key, "leaseMs"));
+
+        before = await AfterLeaseStart(database, renewedDeadline, leaseMilliseconds);
+        Assert.True(await owner.RenewAsync(lease, default));
+        after = await ServerMilliseconds(database);
+        var ownerRenewedDeadline = (long)await database.HashGetAsync(key, "leaseUntilMs");
+        Assert.True(ownerRenewedDeadline > renewedDeadline);
+        Assert.InRange(ownerRenewedDeadline, before + leaseMilliseconds, after + leaseMilliseconds);
+        await owner.CompleteAsync(lease, "done", default);
+        Assert.Equal("done", (await other.ClaimAsync("renew", typeof(string), default)).CachedResponse);
+
+        static async Task<long> ServerMilliseconds(IDatabase database) => (long)await database.ScriptEvaluateAsync(
+            "local t = redis.call('TIME'); return tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)");
+
+        static async Task<long> AfterLeaseStart(IDatabase database, long previousDeadline, int duration)
+        {
+            var started = Environment.TickCount64;
+            while (true)
+            {
+                var now = await ServerMilliseconds(database);
+                if (now + duration > previousDeadline) return now;
+                if (Environment.TickCount64 - started >= 5_000)
+                    throw new TimeoutException("Redis TIME did not advance beyond the previous lease origin.");
+                await Task.Yield();
+            }
+        }
     }
     [Theory]
     [InlineData("v", "2")]

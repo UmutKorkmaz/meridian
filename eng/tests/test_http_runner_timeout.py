@@ -13,6 +13,10 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 PWSH = os.environ.get('MERIDIAN_TEST_PWSH') or shutil.which('pwsh') or '/opt/homebrew/bin/pwsh'
+# The HTTP budget includes a cold inner PowerShell startup. The outer bound also
+# covers seven console fixtures and compiling the private ownership helper.
+HTTP_TIMEOUT_SECONDS = 5
+RUNNER_BOUND_SECONDS = 20
 
 
 def status(pid):
@@ -120,13 +124,26 @@ raise SystemExit(124)
 class HttpRunnerTimeoutTests(unittest.TestCase):
     def test_live_launcher_timeout_terminates_owned_tree_and_observes_drains(self):
         with tempfile.TemporaryDirectory(prefix='meridian-http-live-') as directory:
-            self.run_watchdog(Path(directory), False)
+            self.run_watchdog(Path(directory), False, observe_topology=True)
 
     def test_exited_launcher_with_inherited_pipes_is_bounded_and_joined(self):
         with tempfile.TemporaryDirectory(prefix='meridian-http-exited-') as directory:
-            self.run_watchdog(Path(directory), True)
+            self.run_watchdog(Path(directory), True, observe_topology=True)
 
-    def run_watchdog(self, work, exited_launcher, executable=PWSH, owned_processes=None):
+    def test_verbose_console_setup_cannot_block_topology_observation(self):
+        with tempfile.TemporaryDirectory(prefix='meridian-http-verbose-') as directory:
+            self.run_watchdog(Path(directory), False, observe_topology=True, noisy_setup=True)
+
+    def run_watchdog(self, work, exited_launcher, executable=PWSH, owned_processes=None,
+                     observe_topology=False, noisy_setup=False):
+        # Readiness must not depend on draining a second, fixture-owned pipe.
+        # The product still owns and drains its real supervisor/child pipes.
+        with (work / 'runner-output.log').open('w+', encoding='utf-8', errors='replace') as capture:
+            return self.run_watchdog_with_capture(work, exited_launcher, executable, owned_processes,
+                                                  observe_topology, noisy_setup, capture)
+
+    def run_watchdog_with_capture(self, work, exited_launcher, executable, owned_processes,
+                                  observe_topology, noisy_setup, capture):
         shim = work / 'dotnet'
         shim.write_text('#!' + sys.executable + '\n' + '''import json, os, subprocess, sys
 from pathlib import Path
@@ -140,35 +157,62 @@ if len(sys.argv) > 1 and sys.argv[1] == 'test':
     if os.environ.get('MERIDIAN_WATCHDOG_EARLY_EXIT') != '1':
         child.wait()
 else:
-    print('console-fixture-passed', flush=True)
+    print('console-fixture-passed' + 'x' * int(os.environ.get('MERIDIAN_WATCHDOG_SETUP_OUTPUT_BYTES', '0')), flush=True)
 ''')
         shim.chmod(0o755)
         env = os.environ.copy()
         env.update(PATH=str(work) + os.pathsep + env.get('PATH', ''),
                    MERIDIAN_TEST_REDIS='owned-fixture-not-contacted',
                    MERIDIAN_WATCHDOG_PID_FILE=str(work / 'pids.json'),
-                   MERIDIAN_WATCHDOG_EARLY_EXIT='1' if exited_launcher else '0')
+                   MERIDIAN_WATCHDOG_EARLY_EXIT='1' if exited_launcher else '0',
+                   MERIDIAN_WATCHDOG_SETUP_OUTPUT_BYTES='65536' if noisy_setup else '0')
         started = time.monotonic()
+        outer_deadline = started + RUNNER_BOUND_SECONDS + 1
+        topology = None
         diagnosis = None
         primary = None
         process = subprocess.Popen(
             [executable, '-NoProfile', '-File', str(ROOT / 'eng/run-samples.ps1'),
-             '-Framework', 'net10.0', '-NoBuild', '-IncludeHttp', '-TimeoutSeconds', '1',
-             '-LogDirectory', str(work / 'logs')], env=env, stdout=subprocess.PIPE,
+             '-Framework', 'net10.0', '-NoBuild', '-IncludeHttp',
+             '-TimeoutSeconds', str(HTTP_TIMEOUT_SECONDS),
+             '-LogDirectory', str(work / 'logs')], env=env, stdout=capture,
             stderr=subprocess.STDOUT, text=True, start_new_session=True)
         try:
             if owned_processes is not None:
                 owned_processes.append(process)
             (work / 'session.json').write_text(json.dumps({'group': process.pid}))
             try:
-                output, _ = process.communicate(timeout=8)
+                if observe_topology:
+                    # Observe the intended failure shape before the runner kills it.
+                    # The atomic private receipt precedes inspection; no PID-name search.
+                    while process.poll() is None and time.monotonic() < outer_deadline:
+                        if (work / 'pids.json').is_file():
+                            observed = json.loads((work / 'pids.json').read_text())
+                            states = {name: status(observed[name]) for name in ['parent', 'child', 'group']}
+                            parent_live = bool(states['parent']) and not states['parent'].startswith('Z')
+                            child_live = bool(states['child']) and not states['child'].startswith('Z')
+                            supervisor_live = bool(states['group']) and not states['group'].startswith('Z')
+                            if child_live and supervisor_live and parent_live != exited_launcher:
+                                topology = {'shape': 'exited' if exited_launcher else 'live',
+                                            'observedSeconds': time.monotonic() - started,
+                                            'ownedPids': observed, 'statesBeforeTimeout': states}
+                                print(json.dumps({'topologyObserved': topology}), flush=True)
+                                break
+                        time.sleep(.01)
+                output, _ = process.communicate(timeout=max(.01, outer_deadline - time.monotonic()))
             except subprocess.TimeoutExpired:
                 diagnosis = 'outer safety watchdog: HTTP runner did not return'
                 kill_group(process.pid)
                 output, _ = process.communicate(timeout=5)
+            capture.seek(0)
+            output = capture.read()
             elapsed = time.monotonic() - started
             self.assertEqual(124, process.returncode, output)
-            self.assertLess(elapsed, 7, output)
+            self.assertLess(elapsed, RUNNER_BOUND_SECONDS, output)
+            self.assertTrue((work / 'pids.json').is_file(),
+                            'The owned parent/child topology never became ready.\n' + output)
+            if observe_topology:
+                self.assertIsNotNone(topology, 'The intended live/exited launcher topology was not observed.\n' + output)
             ids = json.loads((work / 'pids.json').read_text())
             statuses = {str(ids[name]): status(ids[name]) for name in ['parent', 'child']}
             print(json.dumps({'shape': 'exited' if exited_launcher else 'live',

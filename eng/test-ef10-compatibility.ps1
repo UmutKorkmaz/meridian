@@ -1,10 +1,14 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string] $Feed,
-    [Parameter(Mandatory)][ValidatePattern('^\d+\.\d+\.\d+-[0-9A-Za-z.-]+$')][string] $CandidateVersion,
+    [Parameter(Mandatory)][ValidatePattern('\A\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\z')][string] $CandidateVersion,
+    # Intent for a stable local candidate; never authorization to publish.
+    [switch] $ReleasePreparation,
     [string] $OutputDirectory = 'artifacts/ef10-compatibility'
 )
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'package-inventory.psm1') -Force -DisableNameChecking
+Assert-CandidateVersion $CandidateVersion ([bool] $ReleasePreparation)
 if (-not $env:MERIDIAN_TEST_POSTGRES -or -not $env:MERIDIAN_TEST_REDIS) { throw 'Both owned MERIDIAN_TEST_POSTGRES and MERIDIAN_TEST_REDIS providers are required.' }
 $repo = Split-Path -Parent $PSScriptRoot
 $run = Join-Path ([IO.Path]::GetFullPath($OutputDirectory)) ([DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffffffZ'))

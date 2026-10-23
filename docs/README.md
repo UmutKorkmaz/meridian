@@ -1,7 +1,7 @@
 # Meridian documentation
 
-The guides below are also built into a local reference site (authored pages plus API reference generated from the
-packed candidate assemblies) by `pwsh eng/verify-docs.ps1 -Configuration Release -Feed <feed>`. The site output goes
+The product guides listed in `toc.yml` are also built into a local reference site (authored pages plus API reference
+generated from the packed candidate assemblies) by `pwsh eng/verify-docs.ps1 -Configuration Release -Feed <feed>`. The site output goes
 under `artifacts/docs/` and is never committed or published by that command.
 
 | Doc | Purpose |
@@ -19,8 +19,14 @@ under `artifacts/docs/` and is never committed or published by that command.
 | [compatibility-policy.md](./compatibility-policy.md) | SemVer, default-behavior, support and deprecation guarantees |
 | [package-compatibility.md](./package-compatibility.md) | Packed-candidate compatibility with the published 2.1.3 packages, dependency licenses and build-time tooling |
 | [warning-dispositions.md](./warning-dispositions.md) | Which compiler/analyzer warnings were fixed or deliberately retained, and the warning ratchet |
+| [deprecations.md](./deprecations.md) | Retained APIs, preferred migrations and evidence required before any diagnostic or removal |
+| [troubleshooting.md](./troubleshooting.md) | Repository guide to diagnosing setup and execution failures |
+| [provider-testing.md](./provider-testing.md) | Repository recipes for owned Redis/PostgreSQL and mandatory provider tests |
+| [maintainer-checklist.md](./maintainer-checklist.md) | Repository maintenance duties, effective settings and open evidence gates |
+| [release-runbook.md](./release-runbook.md) | Repository exact-candidate preparation, read-only planning and promotion boundaries |
 | [security-model.md](./security-model.md) | Threat model and mitigations |
 | [governance/branch-protection.md](./governance/branch-protection.md) | Required checks checklist (maintainers) |
+| [governance/required-checks.md](./governance/required-checks.md) | Exact required check names, support tables with proof levels, coverage ratchet, effective repository settings and proposals |
 
 Planning history that is not product guidance stays in the repository only: `docs/PLAN.md`, `docs/ROADMAP.md` and
 `docs/superpowers/` (evolution plans, specs and the regression matrix).

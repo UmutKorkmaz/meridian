@@ -2,13 +2,16 @@
 param(
     [string] $Configuration = 'Release',
     [string] $OutputDirectory = 'artifacts/packages',
-    [Parameter(Mandatory)][ValidatePattern('^\d+\.\d+\.\d+-[0-9A-Za-z.-]+$')][string] $CandidateVersion,
+    [Parameter(Mandatory)][ValidatePattern('\A\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\z')][string] $CandidateVersion,
+    # Intent for a stable local candidate; never authorization to publish.
+    [switch] $ReleasePreparation,
     [string] $Manifest = 'eng/packages.json',
     [switch] $InspectOnly,
     [switch] $ValidateOnly
 )
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'package-inventory.psm1') -Force -DisableNameChecking
+Assert-CandidateVersion $CandidateVersion ([bool] $ReleasePreparation)
 $repo = Split-Path -Parent $PSScriptRoot
 $manifestPath = if ([IO.Path]::IsPathRooted($Manifest)) { $Manifest } else { Join-Path $repo $Manifest }
 $inventory = Read-PackageInventory $repo $manifestPath
@@ -87,7 +90,11 @@ foreach ($package in $inventory.packages) {
     } elseif (Test-Path $symbols) { $symbolsHash = (Get-FileHash $symbols -Algorithm SHA256).Hash.ToLowerInvariant() }
     $evidence += [ordered]@{ id=$package.id; kind=$package.kind; version=$CandidateVersion; assemblyName=$assembly; package=[IO.Path]::GetFileName($nupkg); sha256=(Get-FileHash $nupkg -Algorithm SHA256).Hash.ToLowerInvariant(); symbols=if ($symbolsHash) {[IO.Path]::GetFileName($symbols)} else {$null}; symbolsSha256=$symbolsHash; license=[ordered]@{ expression=$package.licenseExpression; file='LICENSE'; sha256=$licenseHash }; dependencies=$declaredDeps; assets=$entries; binaries=$binaryHashes; analyzers=$analyzerHashes; baselineVersion=$package.baselineVersion }
 }
-$result = [ordered]@{ schemaVersion=1; candidateVersion=$CandidateVersion; manifestSha256=(Get-FileHash $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant(); packages=$evidence; buildTooling=@($buildTooling.Values | Sort-Object producer) }
+# The source the candidate was packed from; eng/candidate_gate.py binds every lane's source commit to it.
+$sourceCommit = $null; $sourceDirty = $null
+$gitHead = @(& git -C $repo rev-parse HEAD 2>$null)
+if ($LASTEXITCODE -eq 0 -and $gitHead.Count -eq 1) { $sourceCommit = $gitHead[0].Trim(); $sourceDirty = @(& git -C $repo status --porcelain).Count -gt 0 }
+$result = [ordered]@{ schemaVersion=1; candidateVersion=$CandidateVersion; manifestSha256=(Get-FileHash $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant(); sourceCommit=$sourceCommit; sourceDirty=$sourceDirty; packages=$evidence; buildTooling=@($buildTooling.Values | Sort-Object producer) }
 if ($InspectOnly) {
     $null = Test-RecordedBuildTooling $inventory $recorded $CandidateVersion
     if ($recorded.manifestSha256 -ne $result.manifestSha256) { throw 'Inventory hash changed since packing' }

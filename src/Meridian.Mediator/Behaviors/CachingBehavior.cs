@@ -266,6 +266,7 @@ internal static class RequestKeyComposer
 /// <summary>
 /// Pipeline behavior that invalidates cache entries for <see cref="ICacheInvalidatingRequest"/> requests.
 /// After the handler executes successfully, all specified cache keys are removed.
+/// A subsequent removal failure is propagated without replaying the successful handler through Meridian retries.
 /// With namespaced provider keys enabled, raw invalidation keys are rejected before the handler executes
 /// so a cache-key migration cannot silently leave stale entries behind.
 /// </summary>
@@ -311,9 +312,17 @@ public class CacheInvalidationBehavior<TRequest, TResponse> : IPipelineBehavior<
 
         if (keysToInvalidate is { Length: > 0 })
         {
-            foreach (var key in keysToInvalidate)
+            try
             {
-                await _cacheProvider.RemoveAsync(key, cancellationToken);
+                foreach (var key in keysToInvalidate)
+                {
+                    await _cacheProvider.RemoveAsync(key, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            catch (Exception exception)
+            {
+                BehaviorFailure.SuppressRetry(exception);
+                throw;
             }
         }
 

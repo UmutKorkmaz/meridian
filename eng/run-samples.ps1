@@ -28,6 +28,20 @@ if ($Framework -eq 'net10.0') {
     Write-Host "SKIP QuickStart: targets net10.0 only ($Framework runs six multi-target samples)."
 }
 
+# Machine-readable receipt for eng/lane_collect.py: every expected sample is listed up front with exit=null and is
+# overwritten as it runs, so a sample that never ran (earlier failure, timeout) still counts against the total. With
+# -IncludeHttp the HTTP smoke has its own row (null until it ran) with its exit, timeout and ownership observations.
+$summaryPath = Join-Path $LogDirectory 'samples-summary.json'
+$sampleResults = [ordered]@{}
+foreach ($name in $samples) { $sampleResults[$name] = $null }
+$httpResult = $null
+function Write-SamplesSummary {
+    $entries = @($sampleResults.Keys | ForEach-Object { [ordered]@{ name = $_; exit = $sampleResults[$_] } })
+    $summary = [ordered]@{ framework = $Framework; includeHttp = [bool] $IncludeHttp; samples = $entries }
+    if ($IncludeHttp) { $summary.http = $httpResult }
+    $summary | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $summaryPath
+}
+Write-SamplesSummary
 $passed = 0
 foreach ($sample in $samples) {
     $project = Join-Path $repoRoot "samples/Meridian.$sample/Meridian.$sample.csproj"
@@ -63,6 +77,8 @@ foreach ($sample in $samples) {
         $log = "sample=$sample framework=$Framework exit=$exitCode timeout=$timedOut`n--- stdout ---`n$output`n--- stderr ---`n$errors"
         [IO.File]::WriteAllText($logPath, $log)
         Write-Host $log
+        $sampleResults[$sample] = $exitCode
+        Write-SamplesSummary
         if ($exitCode -ne 0) {
             Write-Host "FAIL $sample; passed=$passed/$($samples.Count); log=$logPath"
             exit $exitCode
@@ -70,6 +86,8 @@ foreach ($sample in $samples) {
         $passed++
         Write-Host "PASS $sample; log=$logPath"
     } catch {
+        $sampleResults[$sample] = 1
+        Write-SamplesSummary
         [IO.File]::WriteAllText($logPath, "sample=$sample framework=$Framework runner error: $_")
         Write-Error "Sample runner failed for $sample; log=$logPath`: $_" -ErrorAction Continue
         exit 1
@@ -178,6 +196,8 @@ if ($IncludeHttp) {
         try { [IO.File]::WriteAllText($logPath, $log) }
         catch { Write-Warning "HTTP log write also failed: $_" }
         Write-Host $log
+        $httpResult = [ordered]@{ exit = $exitCode; timeout = $timedOut; exitObserved = $exitObserved; drainsObserved = $drainsObserved; ownershipValidated = $ownershipValidated }
+        try { Write-SamplesSummary } catch { Write-Warning "HTTP summary write failed: $_" }
     }
     if ($exitCode -ne 0) { exit $exitCode }
 }

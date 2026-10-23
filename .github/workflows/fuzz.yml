@@ -10,6 +10,12 @@ name: Fuzz
 # lower fidelity but on every scheduled run. See
 # tests/Meridian.Mapping.Fuzz/README.md for the local coverage-guided
 # fuzz workflow.
+#
+# Schedule repair (no new monitors): the existing nightly schedule now pins the exact SDK used by the required CI
+# lanes (global.json only names a minimum), disables preview roll-forward, fails when the executed case counts differ
+# from the configured budgets (a green run that executed fewer cases is not a pass), and retains immutable attempt
+# snapshots before refreshing the current artifact view. The same budgets are required per candidate by the
+# `property counts (net10.0)` lane in ci.yml. The recorded workflow_dispatch trigger stays for manual runs.
 
 on:
   workflow_dispatch:
@@ -24,6 +30,9 @@ jobs:
     name: FsCheck properties (10k scalar/depth, 500 collections)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      DOTNET_ROLL_FORWARD: LatestPatch
+      DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
 
     steps:
       - name: Checkout
@@ -33,8 +42,14 @@ jobs:
 
       - name: Setup .NET SDK
         uses: actions/setup-dotnet@v5
+        env:
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet-fuzz
         with:
-          global-json-file: global.json
+          dotnet-version: 10.0.300
+
+      - name: Require the actual selected SDK
+        shell: bash
+        run: test "$(dotnet --version)" = "10.0.300"
 
       - name: Build tests
         run: dotnet build tests/Meridian.Mapping.Tests -c Release -f net10.0
@@ -65,12 +80,55 @@ jobs:
             --logger "trx;LogFileName=fuzz-properties.trx" \
             --results-directory ./fuzz-results 2>&1 | tee -a fuzz-results/property-output.log
 
-      - name: Upload results
+      - name: Require the configured case counts
+        shell: bash
+        run: |
+          set -euo pipefail
+          log=fuzz-results/property-output.log
+          test "$(grep -c 'Ok, passed 10000 tests' "$log")" = 3
+          test "$(grep -c 'Ok, passed 500 tests' "$log")" = 2
+
+      - name: Retain immutable attempt evidence
+        id: snapshot-8
         if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: history-fuzz-property-results-attempt-${{ github.run_attempt }}
+          path: ./fuzz-results/
+          retention-days: 30
+
+  # Uncomment once a runner with AFL is provisioned:
+  #
+  # sharp-fuzz-afl:
+  #   name: SharpFuzz + AFL (1 hour)
+  #   runs-on: self-hosted-with-afl
+  #   timeout-minutes: 90
+  #   steps:
+  #     - uses: actions/checkout@v6
+  #     - uses: actions/setup-dotnet@v5
+  #       with:
+  #         global-json-file: global.json
+  #     - run: dotnet tool install --global SharpFuzz.CommandLine
+  #     - run: dotnet build tests/Meridian.Mapping.Fuzz -c Release
+  #     - run: sharpfuzz tests/Meridian.Mapping.Fuzz/bin/Release/net10.0/Meridian.Mapping.dll
+  #     - run: |
+  #         afl-fuzz -V 3600 \
+  #           -i tests/Meridian.Mapping.Fuzz/corpus \
+  #           -o findings -- \
+  #           tests/Meridian.Mapping.Fuzz/bin/Release/net10.0/Meridian.Mapping.Fuzz @@
+  #     - uses: actions/upload-artifact@v4
+  #       if: always()
+  #       with:
+  #         name: fuzz-findings
+  #         path: findings/
+  #         retention-days: 90
+      - name: Upload results
+        if: always() && steps.snapshot-8.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: fuzz-property-results
           path: ./fuzz-results/
+          overwrite: true
           retention-days: 30
 
   # Uncomment once a runner with AFL is provisioned:

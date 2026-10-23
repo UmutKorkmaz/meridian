@@ -399,6 +399,26 @@
         "legacy"
       ],
       "baselineComparison": false
+    },
+    {
+      "id": "Meridian.DeprecationConsumer",
+      "project": "tests/consumers/Meridian.DeprecationConsumer/Meridian.DeprecationConsumer.csproj",
+      "sourceFiles": [
+        "tests/consumers/Meridian.DeprecationConsumer/Meridian.DeprecationConsumer.csproj",
+        "tests/consumers/Meridian.DeprecationConsumer/Shared.cs",
+        "tests/consumers/Meridian.DeprecationConsumer/OldApi.cs",
+        "tests/consumers/Meridian.DeprecationConsumer/NewApi.cs"
+      ],
+      "packageIds": [
+        "Meridian.Mapping",
+        "Meridian.Mediator",
+        "Meridian.Mediator.Caching"
+      ],
+      "variants": [
+        "legacy",
+        "migrated"
+      ],
+      "baselineComparison": false
     }
   ]
 }
