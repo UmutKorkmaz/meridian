@@ -303,7 +303,11 @@ class World:
                                              "sourceCommit": FIXTURE_COMMIT, "candidateVersion": self.version, "reviewedAtUtc": "2026-10-23T00:00:00Z"})
         write_json(self.inputs / "final-review.json", {"schema": "meridian-release-receipt/1", "kind": "final-review", "verdict": "PASS",
                                                        "sourceCommit": FIXTURE_COMMIT, "candidateVersion": self.version,
-                                                       "packageManifestSha256": manifest_sha, "reviewedAtUtc": "2026-10-23T00:00:00Z"})
+                                                       "packageManifestSha256": manifest_sha, "reviewedAtUtc": "2026-10-23T00:00:00Z",
+                                                       "wholeCandidateReleaseEligible": True, "reviewedE4": {
+                                                           "policySha256": file_sha256(self.repo / "eng/required-checks.json"),
+                                                           "laneReceiptSha256": {lane["id"]: file_sha256(self.inputs / "e4/lanes" /
+                                                               lane["id"].replace("/", "__") / "lane-result.json") for lane in policy["lanes"]}}})
         write_json(self.inputs / "protection.json", {
             "atUtc": "2026-10-23T10:36:04Z", "command": ["gh", "api", "repos/UmutKorkmaz/Meridian/branches/main/protection"], "exit": 0,
             "data": {"required_status_checks": {"strict": True, "contexts": ["candidate gate", "fixture lane"]},
@@ -678,12 +682,19 @@ class GovernanceAndReceiptTests(TempMixin, unittest.TestCase):
         self.assertEqual(rc.governance_row(None, None, REPOSITORY, self.REQUIRED)["state"], "blocked")
 
     def test_release_receipts_bind_source_version_and_artifacts(self):
+        evidence = self.temp()
+        lane = write_json(evidence / "lanes/fixture__lane/lane-result.json", {"fixture": "reviewed bytes"})
+        summary = {"schema": "meridian-candidate-summary/2", "overall": "PASS", "exitCode": 0, "wholeCandidate": True,
+                   "releaseEligible": True, "mode": "aggregate", "scope": "candidate", "policy": {"sha256": "c" * 64, "laneCount": 1},
+                   "lanes": [{"id": "fixture/lane", "state": "PASS"}]}
         base = {"schema": "meridian-release-receipt/1", "kind": "final-review", "verdict": "PASS", "sourceCommit": FIXTURE_COMMIT,
-                "candidateVersion": "3.0.0", "packageManifestSha256": "a" * 64}
+                "candidateVersion": "3.0.0", "packageManifestSha256": "a" * 64, "wholeCandidateReleaseEligible": True,
+                "reviewedE4": {"policySha256": "c" * 64, "laneReceiptSha256": {"fixture/lane": file_sha256(lane)}}}
 
         def check(document, kind="final-review", require_manifest=True):
             path = write_json(self.temp() / "receipt.json", document) if document is not None else None
-            return rc.release_receipt_row("final-review", path, kind, FIXTURE_COMMIT, "3.0.0", "a" * 64, require_manifest)["state"]
+            return rc.release_receipt_row("final-review", path, kind, FIXTURE_COMMIT, "3.0.0", "a" * 64, require_manifest,
+                e4_summary=summary, e4_evidence=evidence, e4_policy_sha256="c" * 64)["state"]
 
         self.assertEqual(check(base), "pass")
         self.assertEqual(check(None), "blocked")
@@ -693,6 +704,11 @@ class GovernanceAndReceiptTests(TempMixin, unittest.TestCase):
         self.assertEqual(check(dict(base, packageManifestSha256="b" * 64)), "fail")
         self.assertEqual(check({k: v for k, v in base.items() if k != "packageManifestSha256"}), "fail")
         self.assertEqual(check(dict(base, kind="e6-maintenance")), "fail")
+        for approval in (False, None, 1):
+            self.assertEqual(check(dict(base, wholeCandidateReleaseEligible=approval)), "blocked")
+        for scope in (None, {}, {"policySha256": "d" * 64},
+                      {"policySha256": "c" * 64, "laneReceiptSha256": {"fixture/lane": "0" * 64}}):
+            self.assertEqual(check(dict(base, reviewedE4=scope)), "fail")
 
 
 class GateRowTests(TempMixin, unittest.TestCase):
@@ -1020,6 +1036,26 @@ class PrepareTests(NetworkGuardMixin, TempMixin, unittest.TestCase):
         code, report = world.prepare()
         self.assertEqual((code, row(report, "e6-maintenance")["state"]), (rc.EXIT_FAIL, "fail"))
 
+    def test_local_only_final_review_cannot_prepare_a_complete_candidate(self):
+        world = self.world()
+        document = json.loads((world.inputs / "final-review.json").read_text())
+        document.update(wholeCandidateReleaseEligible=False, localPass=2, foreignMissing=1)
+        write_json(world.inputs / "final-review.json", document)
+        code, report = world.prepare()
+        self.assertEqual(row(report, "e4-aggregate")["state"], "pass")
+        self.assertEqual((code, row(report, "final-review")["state"]), (rc.EXIT_BLOCKED, "blocked"))
+        self.assertFalse((world.out / "candidate/candidate.json").exists())
+
+    def test_whole_candidate_review_must_bind_the_actual_policy_and_lane_receipts(self):
+        world = self.world()
+        document = json.loads((world.inputs / "final-review.json").read_text())
+        document.update(wholeCandidateReleaseEligible=True, reviewedE4={
+            "policySha256": "0" * 64, "laneReceiptSha256": {"fixture/lane": "0" * 64}})
+        write_json(world.inputs / "final-review.json", document)
+        code, report = world.prepare()
+        self.assertEqual(row(report, "e4-aggregate")["state"], "pass")
+        self.assertEqual((code, row(report, "final-review")["state"]), (rc.EXIT_FAIL, "fail"))
+
     def test_prerelease_probe_preparation_without_intent(self):
         world = self.world(version="3.0.0-probe.1", release_preparation=False)
         write_json(world.inputs / "availability.json", {"schema": "meridian-remote-availability/1", "retrievedAtUtc": "2026-10-23T00:00:00Z",
@@ -1085,6 +1121,22 @@ class VerifyTests(NetworkGuardMixin, PreparedBundleMixin, unittest.TestCase):
         self.writable(manifest)
         manifest.write_bytes(manifest.read_bytes() + b" ")
         self.assert_rejected(manifest, digest, "digest")
+
+    def test_reapproved_bundle_cannot_substitute_a_local_only_final_review(self):
+        _, bundle, manifest, _ = self.prepared()
+        receipt = bundle / "evidence/receipts/final-review.json"
+        document = json.loads(receipt.read_text())
+        document["wholeCandidateReleaseEligible"] = False
+        self.writable(receipt)
+        receipt.write_text(json.dumps(document) + "\n")
+
+        def update_integrity(candidate):
+            for item in candidate["files"]:
+                if item["path"] == "evidence/receipts/final-review.json":
+                    item.update(sha256=file_sha256(receipt), size=receipt.stat().st_size)
+
+        digest = self.rewrite(manifest, update_integrity)
+        self.assert_rejected(manifest, digest, "final-review")
 
     def test_tampered_missing_unlisted_and_symlinked_files(self):
         _, bundle, manifest, digest = self.prepared()

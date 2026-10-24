@@ -94,7 +94,8 @@ untouched. Preparation works in a private staging directory next to it and check
 | `remote-availability` | a read-only snapshot covers every package, the version is not present and exceeds the highest published stable version (stale-able, never a reservation) |
 | `e4-aggregate` | `eng/candidate_gate.py` re-run in aggregate mode over the adopted copies is `PASS`, release eligible, a whole-candidate verdict, for the same version, package manifest digest, packed source commit and package hashes; lanes without evidence are `blocked`, failed or skipped lanes `fail` |
 | `e7-lifecycle` | The actual wrapper receives `-Candidate <immutable package-manifest>` and `-ConsumerResults <one E4-validated complete lane>`. Its report must bind both byte hashes, all four ledger entries, retained source invariants and all nine matching old/new fixtures. Preparation and bundle verification independently re-derive these facts; a missing input blocks, a mismatch fails. |
-| `e6-maintenance`, `final-review` | a `meridian-release-receipt/1` with verdict `PASS` bound to S and the version (the final review also to the package manifest digest) |
+| `e6-maintenance` | a `meridian-release-receipt/1` with verdict `PASS` bound to S and the version |
+| `final-review` | a whole-candidate `PASS` bound to S, version, package manifest, exact E4 policy and every required lane receipt; local-only approval remains blocked |
 | `governance` | the branch protection snapshot of this repository requires every CI-defined policy check and at least one approving review |
 | `release-notes` | notes exist and name the exact version |
 
@@ -251,6 +252,16 @@ their own authorized disposition. A bad published version is fixed with a new ve
 * `meridian-release-receipt/1` (E6 and final review): `{"schema", "kind": "e6-maintenance" | "final-review",
   "verdict": "PASS", "sourceCommit": S, "candidateVersion", "packageManifestSha256" (final review), "reviewedAtUtc",
   "reviewer"}`. A receipt is evidence, not authorization.
+  A final review additionally requires `"wholeCandidateReleaseEligible": true` and `"reviewedE4":
+  {"policySha256": "<exact required-checks.json SHA-256>", "laneReceiptSha256": {"<required lane id>":
+  "<exact lane-result.json SHA-256>", ...}}`. The lane map must equal the complete passing E4 aggregate's lane set
+  and retained receipt bytes. A local-only review cannot be reused when foreign lanes later arrive. Review the full
+  evidence first, then create a new receipt; setting the flag or deriving hashes does not perform that review.
+  The read-only `eng.release_candidate.final_review_scope(summary, evidence_directory, policy_sha256)` helper derives
+  this binding from a passing whole-candidate aggregate. It excludes transient summary paths and timestamps, so
+  byte-identical evidence can be staged elsewhere without changing the review scope. Preparation recomputes E4;
+  bundle verification re-derives E4 and rechecks the final-review binding. Evidence policy version 2 requires this
+  scope; older prepared bundles need a new complete review and preparation rather than reuse of their approval digest.
 * Governance: the raw read-only envelopes `{"atUtc", "command": ["gh", "api", "repos/<owner>/<repo>/branches/main/protection"],
   "exit", "data"}` and the matching `.../rulesets` read.
 * Remote availability: `{"schema": "meridian-remote-availability/1", "retrievedAtUtc", "packages": [{"id", "status":

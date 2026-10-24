@@ -73,7 +73,7 @@ AVAILABILITY_SCHEMA = "meridian-remote-availability/1"
 ANCHOR_SCHEMA = "meridian-approval-anchor/1"
 DEPRECATION_SCHEMA = "meridian-deprecation-validation/1"
 GATE_SUMMARY_SCHEMA = "meridian-candidate-summary/2"
-EVIDENCE_POLICY_VERSION = 1
+EVIDENCE_POLICY_VERSION = 2
 DEFAULT_REPOSITORY = "UmutKorkmaz/meridian"
 SIGNATURE_ENTRY = ".signature.p7s"
 RECEIPT_STATES = ("absent", "requested", "present-unverified", "verified", "failed", "uncertain")
@@ -761,7 +761,39 @@ def governance_row(protection_path, rulesets_path, repository: str, required_che
     return _finish(row, failures, blockers)
 
 
-def release_receipt_row(row_id: str, path, kind: str, source_commit, version: str, manifest_sha256, require_manifest: bool) -> dict:
+def final_review_scope(summary: dict, evidence: Path, policy_sha256: str) -> dict:
+    """Bind a complete review to policy and exact lane receipts, without transient summary paths/timestamps."""
+    if (not isinstance(summary, dict) or summary.get("schema") != GATE_SUMMARY_SCHEMA or
+            summary.get("overall") != "PASS" or type(summary.get("exitCode")) is not int or summary["exitCode"] != 0 or
+            summary.get("wholeCandidate") is not True or summary.get("releaseEligible") is not True or
+            summary.get("mode") != "aggregate" or summary.get("scope") != "candidate"):
+        raise ValueError("final review requires a passing whole-candidate E4 aggregate")
+    policy = summary.get("policy") or {}
+    lanes = summary.get("lanes")
+    if (not isinstance(policy, dict) or not HEX64.fullmatch(str(policy_sha256)) or
+            policy.get("sha256", policy_sha256) != policy_sha256 or
+            not isinstance(lanes, list) or not lanes or type(policy.get("laneCount")) is not int or
+            policy["laneCount"] != len(lanes)):
+        raise ValueError("final review requires the complete E4 policy and lane set")
+    root = Path(evidence).resolve()
+    receipts = {}
+    gate = _load_candidate_gate()
+    for lane in lanes:
+        identity = lane.get("id") if isinstance(lane, dict) else None
+        if not isinstance(identity, str) or not identity or identity in receipts or lane.get("state") != "PASS":
+            raise ValueError("final review requires unique passing E4 lanes")
+        relative = "lanes/%s/lane-result.json" % gate.lane_directory_name(identity)
+        target = root / relative
+        if (bundle_path_problem(relative) or not target.is_file() or target.is_symlink() or
+                not target.resolve().is_relative_to(root) or
+                any(parent.is_symlink() for parent in target.parents if parent.is_relative_to(root))):
+            raise ValueError("final review lane receipt is missing or unsafe: %s" % identity)
+        receipts[identity] = sha256_file(target)
+    return {"policySha256": policy_sha256, "laneReceiptSha256": receipts}
+
+
+def release_receipt_row(row_id: str, path, kind: str, source_commit, version: str, manifest_sha256, require_manifest: bool,
+                        *, e4_summary=None, e4_evidence=None, e4_policy_sha256=None) -> dict:
     row = _row(row_id)
     if path is None or not Path(path).is_file():
         return _finish(row, [], ["no %s receipt (%s) was supplied" % (kind, RELEASE_RECEIPT_SCHEMA)])
@@ -771,15 +803,29 @@ def release_receipt_row(row_id: str, path, kind: str, source_commit, version: st
         return _finish(row, ["%s receipt is not readable JSON: %s" % (kind, error)], [])
     if not isinstance(document, dict):
         return _finish(row, ["%s receipt is not an object" % kind], [])
-    failures = []
+    failures, blockers = [], []
     expected = {"schema": RELEASE_RECEIPT_SCHEMA, "kind": kind, "verdict": "PASS", "sourceCommit": source_commit, "candidateVersion": version}
     if require_manifest:
         expected["packageManifestSha256"] = manifest_sha256
     for field, value in expected.items():
         if document.get(field) != value:
             failures.append("%s receipt %s is %r, not %r" % (kind, field, document.get(field), value))
-    row["details"] = {"reviewedAtUtc": document.get("reviewedAtUtc"), "reviewer": document.get("reviewer")}
-    return _finish(row, failures, [])
+    if kind == "final-review":
+        if document.get("wholeCandidateReleaseEligible") is not True:
+            blockers.append("final-review receipt does not approve the whole candidate; local-only approval cannot be reused")
+        elif e4_summary is None or e4_evidence is None or e4_policy_sha256 is None:
+            blockers.append("final-review requires a passing whole-candidate E4 aggregate")
+        else:
+            try:
+                scope = final_review_scope(e4_summary, Path(e4_evidence), e4_policy_sha256)
+            except (OSError, ValueError) as error:
+                failures.append("final-review E4 binding cannot be derived: %s" % error)
+            else:
+                if document.get("reviewedE4") != scope:
+                    failures.append("final-review reviewedE4 differs from the actual policy or complete lane receipt hashes")
+                row["details"]["reviewedE4"] = scope
+    row["details"].update(reviewedAtUtc=document.get("reviewedAtUtc"), reviewer=document.get("reviewer"))
+    return _finish(row, failures, blockers)
 
 
 def release_notes_row(path, version: Version) -> dict:
@@ -1459,7 +1505,9 @@ def _prepare_locked(report, staging, candidate_id, version, candidate_dir, feed,
     staged = _optional_copy(e6_receipt, receipts / "e6-maintenance.json")
     rows["e6-maintenance"] = release_receipt_row("e6-maintenance", staged, "e6-maintenance", source_commit, version.text, manifest_sha, False)
     staged = _optional_copy(final_review_receipt, receipts / "final-review.json")
-    rows["final-review"] = release_receipt_row("final-review", staged, "final-review", source_commit, version.text, manifest_sha, True)
+    rows["final-review"] = release_receipt_row("final-review", staged, "final-review", source_commit, version.text, manifest_sha, True,
+        e4_summary=summary if rows["e4-aggregate"]["state"] == "pass" else None, e4_evidence=staged_evidence,
+        e4_policy_sha256=sha256_file(policy_path) if policy is not None else None)
     protection = _optional_copy(governance_protection, receipts / "governance-protection.json")
     rulesets = _optional_copy(governance_rulesets, receipts / "governance-rulesets.json")
     if policy is None:
@@ -1873,6 +1921,11 @@ def _verify_retained_e4(candidate: dict, bundle: Path, problems: list) -> None:
                 [(r.get("id"), r.get("state")) for r in recorded.get("lanes", [])] !=
                 [(r.get("id"), r.get("state")) for r in summary["lanes"]]):
             problems.append("the recorded E4 summary differs from the fully re-derived candidate/lanes")
+        review = release_receipt_row("final-review", bundle / "evidence/receipts/final-review.json", "final-review",
+            candidate["source"]["commit"], candidate["version"]["canonical"], candidate["packageManifest"]["sha256"], True,
+            e4_summary=summary, e4_evidence=bundle / "evidence/e4", e4_policy_sha256=sha256_file(repo / "eng/required-checks.json"))
+        if review["state"] != "pass":
+            problems.extend("retained final-review evidence: %s" % reason for reason in review["reasons"])
         lifecycle = validate_deprecation_output(bundle / "evidence/e7-deprecation-validation.json", 0, repo / "docs/deprecations.md",
             candidate=bundle / candidate["packageManifest"]["path"],
             consumer_results=deprecation_consumer_results(bundle / "evidence/e4", [entry["id"] for entry in summary["lanes"]
