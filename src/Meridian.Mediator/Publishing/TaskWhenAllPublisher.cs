@@ -24,7 +24,7 @@ public class TaskWhenAllPublisher : INotificationPublisher
     /// <inheritdoc/>
     public async Task Publish(IEnumerable<NotificationHandlerExecutor> handlerExecutors, INotification notification, CancellationToken cancellationToken)
     {
-        // ⚡ Bolt: Fast path for zero handlers - prevents SemaphoreSlim and List<Task> allocations
+        // Fast path for zero handlers - prevents SemaphoreSlim and List<Task> allocations
         if (handlerExecutors is ICollection<NotificationHandlerExecutor> { Count: 0 } ||
             handlerExecutors is IReadOnlyCollection<NotificationHandlerExecutor> { Count: 0 })
         {
@@ -127,7 +127,7 @@ public class ResilientTaskWhenAllPublisher : INotificationPublisher
     /// <inheritdoc/>
     public async Task Publish(IEnumerable<NotificationHandlerExecutor> handlerExecutors, INotification notification, CancellationToken cancellationToken)
     {
-        // ⚡ Bolt: Fast path for zero handlers - prevents SemaphoreSlim and List<Task> allocations
+        // Fast path for zero handlers - prevents SemaphoreSlim and List<Task> allocations
         if (handlerExecutors is ICollection<NotificationHandlerExecutor> { Count: 0 } ||
             handlerExecutors is IReadOnlyCollection<NotificationHandlerExecutor> { Count: 0 })
         {
