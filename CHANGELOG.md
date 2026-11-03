@@ -63,6 +63,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   both paths now assign `default(T)`. Nullable destinations still receive null.
 - Explicit collection-to-collection maps (`CreateMap<List<A>, List<B>>()`) now take
   precedence over implicit element-wise mapping instead of being silently ignored.
+  Without such a map, a top-level collection map still builds a new collection and
+  enforces `DefaultMaxCollectionItems` as in 2.1.3, including same-type maps such as
+  `Map<List<T>, List<T>>`. Assignable destinations that Meridian cannot construct
+  (for example `ImmutableArray<T>` or `ReadOnlyCollection<T>`) are returned as-is.
 
 ### Added
 - `CacheKeyComposer.Compose<TQuery>(userKey)` for composing the namespaced provider key of

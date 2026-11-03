@@ -51,6 +51,17 @@ public class MappingEngine
                 return context.Depth >= context.MaxDepth
                     ? (destinationType.IsValueType ? Activator.CreateInstance(destinationType) : null)
                     : generated.Map(source, context);
+
+            // As in 2.1.3, a top-level collection map builds a new collection and enforces
+            // DefaultMaxCollectionItems even when the source is assignable to the destination;
+            // ConvertValue's assignability shortcut would hand back the source instance.
+            // This runs after the explicit and generated lookups so CreateMap<List<A>, List<B>>()
+            // and generated collection pairs keep precedence. Destinations MapCollection cannot
+            // construct (ImmutableArray<T>, ReadOnlyCollection<T>, ...) stay on ConvertValue.
+            if (IsCollectionMapping(sourceType, destinationType, out var srcElementType, out var destElementType) &&
+                CanCreateCollection(destinationType, destElementType!))
+                return MapCollection(source, sourceType, destinationType, srcElementType!, destElementType!, context);
+
             sourceType = source.GetType();
             var converted = ConvertValue(source, destinationType, context, destinationMember: null);
             if (IsCompatibleDestinationValue(converted, destinationType))
@@ -789,6 +800,30 @@ public class MappingEngine
             return ctor.Invoke([list]);
 
         return list;
+    }
+
+    /// <summary>
+    /// Returns whether <see cref="MapCollection"/> produces an instance of
+    /// <paramref name="destType"/>; mirrors its construction branches above.
+    /// </summary>
+    private static bool CanCreateCollection(Type destType, Type destElementType)
+    {
+        if (destType.IsArray)
+            return true;
+
+        if (destType.IsGenericType)
+        {
+            var genericDef = destType.GetGenericTypeDefinition();
+            if (genericDef == typeof(HashSet<>) || genericDef == typeof(ISet<>) ||
+                genericDef == typeof(Dictionary<,>) || genericDef == typeof(IDictionary<,>) ||
+                genericDef == typeof(IReadOnlyDictionary<,>))
+                return true;
+        }
+
+        if (destType.IsAssignableFrom(typeof(List<>).MakeGenericType(destElementType)))
+            return true;
+
+        return destType.GetConstructor([typeof(IEnumerable<>).MakeGenericType(destElementType)]) != null;
     }
 
     private static object? ResolveWithValueResolver(object source, object destination, PropertyMap propertyMap, ResolutionContext context)
