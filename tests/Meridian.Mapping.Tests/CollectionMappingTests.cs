@@ -224,8 +224,10 @@ public class CollectionMappingTests
         var mapper = CreateMapper(cfg => cfg.CreateMap<Source, Source>());
         var source = new List<Source> { new() { Id = 1 } };
 
+        // The runtime-typed overload is the subject here, so the types are passed as values.
+        var listType = source.GetType();
         var viaObject = mapper.Map<List<Source>>(source);
-        var viaTypes = (List<Source>)mapper.Map(source, typeof(List<Source>), typeof(List<Source>));
+        var viaTypes = (List<Source>)mapper.Map(source, listType, listType);
         var array = new[] { new Source { Id = 2 } };
         var viaArray = mapper.Map<Source[], Source[]>(array);
 
@@ -290,7 +292,7 @@ public class CollectionMappingTests
 
         var mappedArray = mapper.Map<System.Collections.Immutable.ImmutableArray<int>,
             System.Collections.Immutable.ImmutableArray<int>>(immutableArray);
-        Assert.Equal(new[] { 1, 2 }, mappedArray.ToArray());
+        Assert.Collection(mappedArray, v => Assert.Equal(1, v), v => Assert.Equal(2, v));
         Assert.Same(immutableList, mapper.Map<System.Collections.Immutable.ImmutableList<Source>,
             System.Collections.Immutable.ImmutableList<Source>>(immutableList));
         Assert.Same(readOnly, mapper.Map<System.Collections.ObjectModel.ReadOnlyCollection<Source>,
