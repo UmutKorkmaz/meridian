@@ -280,6 +280,24 @@ public class CollectionMappingTests
     }
 
     [Fact]
+    public void Top_Level_Same_Type_Collection_With_Enumerable_Constructor_Returns_New_Collection()
+    {
+        var mapper = CreateMapper(_ => { });
+        var queue = new Queue<Source>();
+        queue.Enqueue(new Source { Id = 1 });
+        var observable = new System.Collections.ObjectModel.ObservableCollection<Source> { new() { Id = 2 } };
+
+        var mappedQueue = mapper.Map<Queue<Source>, Queue<Source>>(queue);
+        var mappedObservable = mapper.Map<System.Collections.ObjectModel.ObservableCollection<Source>,
+            System.Collections.ObjectModel.ObservableCollection<Source>>(observable);
+
+        Assert.NotSame(queue, mappedQueue);
+        Assert.Same(queue.Peek(), Assert.Single(mappedQueue));
+        Assert.NotSame(observable, mappedObservable);
+        Assert.Same(observable[0], Assert.Single(mappedObservable));
+    }
+
+    [Fact]
     public void Top_Level_Same_Type_Collection_That_Cannot_Be_Constructed_Still_Maps()
     {
         // MapCollection can only build arrays, sets, dictionaries, List<T>-assignable
