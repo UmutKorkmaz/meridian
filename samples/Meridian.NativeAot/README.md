@@ -31,7 +31,7 @@ binary, comparing the executed case IDs with the expected set:
 ```powershell
 ./eng/pack-packages.ps1 -CandidateVersion 2.1.4-local.1 -OutputDirectory artifacts/candidate
 ./eng/run-aot-smoke.ps1 -Combined -Feed artifacts/candidate -CandidateVersion 2.1.4-local.1 `
-    -Framework net10.0 -SdkVersion 10.0.300 -Rid osx-arm64
+    -Framework net10.0 -SdkVersion 10.0.404 -Rid osx-arm64
 ```
 
 `-Rid` aliases `-RuntimeIdentifier`. The runner refuses a host that is not the matching native OS and process

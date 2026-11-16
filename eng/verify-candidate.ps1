@@ -141,10 +141,10 @@ function Get-TestSuites($PolicyDocument, $LaneEntry) {
 }
 
 # A lane that names toolchainRootEnvironment runs every command with that isolated dotnet root and nothing else.
-function Get-LaneEnvironment($LaneEntry) {
-    if (-not $LaneEntry.toolchainRootEnvironment) { return @{} }
-    $root = [Environment]::GetEnvironmentVariable($LaneEntry.toolchainRootEnvironment)
-    if (-not $root) { throw "Lane $($LaneEntry.id) needs the isolated toolchain root named by `$env:$($LaneEntry.toolchainRootEnvironment)." }
+function Get-LaneEnvironment($LaneEntry, [string] $ToolchainRootEnvironment = $LaneEntry.toolchainRootEnvironment) {
+    if (-not $ToolchainRootEnvironment) { return @{} }
+    $root = [Environment]::GetEnvironmentVariable($ToolchainRootEnvironment)
+    if (-not $root) { throw "Lane $($LaneEntry.id) needs the isolated toolchain root named by `$env:$ToolchainRootEnvironment." }
     $root = Resolve-OutputDirectory $repo $root
     if (-not (Test-Path -LiteralPath (Join-Path $root 'dotnet'))) { throw "Isolated toolchain root $root has no dotnet host." }
     return @{ DOTNET_ROOT = $root; DOTNET_ROOT_ARM64 = $root; DOTNET_HOST_PATH = (Join-Path $root 'dotnet'); DOTNET_MULTILEVEL_LOOKUP = '0'
@@ -238,9 +238,14 @@ function Invoke-Lane($PolicyDocument, $LaneEntry, [string] $RawDirectory, [strin
             return Invoke-Native 'pwsh' $arguments (Join-Path $RawDirectory 'verify-packages.log') $environment
         }
         'native-aot' {
-            $common = @('-Feed', $Feed, '-CandidateVersion', $Version, '-Framework', $LaneEntry.framework, '-SdkVersion', $LaneEntry.sdk, '-Rid', $LaneEntry.rid) + $releaseArguments
-            $combined = Invoke-Native 'pwsh' (@('-NoProfile', '-File', (Join-Path $PSScriptRoot 'run-aot-smoke.ps1'), '-Combined') + $common + @('-OutputDirectory', (Join-Path $RawDirectory 'native'))) (Join-Path $RawDirectory 'combined.log')
-            $mapping = Invoke-Native 'pwsh' (@('-NoProfile', '-File', (Join-Path $PSScriptRoot 'run-aot-smoke.ps1'), '-MappingOnly') + $common + @('-OutputDirectory', (Join-Path $RawDirectory 'native-mapping'))) (Join-Path $RawDirectory 'mapping-only.log')
+            # CI installs the patched SDK for this job. Local campaigns can use the isolated servicing root.
+            $servicingRoot = $PolicyDocument.toolchains.currentServicing.toolchainRootEnvironment
+            if ($Context -eq 'local' -and $servicingRoot -and [Environment]::GetEnvironmentVariable($servicingRoot)) {
+                $environment = Get-LaneEnvironment $LaneEntry $servicingRoot
+            }
+            $common = @('-Feed', $Feed, '-CandidateVersion', $Version, '-Framework', $LaneEntry.framework, '-SdkVersion', $LaneEntry.sdk, '-Rid', $LaneEntry.rid, '-RequiredChecksPolicy', $policyPath) + $releaseArguments
+            $combined = Invoke-Native 'pwsh' (@('-NoProfile', '-File', (Join-Path $PSScriptRoot 'run-aot-smoke.ps1'), '-Combined') + $common + @('-OutputDirectory', (Join-Path $RawDirectory 'native'))) (Join-Path $RawDirectory 'combined.log') $environment
+            $mapping = Invoke-Native 'pwsh' (@('-NoProfile', '-File', (Join-Path $PSScriptRoot 'run-aot-smoke.ps1'), '-MappingOnly') + $common + @('-OutputDirectory', (Join-Path $RawDirectory 'native-mapping'))) (Join-Path $RawDirectory 'mapping-only.log') $environment
             return Merge-ProducerExit @($combined, $mapping)
         }
         'property-counts' {

@@ -206,12 +206,12 @@ public class MediatorTelemetryBoundaryTests
         private readonly ActivityListener _listener;
         public List<Activity> Stopped { get; } = new();
 
-        public ActivityCapture()
+        public ActivityCapture(ActivitySamplingResult sampling = ActivitySamplingResult.AllDataAndRecorded)
         {
             _listener = new ActivityListener
             {
                 ShouldListenTo = source => source.Name == "Meridian.Mediator",
-                Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded,
+                Sample = (ref ActivityCreationOptions<ActivityContext> _) => sampling,
                 ActivityStopped = activity =>
                 {
                     lock (Stopped)
@@ -252,6 +252,28 @@ public class MediatorTelemetryBoundaryTests
         Assert.Equal(2, metrics.CountOf(Mx.NotificationCount, ("outcome", "success")));
         Assert.Equal(3, activities.Named("Mediator.Send").Length);
         Assert.Equal(2, activities.Named("Mediator.Publish").Length);
+    }
+
+    [Theory]
+    [InlineData(ActivitySamplingResult.None, 0)]
+    [InlineData(ActivitySamplingResult.AllDataAndRecorded, 2)]
+    public async Task Unmetered_Send_Dispatches_Typed_And_Object_Requests_Regardless_Of_Sampling(
+        ActivitySamplingResult sampling, int expectedSpans)
+    {
+        using var provider = Mx.BuildStandard();
+        using var activities = new ActivityCapture(sampling);
+        var mediator = provider.GetRequiredService<IMediator>();
+
+        Assert.Equal(4, await mediator.Send(new MxQuery(3)));
+        Assert.Equal(6, Assert.IsType<int>(await mediator.Send((object)new MxQuery(5))));
+
+        var spans = activities.Named("Mediator.Send");
+        Assert.Equal(expectedSpans, spans.Length);
+        Assert.All(spans, span =>
+        {
+            Assert.Equal(ActivityStatusCode.Ok, span.Status);
+            Assert.Equal(typeof(MxQuery).FullName, span.GetTagItem("meridian.request_type"));
+        });
     }
 
     [Fact]

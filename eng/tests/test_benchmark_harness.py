@@ -117,6 +117,32 @@ class RunScriptContractTests(unittest.TestCase):
     def script(self, *arguments):
         return run([PWSH, "-NoProfile", "-NonInteractive", "-File", str(SCRIPT), *arguments])
 
+    def test_host_conditions_parse_load_averages_with_decimal_and_list_commas(self):
+        script = r"""
+$ErrorActionPreference = 'Stop'
+$ast = [Management.Automation.Language.Parser]::ParseFile('eng/run-benchmarks.ps1', [ref]$null, [ref]$null)
+$definition = $ast.Find({
+    param($node)
+    $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-HostConditions'
+}, $true)
+Invoke-Expression $definition.Extent.Text
+function Get-Text($exe, $arguments) {
+    if ($exe -eq 'uptime') { return $env:MERIDIAN_TEST_UPTIME }
+    return ''
+}
+ConvertTo-Json -InputObject (Get-HostConditions).loadAverage -Compress
+"""
+        for uptime in (
+            " 09:12:00 up 13:31, 1 user, load average: 1.25, 2.50, 3.32,",
+            " 09:12 up 13:31, 1 user, load averages: 1.25 2.50 3.32",
+            " 09:12 up 13:31, 1 user, load averages: 1,25 2,50 3,32",
+        ):
+            with self.subTest(uptime=uptime):
+                result = run([PWSH, "-NoProfile", "-NonInteractive", "-Command", script],
+                             env={**os.environ, "MERIDIAN_TEST_UPTIME": uptime})
+                self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+                self.assertEqual([1.25, 2.50, 3.32], json.loads(result.stdout))
+
     def test_filter_is_required(self):
         with tempfile.TemporaryDirectory() as temp:
             result = self.script("-OutputDirectory", str(Path(temp) / "out"))
@@ -187,13 +213,10 @@ class RunScriptContractTests(unittest.TestCase):
                 self.assertIn(key, manifest["candidate"], key)
             self.assertEqual("project-reference", manifest["candidate"]["lane"])
             competitors = {entry["id"]: entry for entry in manifest["competitors"]}
-            self.assertEqual({"Mapster", "Riok.Mapperly", "AutoMapper", "MediatR"}, set(competitors))
+            self.assertEqual({"Mapster", "Riok.Mapperly", "MediatR"}, set(competitors))
             self.assertEqual("MIT", competitors["Mapster"]["license"])
             self.assertEqual("Apache-2.0", competitors["Riok.Mapperly"]["license"])
-            self.assertEqual("MIT", competitors["AutoMapper"]["license"])
             self.assertEqual("Apache-2.0", competitors["MediatR"]["license"])
-            self.assertEqual("14.0.0", competitors["AutoMapper"]["version"])
-            self.assertTrue(competitors["AutoMapper"]["historical"])
             self.assertTrue(competitors["MediatR"]["historical"])
             self.assertFalse(competitors["Mapster"]["historical"])
             self.assertTrue(list((out / "bdn" / "results").glob("*E3MappingFlat-report-full.json")))

@@ -13,8 +13,7 @@ namespace Meridian.Benchmarks;
 //   equal work: ONE complete new-result map of the same payload by a hand-written floor, Meridian runtime (interpreted and
 //   compiled, selected through the public TypeMap.CompiledFastPath property on independently created identical
 //   configurations), Meridian generated mapping (direct call and, separately, the generated runtime integration),
-//   Mapster (current), Mapperly (current) and AutoMapper at the explicitly pinned historical 14.0.0. The generated and
-//   Mapperly methods live in GeneratedMappingBenchmarks.cs (partial classes).
+//   Mapster and Mapperly. The generated and Mapperly methods live in GeneratedMappingBenchmarks.cs (partial classes).
 // * Every contender is validated against independently specified expected values in GlobalSetup (and by the preflight
 //   before any timing): all members, collection element order, non-aliasing of nested objects, reference identity and
 //   source immutability. A contender that cannot do the same work is omitted and recorded, never timed.
@@ -642,22 +641,6 @@ internal static class FlatPayload
 
 internal static partial class OrderPayload
 {
-    public static void ConfigureAutoMapper(AutoMapper.IMapperConfigurationExpression cfg)
-    {
-        cfg.CreateMap<SourceAddress, DestAddress>();
-        cfg.CreateMap<SourceOrder, DestOrder>()
-            .ForMember(d => d.OrderId, o => o.MapFrom(s => s.Id))
-            .ForMember(d => d.Number, o => o.MapFrom(s => s.OrderNumber))
-            .ForMember(d => d.Customer, o => o.MapFrom(s => s.CustomerName))
-            .ForMember(d => d.Email, o => o.MapFrom(s => s.CustomerEmail))
-            .ForMember(d => d.Created, o => o.MapFrom(s => s.CreatedUtc))
-            .ForMember(d => d.Updated, o => o.MapFrom(s => s.UpdatedUtc))
-            .ForMember(d => d.Gross, o => o.MapFrom(s => s.TotalGross))
-            .ForMember(d => d.Net, o => o.MapFrom(s => s.TotalNet))
-            .ForMember(d => d.Vat, o => o.MapFrom(s => s.VatRate))
-            .ForMember(d => d.ShipTo, o => o.MapFrom(s => s.ShippingAddress));
-    }
-
     /// <summary>A fully compiled Mapster configuration for the order pair (explicit renames, nested address).</summary>
     public static TypeAdapterConfig CreateMapsterConfig()
     {
@@ -852,7 +835,6 @@ public partial class E3MappingFlat
     private MeridianAlias.IMapper _interpreted = default!;
     private MeridianAlias.IMapper _generatedRuntime = default!;
     private global::MapsterMapper.Mapper _mapster = default!;
-    private AutoMapper.IMapper _autoMapper = default!;
 
     [GlobalSetup]
     public void Setup()
@@ -865,8 +847,6 @@ public partial class E3MappingFlat
         mapster.NewConfig<FlatSource, FlatDest>();
         mapster.Compile();
         _mapster = new global::MapsterMapper.Mapper(mapster);
-
-        _autoMapper = new AutoMapper.MapperConfiguration(cfg => cfg.CreateMap<FlatSource, FlatDest>()).CreateMapper();
         Preflight();
     }
 
@@ -880,7 +860,6 @@ public partial class E3MappingFlat
         FlatPayload.Verify(nameof(MeridianGeneratedRuntime), _source, MeridianGeneratedRuntime());
         FlatPayload.Verify(nameof(Mapster), _source, Mapster());
         FlatPayload.Verify(nameof(Mapperly), _source, Mapperly());
-        FlatPayload.Verify(nameof(AutoMapperV14), _source, AutoMapperV14());
     }
 
     [Benchmark(Baseline = true)]
@@ -897,9 +876,6 @@ public partial class E3MappingFlat
 
     [Benchmark]
     public FlatDest Mapster() => _mapster.Map<FlatSource, FlatDest>(_source);
-
-    [Benchmark]
-    public FlatDest AutoMapperV14() => _autoMapper.Map<FlatSource, FlatDest>(_source);
 }
 
 /// <summary>An order with ten renamed scalar members and one nested address (the original April benchmark shape).</summary>
@@ -912,7 +888,6 @@ public partial class E3MappingNested
     private MeridianAlias.IMapper _interpreted = default!;
     private MeridianAlias.IMapper _generatedRuntime = default!;
     private global::MapsterMapper.Mapper _mapster = default!;
-    private AutoMapper.IMapper _autoMapper = default!;
 
     [GlobalSetup]
     public void Setup()
@@ -922,7 +897,6 @@ public partial class E3MappingNested
         _generatedRuntime = Generated.GeneratedMappingSupport.CreateRuntimeMapper(new Generated.E3GeneratedOrderMaps.GeneratedResolver());
 
         _mapster = new global::MapsterMapper.Mapper(OrderPayload.CreateMapsterConfig());
-        _autoMapper = new AutoMapper.MapperConfiguration(OrderPayload.ConfigureAutoMapper).CreateMapper();
         Preflight();
     }
 
@@ -935,7 +909,6 @@ public partial class E3MappingNested
         OrderPayload.Verify(nameof(MeridianGeneratedRuntime), _source, MeridianGeneratedRuntime());
         OrderPayload.Verify(nameof(Mapster), _source, Mapster());
         OrderPayload.Verify(nameof(Mapperly), _source, Mapperly());
-        OrderPayload.Verify(nameof(AutoMapperV14), _source, AutoMapperV14());
     }
 
     [Benchmark(Baseline = true)]
@@ -952,9 +925,6 @@ public partial class E3MappingNested
 
     [Benchmark]
     public DestOrder Mapster() => _mapster.Map<SourceOrder, DestOrder>(_source);
-
-    [Benchmark]
-    public DestOrder AutoMapperV14() => _autoMapper.Map<SourceOrder, DestOrder>(_source);
 }
 
 /// <summary>
@@ -970,7 +940,6 @@ public partial class E3MappingCollectionPayload
     private MeridianAlias.IMapper _interpreted = default!;
     private MeridianAlias.IMapper _generatedRuntime = default!;
     private global::MapsterMapper.Mapper _mapster = default!;
-    private AutoMapper.IMapper _autoMapper = default!;
 
     [Params(0, 1, 32, 256)]
     public int Items { get; set; }
@@ -988,13 +957,6 @@ public partial class E3MappingCollectionPayload
         mapster.NewConfig<Basket, BasketDto>();
         mapster.Compile();
         _mapster = new global::MapsterMapper.Mapper(mapster);
-
-        _autoMapper = new AutoMapper.MapperConfiguration(cfg =>
-        {
-            cfg.CreateMap<BasketProduct, BasketProductDto>();
-            cfg.CreateMap<BasketLine, BasketLineDto>();
-            cfg.CreateMap<Basket, BasketDto>();
-        }).CreateMapper();
         Preflight();
     }
 
@@ -1007,7 +969,6 @@ public partial class E3MappingCollectionPayload
         BasketPayload.Verify(nameof(MeridianGeneratedRuntime), Items, _source, MeridianGeneratedRuntime());
         BasketPayload.Verify(nameof(Mapster), Items, _source, Mapster());
         BasketPayload.Verify(nameof(Mapperly), Items, _source, Mapperly());
-        BasketPayload.Verify(nameof(AutoMapperV14), Items, _source, AutoMapperV14());
     }
 
     [Benchmark(Baseline = true)]
@@ -1024,9 +985,6 @@ public partial class E3MappingCollectionPayload
 
     [Benchmark]
     public BasketDto Mapster() => _mapster.Map<Basket, BasketDto>(_source);
-
-    [Benchmark]
-    public BasketDto AutoMapperV14() => _autoMapper.Map<Basket, BasketDto>(_source);
 }
 
 /// <summary>A chain of 4 or 16 nested objects, each its own explicit pair (bounded far below the depth cap of 64).</summary>
@@ -1039,7 +997,6 @@ public partial class E3MappingDeep
     private MeridianAlias.IMapper _interpreted = default!;
     private MeridianAlias.IMapper _generatedRuntime = default!;
     private global::MapsterMapper.Mapper _mapster = default!;
-    private AutoMapper.IMapper _autoMapper = default!;
 
     [Params(4, 16)]
     public int Depth { get; set; }
@@ -1056,12 +1013,6 @@ public partial class E3MappingDeep
             mapster.NewConfig(source, destination);
         mapster.Compile();
         _mapster = new global::MapsterMapper.Mapper(mapster);
-
-        _autoMapper = new AutoMapper.MapperConfiguration(cfg =>
-        {
-            foreach (var (source, destination) in DeepChain.Pairs)
-                cfg.CreateMap(source, destination);
-        }).CreateMapper();
         Preflight();
     }
 
@@ -1074,7 +1025,6 @@ public partial class E3MappingDeep
         DeepChain.Verify(nameof(MeridianGeneratedRuntime), Depth, _source, MeridianGeneratedRuntime());
         DeepChain.Verify(nameof(Mapster), Depth, _source, Mapster());
         DeepChain.Verify(nameof(Mapperly), Depth, _source, Mapperly());
-        DeepChain.Verify(nameof(AutoMapperV14), Depth, _source, AutoMapperV14());
     }
 
     [Benchmark(Baseline = true)]
@@ -1091,9 +1041,6 @@ public partial class E3MappingDeep
 
     [Benchmark]
     public D01 Mapster() => _mapster.Map<S01, D01>(_source);
-
-    [Benchmark]
-    public D01 AutoMapperV14() => _autoMapper.Map<S01, D01>(_source);
 }
 
 /// <summary>
@@ -1110,7 +1057,6 @@ public partial class E3MappingReferences
     private RefGraph _source = default!;
     private MeridianAlias.IMapper _runtime = default!;
     private global::MapsterMapper.Mapper _mapster = default!;
-    private AutoMapper.IMapper _autoMapper = default!;
 
     [GlobalSetup]
     public void Setup()
@@ -1127,12 +1073,6 @@ public partial class E3MappingReferences
         mapster.NewConfig<RefGraph, RefGraphDto>().PreserveReference(true);
         mapster.Compile();
         _mapster = new global::MapsterMapper.Mapper(mapster);
-
-        _autoMapper = new AutoMapper.MapperConfiguration(cfg =>
-        {
-            cfg.CreateMap<RefNode, RefNodeDto>().PreserveReferences();
-            cfg.CreateMap<RefGraph, RefGraphDto>().PreserveReferences();
-        }).CreateMapper();
         Preflight();
     }
 
@@ -1143,7 +1083,6 @@ public partial class E3MappingReferences
         ReferencePayload.Verify(nameof(MeridianGeneratedDirect), _source, MeridianGeneratedDirect());
         ReferencePayload.Verify(nameof(Mapster), _source, Mapster());
         ReferencePayload.Verify(nameof(Mapperly), _source, Mapperly());
-        ReferencePayload.Verify(nameof(AutoMapperV14), _source, AutoMapperV14());
     }
 
     [Benchmark(Baseline = true)]
@@ -1154,7 +1093,4 @@ public partial class E3MappingReferences
 
     [Benchmark]
     public RefGraphDto Mapster() => _mapster.Map<RefGraph, RefGraphDto>(_source);
-
-    [Benchmark]
-    public RefGraphDto AutoMapperV14() => _autoMapper.Map<RefGraph, RefGraphDto>(_source);
 }

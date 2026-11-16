@@ -24,24 +24,13 @@
     package). Every version is an explicit exact pin; licenses were read from the restored nuspec of that exact version:
       Mapster 10.0.13        MIT         current stable
       Riok.Mapperly 4.3.1    Apache-2.0  current stable; a source generator, so it is an analyzer here only
-      AutoMapper 14.0.0      MIT         HISTORICAL pin: the last MIT release; affected by GHSA-rvv3-g6hj-g44x (below)
       MediatR 12.5.0         Apache-2.0  HISTORICAL pin: the last permissively licensed release (not MIT)
-    Newer AutoMapper and MediatR releases use a commercial license and are intentionally not benchmarked.
+    Newer MediatR releases use a commercial license and are intentionally not benchmarked.
   -->
   <ItemGroup>
     <PackageReference Include="Mapster" Version="[10.0.13]" />
     <PackageReference Include="Riok.Mapperly" Version="[4.3.1]" PrivateAssets="all" />
-    <PackageReference Include="AutoMapper" Version="[14.0.0]" />
     <PackageReference Include="MediatR" Version="[12.5.0]" />
-  </ItemGroup>
-
-  <!--
-    NuGet audit reports GHSA-rvv3-g6hj-g44x (NU1903) for the historical AutoMapper 14.0.0 pin. That single advisory is
-    accepted for this benchmark-only project; the suppression is scoped to that advisory URL, so any other advisory that
-    a current or future dependency introduces still surfaces as a warning.
-  -->
-  <ItemGroup>
-    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-rvv3-g6hj-g44x" />
   </ItemGroup>
 
   <!--

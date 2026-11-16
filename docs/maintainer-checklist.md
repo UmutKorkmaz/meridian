@@ -105,7 +105,8 @@ Do this by hand after Microsoft publishes new .NET patches. No job watches for t
 2. In **one change**, update `toolchains.currentServicing` in `eng/required-checks.json` (`asOf`, `releaseDate`,
    metadata hashes, `buildSdk`, `lanes`), the servicing table in
    [required checks](governance/required-checks.md#current-servicing-versus-pinned-compatibility) and the table in
-   [CONTRIBUTING](../CONTRIBUTING.md#installing-sdks-and-runtimes).
+   [CONTRIBUTING](../CONTRIBUTING.md#installing-sdks-and-runtimes). Update the six Native AOT lane SDKs and the
+   Native AOT workflow matrix to those SDK patches, then run the hosted matrix on both target platforms.
 3. Install the three SDKs into a **new private** dotnet root, using the official downloads, and check each archive's
    SHA-512 against `releases.json`. `dotnet --list-runtimes` must show exactly one patch per family.
 4. Run the six local lanes (`current servicing (<tfm>)` and `current servicing package consumers (<tfm>)`) with

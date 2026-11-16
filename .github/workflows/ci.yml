@@ -811,9 +811,9 @@ jobs:
       matrix:
         rid: [linux-x64, osx-arm64]
         host:
-          - { framework: net8.0, sdk: 8.0.421 }
-          - { framework: net9.0, sdk: 9.0.318 }
-          - { framework: net10.0, sdk: 10.0.300 }
+          - { framework: net8.0, sdk: 8.0.428 }
+          - { framework: net9.0, sdk: 9.0.321 }
+          - { framework: net10.0, sdk: 10.0.404 }
         include:
           - { rid: linux-x64, runner: ubuntu-24.04 }
           - { rid: osx-arm64, runner: macos-15 }
@@ -829,7 +829,7 @@ jobs:
         with:
           skip-lts-prepass: true
           dotnet-version: |
-            10.0.300
+            10.0.404
             ${{ matrix.host.sdk }}
       - name: Install Linux native toolchain
         if: runner.os == 'Linux'

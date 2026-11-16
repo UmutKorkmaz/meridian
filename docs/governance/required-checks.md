@@ -205,6 +205,9 @@ C# language version 12 and warnings-as-errors are enforced inside every consumer
 
 ### Native AOT
 
+New Native AOT lanes use the exact SDKs in `toolchains.currentServicing` so native publishing restores patched
+ILCompiler packages. Historical managed/compiler compatibility pins remain separate.
+
 | RID | net8.0 | net9.0 | net10.0 |
 | --- | --- | --- | --- |
 | osx-arm64 | `local-executed` in earlier tasks (12/12 cases + mapping-only, D4) | `local-executed` | `local-executed` |

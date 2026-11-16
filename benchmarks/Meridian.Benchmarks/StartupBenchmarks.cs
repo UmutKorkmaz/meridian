@@ -34,16 +34,11 @@ internal static class E3StartupWork
     internal static MeridianAlias.MapperConfiguration MeridianGeneratedConfiguration() =>
         new(cfg => MeridianAlias.GeneratedMappingExtensions.UseGeneratedMappings(cfg, new Generated.E3GeneratedOrderMaps.GeneratedResolver()));
 
-    internal static AutoMapper.MapperConfiguration AutoMapperConfiguration() => new(OrderPayload.ConfigureAutoMapper);
-
     internal static DestOrder ReadyMeridian(SourceOrder source) =>
         MeridianConfiguration().CreateMapper().Map<SourceOrder, DestOrder>(source);
 
     internal static DestOrder ReadyMeridianGenerated(SourceOrder source) =>
         MeridianGeneratedConfiguration().CreateMapper().Map<SourceOrder, DestOrder>(source);
-
-    internal static DestOrder ReadyAutoMapper(SourceOrder source) =>
-        AutoMapperConfiguration().CreateMapper().Map<SourceOrder, DestOrder>(source);
 
     internal static DestOrder ReadyMapster(SourceOrder source) =>
         new global::MapsterMapper.Mapper(OrderPayload.CreateMapsterConfig()).Map<SourceOrder, DestOrder>(source);
@@ -115,11 +110,9 @@ public class E3StartupMapping
     {
         E3StartupWork.RequireMapperConfiguration(nameof(MeridianConfigure), MeridianConfigure(), 2);
         E3StartupWork.RequireMapperConfiguration(nameof(MeridianGeneratedRuntimeConfigure), MeridianGeneratedRuntimeConfigure(), 0);
-        E3Work.Require(AutoMapperConfigure() is not null, "AutoMapper configuration was not created.");
         E3Work.Require(MapsterConfigure().RuleMap.Count >= 2, "Mapster configuration must contain the registered rules.");
         OrderPayload.Verify(nameof(MeridianReady), _source, MeridianReady());
         OrderPayload.Verify(nameof(MeridianGeneratedRuntimeReady), _source, MeridianGeneratedRuntimeReady());
-        OrderPayload.Verify(nameof(AutoMapperReady), _source, AutoMapperReady());
         OrderPayload.Verify(nameof(MapsterReady), _source, MapsterReady());
     }
 
@@ -129,9 +122,6 @@ public class E3StartupMapping
     [Benchmark(Description = "Meridian generated-runtime configuration")]
     public MeridianAlias.MapperConfiguration MeridianGeneratedRuntimeConfigure() => E3StartupWork.MeridianGeneratedConfiguration();
 
-    [Benchmark(Description = "AutoMapper 14.0.0 configuration (historical pin)")]
-    public AutoMapper.MapperConfiguration AutoMapperConfigure() => E3StartupWork.AutoMapperConfiguration();
-
     [Benchmark(Description = "Mapster configuration (compiled)")]
     public Mapster.TypeAdapterConfig MapsterConfigure() => OrderPayload.CreateMapsterConfig();
 
@@ -140,9 +130,6 @@ public class E3StartupMapping
 
     [Benchmark(Description = "Meridian generated-runtime ready + first map")]
     public DestOrder MeridianGeneratedRuntimeReady() => E3StartupWork.ReadyMeridianGenerated(_source);
-
-    [Benchmark(Description = "AutoMapper 14.0.0 ready + first map (historical pin)")]
-    public DestOrder AutoMapperReady() => E3StartupWork.ReadyAutoMapper(_source);
 
     [Benchmark(Description = "Mapster ready + first map")]
     public DestOrder MapsterReady() => E3StartupWork.ReadyMapster(_source);
@@ -212,7 +199,6 @@ public class E3ColdMapping
         OrderPayload.Verify(nameof(MeridianReadyFirstMap), _source, MeridianReadyFirstMap());
         OrderPayload.Verify(nameof(MeridianGeneratedRuntimeReadyFirstMap), _source, MeridianGeneratedRuntimeReadyFirstMap());
         OrderPayload.Verify(nameof(MapsterReadyFirstMap), _source, MapsterReadyFirstMap());
-        OrderPayload.Verify(nameof(AutoMapperV14ReadyFirstMap), _source, AutoMapperV14ReadyFirstMap());
     }
 
     [Benchmark(Baseline = true, Description = "Hand-written first map")]
@@ -232,9 +218,6 @@ public class E3ColdMapping
 
     [Benchmark(Description = "Mapster configuration + first map")]
     public DestOrder MapsterReadyFirstMap() => E3StartupWork.ReadyMapster(_source);
-
-    [Benchmark(Description = "AutoMapper 14.0.0 configuration + first map (historical pin)")]
-    public DestOrder AutoMapperV14ReadyFirstMap() => E3StartupWork.ReadyAutoMapper(_source);
 }
 
 /// <summary>Fresh-process first Send. Setup is empty; semantic checks run in the preflight process.</summary>

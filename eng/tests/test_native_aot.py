@@ -21,6 +21,7 @@ SCRATCH = Path(tempfile.mkdtemp(prefix="meridian-native-aot-tests-"))
 atexit.register(shutil.rmtree, SCRATCH, ignore_errors=True)
 MODULE = ROOT / "eng/native-aot.psm1"
 RUNNER = ROOT / "eng/run-aot-smoke.ps1"
+POLICY = json.loads((ROOT / "eng/required-checks.json").read_text(encoding="utf-8"))
 CONSUMER = ROOT / "tests/consumers/Meridian.NativeAotConsumer"
 SAMPLE = ROOT / "samples/Meridian.NativeAot"
 SHARED_CASES = [
@@ -299,7 +300,16 @@ class NativeAotRunnerTests(unittest.TestCase):
             text=True,
         )
 
-    COMMON = ["-Feed", "artifacts/D4/does-not-exist", "-CandidateVersion", "0.0.1-d4.test", "-Framework", "net10.0", "-SdkVersion", "10.0.300"]
+    SDK = next(lane["sdk"] for lane in POLICY["toolchains"]["currentServicing"]["lanes"]
+               if lane["framework"] == "net10.0")
+    COMMON = ["-Feed", "artifacts/D4/does-not-exist", "-CandidateVersion", "0.0.1-d4.test", "-Framework", "net10.0", "-SdkVersion", SDK]
+
+    def test_historical_sdk_is_rejected_in_both_modes(self):
+        for mode in ("-Combined", "-MappingOnly"):
+            with self.subTest(mode=mode):
+                result = self.run_runner(mode, *self.COMMON[:-1], "10.0.300", "-Rid", "osx-arm64")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("requires the latest-patch SDK", result.stderr + result.stdout)
 
     def test_modes_are_mutually_exclusive_and_never_defaulted(self):
         neither = self.run_runner(*self.COMMON, "-Rid", "osx-arm64")
@@ -354,6 +364,7 @@ class NativeAotWorkflowTests(unittest.TestCase):
 
         cls.workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
         cls.manifest = json.loads((ROOT / "eng/packages.json").read_text())
+        cls.servicing = json.loads((ROOT / "eng/required-checks.json").read_text())["toolchains"]["currentServicing"]
 
     def test_native_lanes_use_one_packed_feed_and_matching_runners(self):
         jobs = self.workflow["jobs"]
@@ -363,7 +374,7 @@ class NativeAotWorkflowTests(unittest.TestCase):
         self.assertEqual(matrix["rid"], ["linux-x64", "osx-arm64"])
         self.assertEqual(
             matrix["host"],
-            [{"framework": h["framework"], "sdk": h["sdkVersion"]} for h in self.manifest["compilerHosts"]],
+            [{"framework": h["framework"], "sdk": h["sdk"]} for h in self.servicing["lanes"]],
         )
         runners = {i["rid"]: i["runner"] for i in matrix["include"]}
         self.assertTrue(runners["linux-x64"].startswith("ubuntu"))

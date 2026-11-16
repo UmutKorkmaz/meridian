@@ -12,7 +12,8 @@ param(
     [Parameter(Mandatory)][Alias('Rid')][ValidateSet('osx-arm64','linux-x64','linux-arm64','win-x64','win-arm64')][string] $RuntimeIdentifier,
     [Parameter(ParameterSetName='Combined')][string] $Manifest = 'eng/packages.json',
     [Parameter(ParameterSetName='Combined')][string] $Consumer = 'Meridian.NativeAotConsumer',
-    [string] $OutputDirectory = 'artifacts/aot-smoke'
+    [string] $OutputDirectory = 'artifacts/aot-smoke',
+    [string] $RequiredChecksPolicy = 'eng/required-checks.json'
 )
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'package-inventory.psm1') -Force -DisableNameChecking
@@ -20,6 +21,22 @@ Assert-CandidateVersion $CandidateVersion ([bool] $ReleasePreparation)
 if ($SdkVersion.Split('.')[0] -ne $Framework.Substring(3).Split('.')[0]) { throw 'Framework and SDK major version must match.' }
 $repo = Split-Path -Parent $PSScriptRoot
 $Feed = [IO.Path]::GetFullPath($Feed)
+$policyPath = Resolve-OutputDirectory $repo $RequiredChecksPolicy
+$policy = Get-Content -Raw -LiteralPath $policyPath | ConvertFrom-Json
+$approved = @($policy.toolchains.currentServicing.lanes | Where-Object framework -EQ $Framework)
+if ($approved.Count -ne 1 -or $approved[0].sdk -ne $SdkVersion) {
+    throw "Native AOT requires the latest-patch SDK for $Framework from $RequiredChecksPolicy."
+}
+function Assert-NativeCompilerPackages($Assets) {
+    $approvedRuntime = $approved[0].runtime
+    $generic = @($Assets.libraries.PSObject.Properties.Name | Where-Object { $_ -like 'Microsoft.DotNet.ILCompiler/*' })
+    Assert-SameSet $generic @("Microsoft.DotNet.ILCompiler/$approvedRuntime") 'Restored ILCompiler reference differs from the approved native runtime patch.'
+    $native = @($Assets.project.frameworks.$Framework.downloadDependencies | Where-Object { $_.name -like 'runtime.*.Microsoft.DotNet.ILCompiler' })
+    if ($native.Count -ne 1 -or $native[0].name -ne "runtime.$RuntimeIdentifier.Microsoft.DotNet.ILCompiler" -or
+        $native[0].version -notin @("[$approvedRuntime, $approvedRuntime]", "[$approvedRuntime]")) {
+        throw 'Restored ILCompiler download differs from the approved native runtime patch or host RID.'
+    }
+}
 function Execute([string] $File, [string[]] $Arguments, [string] $Log) {
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = [Diagnostics.ProcessStartInfo]::new($File)
@@ -53,7 +70,6 @@ if ($Combined) {
     function Get-Sha([string] $Path) { return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
     $manifestPath = if ([IO.Path]::IsPathRooted($Manifest)) { $Manifest } else { Join-Path $repo $Manifest }
     $inventory = Read-PackageInventory $repo $manifestPath
-    if (@($inventory.compilerHosts | Where-Object { $_.framework -eq $Framework -and $_.sdkVersion -eq $SdkVersion }).Count -ne 1) { throw 'Framework and SDK must be one pinned manifest compiler host pair.' }
     $entries = @($inventory.consumers | Where-Object { $_.id -ceq $Consumer })
     if ($entries.Count -ne 1) { throw "Consumer must be inventoried exactly once: $Consumer" }
     $entry = $entries[0]
@@ -114,6 +130,7 @@ if ($Combined) {
     $null = Execute $dotnet (@('restore', $projectName, '-r', $RuntimeIdentifier, '--packages', $packages, '--configfile', 'NuGet.Config') + $buildProperties) 'restore.log'
     $assetsPath = Join-Path $work 'obj/project.assets.json'
     $assets = Get-Content -Raw $assetsPath | ConvertFrom-Json
+    Assert-NativeCompilerPackages $assets
     $libraries = @($assets.libraries.PSObject.Properties | Where-Object { $_.Value.type -eq 'package' -and $_.Name.Split('/')[0] -in $inventory.packages.id })
     Assert-SameSet @($libraries | ForEach-Object { $_.Name.Split('/')[0] }) @($closure.id) 'Restored inventory closure mismatch.'
     foreach ($library in $libraries) { if ($library.Name.Split('/')[1] -ne $CandidateVersion) { throw "Restored inventory package is not the candidate version: $($library.Name)" } }
@@ -223,11 +240,12 @@ $installed = Execute $dotnet @('--list-sdks') 'installed-sdks.log'
 $sdkLine = @($installed -split "`r?`n" | Where-Object { $_.StartsWith("$actualSdk ") })
 if ($sdkLine.Count -ne 1 -or $sdkLine[0] -notmatch '\[(.+)\]$') { throw 'Cannot locate the selected compiler.' }
 $compiler = Join-Path $Matches[1] "$actualSdk/Roslyn/bincore/csc.dll"
-$null = Execute $dotnet @('exec', $compiler, '-version') 'compiler.log' 
+$null = Execute $dotnet @('exec', $compiler, '-version') 'compiler.log'
 $project = 'Meridian.GeneratedOnlyConsumer.csproj'
 $properties = @("-p:ConsumerFramework=$Framework", "-p:MeridianPackageVersion=$CandidateVersion")
 $packages = Join-Path $work 'packages'
 $null = Execute $dotnet (@('restore', $project, '-r', $RuntimeIdentifier, '--packages', $packages, '--configfile', 'NuGet.Config') + $properties) 'restore.log'
+Assert-NativeCompilerPackages (Get-Content -Raw -LiteralPath (Join-Path $work 'obj/project.assets.json') | ConvertFrom-Json)
 $packed = Join-Path $Feed "Meridian.Mapping.$CandidateVersion.nupkg"
 $restored = Join-Path $packages "meridian.mapping/$CandidateVersion/meridian.mapping.$CandidateVersion.nupkg"
 if ((Get-FileHash $packed).Hash -ne (Get-FileHash $restored).Hash) { throw 'Restored package differs from accepted candidate.' }

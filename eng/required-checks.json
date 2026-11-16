@@ -22,7 +22,7 @@
           "runtime": "10.0.8"
         }
       ],
-      "note": "Historical/pinned compatibility proof, not Microsoft current servicing. Every pinned lane builds with buildSdk 10.0.300; SDK-host consumer and Native AOT lanes compile with the per-family SDK; runtime lanes must offer exactly the per-family runtime patch.",
+      "note": "Historical/pinned compatibility proof, not Microsoft current servicing. Every pinned lane builds with buildSdk 10.0.300; SDK-host consumer lanes compile with the per-family SDK; runtime lanes must offer exactly the per-family runtime patch.",
       "buildSdk": "10.0.300"
     },
     "currentServicing": {
@@ -1236,7 +1236,7 @@
       "kind": "native-aot",
       "check": "native AOT linux-x64 (net8.0)",
       "framework": "net8.0",
-      "sdk": "8.0.421",
+      "sdk": "8.0.428",
       "rid": "linux-x64",
       "host": {
         "os": "linux",
@@ -1249,7 +1249,7 @@
           "rid": "linux-x64",
           "host": {
             "framework": "net8.0",
-            "sdk": "8.0.421"
+            "sdk": "8.0.428"
           }
         }
       }
@@ -1259,7 +1259,7 @@
       "kind": "native-aot",
       "check": "native AOT linux-x64 (net9.0)",
       "framework": "net9.0",
-      "sdk": "9.0.318",
+      "sdk": "9.0.321",
       "rid": "linux-x64",
       "host": {
         "os": "linux",
@@ -1272,7 +1272,7 @@
           "rid": "linux-x64",
           "host": {
             "framework": "net9.0",
-            "sdk": "9.0.318"
+            "sdk": "9.0.321"
           }
         }
       }
@@ -1282,7 +1282,7 @@
       "kind": "native-aot",
       "check": "native AOT linux-x64 (net10.0)",
       "framework": "net10.0",
-      "sdk": "10.0.300",
+      "sdk": "10.0.404",
       "rid": "linux-x64",
       "host": {
         "os": "linux",
@@ -1295,7 +1295,7 @@
           "rid": "linux-x64",
           "host": {
             "framework": "net10.0",
-            "sdk": "10.0.300"
+            "sdk": "10.0.404"
           }
         }
       }
@@ -1305,7 +1305,7 @@
       "kind": "native-aot",
       "check": "native AOT osx-arm64 (net8.0)",
       "framework": "net8.0",
-      "sdk": "8.0.421",
+      "sdk": "8.0.428",
       "rid": "osx-arm64",
       "host": {
         "os": "osx",
@@ -1318,7 +1318,7 @@
           "rid": "osx-arm64",
           "host": {
             "framework": "net8.0",
-            "sdk": "8.0.421"
+            "sdk": "8.0.428"
           }
         }
       }
@@ -1328,7 +1328,7 @@
       "kind": "native-aot",
       "check": "native AOT osx-arm64 (net9.0)",
       "framework": "net9.0",
-      "sdk": "9.0.318",
+      "sdk": "9.0.321",
       "rid": "osx-arm64",
       "host": {
         "os": "osx",
@@ -1341,7 +1341,7 @@
           "rid": "osx-arm64",
           "host": {
             "framework": "net9.0",
-            "sdk": "9.0.318"
+            "sdk": "9.0.321"
           }
         }
       }
@@ -1351,7 +1351,7 @@
       "kind": "native-aot",
       "check": "native AOT osx-arm64 (net10.0)",
       "framework": "net10.0",
-      "sdk": "10.0.300",
+      "sdk": "10.0.404",
       "rid": "osx-arm64",
       "host": {
         "os": "osx",
@@ -1364,7 +1364,7 @@
           "rid": "osx-arm64",
           "host": {
             "framework": "net10.0",
-            "sdk": "10.0.300"
+            "sdk": "10.0.404"
           }
         }
       }

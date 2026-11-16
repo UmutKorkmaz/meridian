@@ -45,7 +45,7 @@ $productDirectories = @('src/Meridian.Mapping', 'src/Meridian.Mapping.Generators
 $harnessDirectory = 'benchmarks/Meridian.Benchmarks'
 $rootFiles = @('Directory.Build.props', 'Directory.Build.targets', 'Directory.Packages.props', 'NuGet.config', 'global.json', '.editorconfig')
 $excludedDirectories = @('bin', 'obj', 'TestResults', 'BenchmarkDotNet.Artifacts')
-# Competitors whose pinned version is deliberately an old, permissively licensed release (not the current one).
+# Known competitor IDs, including historical AutoMapper data when SourceRoot points at an archived harness.
 $historicalCompetitors = @('AutoMapper', 'MediatR')
 $competitorIds = @('Mapster', 'Riok.Mapperly', 'AutoMapper', 'MediatR')
 
@@ -126,7 +126,8 @@ function Get-Text([string] $exe, [string[]] $arguments) {
 function Get-HostConditions {
     $uptime = Get-Text 'uptime' @()
     $load = @()
-    if ($uptime -match 'load averages?:\s*([0-9.,]+)[ ,]+([0-9.,]+)[ ,]+([0-9.,]+)') {
+    $number = '[0-9]+(?:[.,][0-9]+)?'
+    if ($uptime -match "load averages?:\s*($number)[,\s]+($number)[,\s]+($number)(?=[,\s]|$)") {
         $load = @($Matches[1], $Matches[2], $Matches[3] | ForEach-Object { [double]::Parse($_.Replace(',', '.'), [Globalization.CultureInfo]::InvariantCulture) })
     }
     $power = 'unknown'

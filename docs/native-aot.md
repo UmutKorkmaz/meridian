@@ -15,6 +15,10 @@ including an enabled-metrics sub-check) and B8 (`2.1.4-b8fix1.20261005.1`, net10
 
 ## Supported-configuration table
 
+The following rows record the historical campaign. New native runs use the latest-patch SDK for each target
+from `eng/required-checks.json` and verify the matching restored ILCompiler packages. Managed compiler-host
+compatibility remains pinned separately.
+
 | RID | TFM | SDK (pinned) | C# compiler | Native runtime | Combined mediator + mapping | Mapping-only | ILC/trim/AOT warnings | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | osx-arm64 | net8.0 | 8.0.421 | 4.11.0-3.25569.22 | .NET 8.0.27 | 12/12 cases, exit 0 | PASS | 0 (one Apple linker notice, see below) | **PASS** |
@@ -142,11 +146,11 @@ covered by `tests/Meridian.Mediator.Tests/DynamicDispatchCompatibilityTests.cs` 
 ```powershell
 ./eng/pack-packages.ps1 -CandidateVersion 2.1.4-local.1 -OutputDirectory artifacts/candidate
 ./eng/run-aot-smoke.ps1 -Combined -Feed artifacts/candidate -CandidateVersion 2.1.4-local.1 `
-    -Framework net10.0 -SdkVersion 10.0.300 -Rid osx-arm64        # or -Rid linux-x64 on a real x64 host
+    -Framework net10.0 -SdkVersion 10.0.404 -Rid osx-arm64        # or -Rid linux-x64 on a real x64 host
 ./eng/run-aot-smoke.ps1 -MappingOnly -Feed artifacts/candidate -CandidateVersion 2.1.4-local.1 `
-    -Framework net10.0 -SdkVersion 10.0.300 -RuntimeIdentifier osx-arm64
+    -Framework net10.0 -SdkVersion 10.0.404 -RuntimeIdentifier osx-arm64
 ```
 
-`-Combined` and `-MappingOnly` are mutually exclusive and neither is implied. Candidate version, pinned SDK/TFM pair
-(from `eng/packages.json`), feed and RID stay mandatory. The Linux toolchain needs `clang` and `zlib1g-dev`; macOS needs
+`-Combined` and `-MappingOnly` are mutually exclusive and neither is implied. Candidate version, approved latest-patch SDK/TFM pair
+(from `toolchains.currentServicing` in `eng/required-checks.json`), feed and RID stay mandatory. The Linux toolchain needs `clang` and `zlib1g-dev`; macOS needs
 the Xcode command line tools. The readable source-reference equivalent is `samples/Meridian.NativeAot`.

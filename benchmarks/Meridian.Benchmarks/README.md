@@ -3,7 +3,7 @@
 BenchmarkDotNet project for `Meridian.Mapping` and `Meridian.Mediator`. It holds three kinds of material:
 
 1. **E3 equal-work scenarios** (classes whose name starts with `E3`): mapping, mediator dispatch, pipelines, startup and
-   fresh-process first use, compared with a hand-written floor and with Mapster, Mapperly, AutoMapper and MediatR.
+   fresh-process first use, compared with a hand-written floor and with Mapster, Mapperly and MediatR.
 2. **A semantic preflight** that fails a run before any timing when a contender does not produce the expected result.
 3. **Frozen harnesses** from earlier tasks (B8 nested fast path `H1`, D5 metrics overhead) that exist so that a baseline
    product and a candidate product can be measured by byte-identical code.
@@ -67,11 +67,11 @@ semantic checks in a separate preflight process so they cannot warm the measured
 
 | Class | Shapes and cases | Contenders (method names) | What is timed |
 | --- | --- | --- | --- |
-| `E3MappingFlat` | ten scalars | `Manual` (floor), `MeridianInterpreted`, `MeridianCompiled`, `MeridianGeneratedDirect`, `MeridianGeneratedRuntime`, `Mapster`, `Mapperly`, `AutoMapperV14` | one complete new-result map |
-| `E3MappingNested` | ten renamed scalars plus one nested address | same eight | same |
-| `E3MappingCollectionPayload` | basket with 0, 1, 32 and 256 lines, each with a nested product | same eight | same |
-| `E3MappingDeep` | chain of 4 and 16 nested objects (explicit pair per level) | same eight | same |
-| `E3MappingReferences` | repeated-reference graph: one source node used twice plus an equal-valued distinct node | `Manual` (with identity tracking), `MeridianRuntime`, `MeridianGeneratedDirect`, `Mapster`, `Mapperly`, `AutoMapperV14` | same; identity is asserted |
+| `E3MappingFlat` | ten scalars | `Manual` (floor), `MeridianInterpreted`, `MeridianCompiled`, `MeridianGeneratedDirect`, `MeridianGeneratedRuntime`, `Mapster`, `Mapperly` | one complete new-result map |
+| `E3MappingNested` | ten renamed scalars plus one nested address | same seven | same |
+| `E3MappingCollectionPayload` | basket with 0, 1, 32 and 256 lines, each with a nested product | same seven | same |
+| `E3MappingDeep` | chain of 4 and 16 nested objects (explicit pair per level) | same seven | same |
+| `E3MappingReferences` | repeated-reference graph: one source node used twice plus an equal-valued distinct node | `Manual` (with identity tracking), `MeridianRuntime`, `MeridianGeneratedDirect`, `Mapster`, `Mapperly` | same; identity is asserted |
 | `E3MediatorDispatch` | request, handler, response; no behaviors | `DirectHandler` (floor), `MeridianRuntime`, `MeridianStrictGenerated`, `MediatRV12` | one `Send` |
 | `E3MediatorScopeExisting` | scoped handler dependency inside one existing scope; both handlers registered by type | `DiResolvedHandler`, `MeridianRuntime`, `MediatRV12` | one `Send` |
 | `E3MediatorScopePerOperation` | create, use and dispose a scope per operation | same three | scope + `Send` |
@@ -81,7 +81,7 @@ semantic checks in a separate preflight process so they cannot warm the measured
 | `E3MediatorMetrics` | disabled, enabled with no listener, enabled with an in-process listener | `Send` | one `Send` |
 | `E3NotificationPublish` | three handlers, default sequential publisher | `MeridianPublish`, `MediatRV12Publish` | one `Publish` |
 | `E3NotificationTaskWhenAll` | 10 and 100 handlers, opt-in task-when-all publisher | `MeridianTaskWhenAllUnbounded` (`new TaskWhenAllPublisher(-1)`, baseline, like for like with MediatR), `MeridianTaskWhenAllBounded16` (the default cap of 16, a different contract), `MediatRV12TaskWhenAll` (unbounded) | one `Publish`; synchronous handlers only |
-| `E3StartupMapping` | configuration only, and ready plus first map (warmed process) | Meridian, Meridian generated runtime, Mapster, AutoMapper | one construction / one first map |
+| `E3StartupMapping` | configuration only, and ready plus first map (warmed process) | Meridian, Meridian generated runtime, Mapster | one construction / one first map |
 | `E3StartupMediator` | registration only, and provider build plus first `Send` plus disposal (warmed process) | Meridian runtime, Meridian strict generated, MediatR | one construction / one first send |
 | `E3ColdMapping`, `E3ColdMediator` | first use in a fresh process | the same contenders plus manual, generated direct and Mapperly first maps, and a direct handler call | one invocation per fresh launch |
 
@@ -123,14 +123,13 @@ and the licenses were read from the nuspec of exactly the restored version (also
 | --- | --- | --- | --- |
 | Mapster | 10.0.13 | MIT | current stable |
 | Riok.Mapperly | 4.3.1 | Apache-2.0 | current stable (a source generator: an analyzer in this project only) |
-| AutoMapper | 14.0.0 | MIT | **historical pin**: the last MIT release; affected by advisory GHSA-rvv3-g6hj-g44x, so it is neither current nor a recommendation |
 | MediatR | 12.5.0 | Apache-2.0 | **historical pin**: the last permissively licensed release (Apache-2.0, not MIT); not the current MediatR |
 
-Newer AutoMapper and MediatR releases use a commercial license and are intentionally not benchmarked here. A result for
-`AutoMapperV14` or `MediatRV12` says nothing about their current releases. The NuGet audit warning for the AutoMapper
-advisory is suppressed by that single advisory URL (`NuGetAuditSuppress`); any other advisory a dependency introduces
-still produces a warning. `CS0436` is suppressed in the benchmark project because the repository's friend-assembly setup makes
-the generator-emitted internal attribute types appear twice.
+AutoMapper 14.0.0 was retired from the benchmark project after additional vulnerabilities were disclosed. Existing
+`AutoMapperV14` measurements are available in the historical results. [GHSA-6vhm-j9h7-f9gh](https://github.com/advisories/GHSA-6vhm-j9h7-f9gh), [GHSA-gpwp-5797-mjff](https://github.com/advisories/GHSA-gpwp-5797-mjff)
+
+`CS0436` is suppressed in the benchmark project because the repository's friend-assembly setup makes the
+generator-emitted internal attribute types appear twice.
 
 ## Omitted on purpose (recorded, not hidden)
 
@@ -140,8 +139,8 @@ the generator-emitted internal attribute types appear twice.
   time** is a build cost and is not measured.
 - **Assembly-scanning registration**: the two mediators would scan different handler inventories in this assembly, which is not equal
   work. MediatR's API requires one assembly to be named, so its startup rows include a scan of the small MediatR assembly itself.
-- **Configure-only startup rows are not comparable across libraries**: AutoMapper defers compilation to the first map, Mapster compiles
-  eagerly and Meridian compiles when the configuration is constructed. The mapping "ready" rows (configuration plus first result)
+- **Configure-only startup rows are not comparable across libraries**: the Mapster benchmark calls `Compile()` explicitly and
+  Meridian compiles when the configuration is constructed. The mapping "ready" rows (configuration plus first result)
   and mapping cold rows cover comparable work. Mediator startup and cold rows retain MediatR's extra assembly scan and cannot
   establish an equal-work startup ranking.
 - **Asynchronous latency, parallel throughput and I/O**: every handler completes synchronously; the task-when-all rows measure
@@ -188,7 +187,7 @@ These tables were produced by an earlier harness (classes `MappingBenchmarks` an
 classes), on a different host and SDK, with `--job short` or the default full job, and with destination DTOs that allocated a
 nested default object. They are kept only so the history is visible. **No claim is derived from them**, and nothing on this page
 or in [results/README.md](../results/README.md) may be compared with them. The "reference" libraries were AutoMapper 14.0.0 and
-MediatR 12.5.0, which are historical pins today.
+MediatR 12.5.0.
 
 | Method (Apple Silicon, .NET 10, `--job short`) | Mean | Ratio | Allocated |
 |--------------------------|--------:|------:|----------:|

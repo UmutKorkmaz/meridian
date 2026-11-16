@@ -23,7 +23,7 @@ are not execution evidence; a local receipt applies only to its recorded source 
 | --- | --- | --- |
 | .NET SDK 10 | Any 10.0 SDK at or above the `10.0.100` named in `global.json`. `rollForward: latestFeature` picks the **highest installed** 10.0 feature band, so with 10.0.300 and 10.0.404 installed you get 10.0.404. The pinned CI lanes build with exactly 10.0.300. | Building every project |
 | .NET runtimes 8.0, 9.0 and 10.0 | One runtime of each family | Running the tests and samples for `net8.0`, `net9.0` and `net10.0` |
-| Exact SDKs 8.0.421, 9.0.318 and 10.0.300 | Only for the package-consumer, Native AOT, EF10 and documentation checks. Those scripts write a `global.json` with `rollForward: disable`, so nothing else will do. | `compilerHosts` in [`eng/packages.json`](./eng/packages.json) |
+| Exact SDKs 8.0.421, 9.0.318 and 10.0.300 | Only for the package-consumer, EF10 and documentation checks. Those scripts write a `global.json` with `rollForward: disable`, so nothing else will do. | `compilerHosts` in [`eng/packages.json`](./eng/packages.json) |
 | PowerShell 7 (`pwsh`) | Tested with 7.6.4; older 7.x releases are untested | Every `eng/*.ps1` script |
 | Python 3.9 or newer | `eng/verify-candidate.ps1` refuses an older interpreter | The helper scripts `eng/*.py` |
 | Python 3.11 or newer and PyYAML 6.0.3 | Only to run the tooling test suite `eng/tests` (3.12 is the tested version) | See [Tooling tests](#tooling-tests) |
@@ -66,7 +66,7 @@ dotnet --list-runtimes   # expect exactly one Microsoft.NETCore.App per family (
 On Windows, use `dotnet-install.ps1 -Version <sdk> -InstallDir <dir> -NoPath` from <https://dot.net/v1/dotnet-install.ps1>.
 The six local `current servicing` lanes use a second private root with SDKs 8.0.428, 9.0.321 and 10.0.404, named by
 `MERIDIAN_SERVICING_DOTNET_ROOT` ([details](./docs/governance/required-checks.md)). A download alone proves nothing;
-always check `--list-sdks` and `--list-runtimes`.
+always check `--list-sdks` and `--list-runtimes`. Native AOT also uses these latest-patch SDKs to restore matched ILCompiler packs.
 
 The optional .NET 11 preview applies to samples only (`MeridianIncludeNet11Samples=true`). It is never required and is
 not a package target.

@@ -84,7 +84,7 @@ class PolicyConsistencyTests(unittest.TestCase):
         pinned = {l["framework"]: l["sdk"] for l in POLICY["toolchains"]["pinnedCompatibility"]["lanes"]}
         self.assertEqual(pinned, hosts)
         for lane in POLICY["lanes"]:
-            if lane["kind"] in ("package-consumers", "native-aot") and not lane.get("toolchainRootEnvironment"):
+            if lane["kind"] == "package-consumers" and not lane.get("toolchainRootEnvironment"):
                 self.assertEqual(lane["sdk"], hosts[lane["framework"]], lane["id"])
         self.assertEqual(POLICY["toolchains"]["pinnedCompatibility"]["buildSdk"], hosts["net10.0"])
 
@@ -114,6 +114,9 @@ class PolicyConsistencyTests(unittest.TestCase):
             for lane in (runtime_lanes[framework], consumer_lanes[framework]):
                 self.assertIsNone(lane["ci"], "current servicing is defined locally against an isolated root, not in CI")
                 self.assertEqual(lane["toolchainRootEnvironment"], servicing["toolchainRootEnvironment"])
+        for lane in POLICY["lanes"]:
+            if lane["kind"] == "native-aot":
+                self.assertEqual(lane["sdk"], current[lane["framework"]]["sdk"], lane["id"])
         self.assertNotRegex(json.dumps(POLICY), r'"toolchainRoot"\s*:', "no machine-specific toolchain path is committed")
 
     def test_provider_images_are_the_pinned_redis_7_4_and_postgres_16_4_digests(self):
@@ -320,7 +323,8 @@ class CiWorkflowTests(unittest.TestCase):
                 versions = [v.strip() for v in str(step["with"]["dotnet-version"]).splitlines() if v.strip()]
                 self.assertTrue(versions, f"{name} installs no SDK")
                 for version in versions:
-                    self.assertTrue(version in pinned or version == "${{ matrix.host.sdk }}", f"{name}: {version} is not an exact pinned SDK")
+                    allowed = {l["sdk"] for l in POLICY["toolchains"]["currentServicing"]["lanes"]} if name == "native-aot" else pinned
+                    self.assertTrue(version in allowed or version == "${{ matrix.host.sdk }}", f"{name}: {version} is not an exact approved SDK")
                 self.assertNotIn("global-json-file", step["with"])
 
     def test_runtime_lanes_install_every_runtime_family(self):
