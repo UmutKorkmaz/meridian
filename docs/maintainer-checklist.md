@@ -84,13 +84,13 @@ While no check or review is required by settings, the maintainer checks the foll
 | Generator target and API floor | `netstandard2.0`, Roslyn 4.8 | Raising either one breaks consumers on older compilers, so it is a major-version decision. |
 | Consumer language floor | C# 12, warnings as errors | Generated code and public APIs must compile there. Raising the floor is a major-version decision. |
 | Compiler-host proof | SDK 8.0.421 / 9.0.318 / 10.0.300 (`compilerHosts` in `eng/packages.json`) | Pinned historical proof. Changing it is its own reviewed decision. |
-| Current servicing proof | SDK 8.0.426 / 9.0.319 / 10.0.402, runtime 8.0.32 / 9.0.21 / 10.0.13 (released 2026-10-13) | Refresh after each Microsoft patch (next section). |
+| Latest-patch proof | SDK 8.0.428 / 9.0.321 / 10.0.404, runtime 8.0.34 / 9.0.23 / 10.0.15 (released 2026-11-10) | 8/9 are final compatibility patches; refresh supported families (next section). |
 | .NET 11 | Optional, non-blocking preview **samples** job | Not a package target, never a required check, no automatic target flip. |
 | Direct dependency minimums | Listed in [integrations](integrations.md) and [`NOTICE`](../NOTICE) | Raising one changes every consumer's dependency set. Review it, note it in the CHANGELOG and re-run the package consumers. |
 | Providers | Redis 7.4 and PostgreSQL 16.4 at the pinned digests | Anything else is unverified, not supported. |
 | Native AOT | Only rows marked PASS in [Native AOT](native-aot.md) | A row needs an executed native binary on a matching real host. |
 
-Microsoft support for .NET 8 and .NET 9 ends on **2026-11-10**. That is Microsoft's runtime servicing date. It is
+Microsoft support for .NET 8 and .NET 9 ended on **2026-11-10**. That is Microsoft's runtime servicing date. It is
 not Meridian's target-framework retirement, and it does not by itself justify removing `net8.0` or `net9.0` from a
 2.x release. After that date, tell consumers that Microsoft no longer patches those runtimes, and take the targets up
 in the next reviewed major-release scope.

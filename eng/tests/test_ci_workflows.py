@@ -92,10 +92,10 @@ class PolicyConsistencyTests(unittest.TestCase):
         servicing = POLICY["toolchains"]["currentServicing"]
         current = {l["framework"]: l for l in servicing["lanes"]}
         pinned = {l["framework"]: l for l in POLICY["toolchains"]["pinnedCompatibility"]["lanes"]}
-        # Official release metadata read 2026-10-23 (latest release 2026-10-13); re-resolve at acceptance and update together.
+        # Official release metadata read 2026-11-16 (latest release 2026-11-10); 8/9 are final compatibility patches.
         self.assertEqual({f: (r["sdk"], r["runtime"]) for f, r in current.items()},
-                         {"net8.0": ("8.0.426", "8.0.32"), "net9.0": ("9.0.319", "9.0.21"), "net10.0": ("10.0.402", "10.0.13")})
-        self.assertEqual((servicing["asOf"], servicing["releaseDate"], servicing["buildSdk"]), ("2026-10-23", "2026-10-13", "10.0.402"))
+                         {"net8.0": ("8.0.428", "8.0.34"), "net9.0": ("9.0.321", "9.0.23"), "net10.0": ("10.0.404", "10.0.15")})
+        self.assertEqual((servicing["asOf"], servicing["releaseDate"], servicing["buildSdk"]), ("2026-11-16", "2026-11-10", "10.0.404"))
         self.assertEqual(sorted(m["family"] for m in servicing["metadata"]), ["10.0", "8.0", "9.0"])
         for row in servicing["metadata"]:
             self.assertRegex(row["sha256"], r"^[0-9a-f]{64}$")
@@ -388,9 +388,16 @@ class CiWorkflowTests(unittest.TestCase):
     def test_provider_lanes_export_their_connection_variables(self):
         for lane in POLICY["lanes"]:
             if lane["ci"] and lane.get("services"):
-                env = self.jobs[lane["ci"]["job"]].get("env", {})
+                job = self.jobs[lane["ci"]["job"]]
+                # Service ports exist only after the runner starts, so job-level env cannot use them.
+                self.assertFalse(any("job.services." in str(value) for value in job.get("env", {}).values()), lane["id"])
+                runners = [step for step in job["steps"] if "verify-candidate.ps1 -Mode Run" in step.get("run", "")]
+                self.assertEqual(len(runners), 1, lane["id"])
+                env = runners[0].get("env", {})
                 for name in lane["services"]:
                     self.assertIn(POLICY["providers"][name]["environment"], env, lane["id"])
+                if "redis" in lane["services"]:
+                    self.assertIn("127.0.0.1:${{ job.services.redis.ports['6379'] }}", env["MERIDIAN_TEST_REDIS"])
                 if "postgres" in lane["services"]:
                     service = self.jobs[lane["ci"]["job"]]["services"]["postgres"]
                     # The pinned postgres image defaults the user to postgres when POSTGRES_USER is omitted.
@@ -399,7 +406,7 @@ class CiWorkflowTests(unittest.TestCase):
                     self.assertTrue(isinstance(user, str) and user)
                     self.assertTrue(isinstance(database, str) and database)
                     self.assertIn(f'pg_isready -U {user} -d {database}', service["options"])
-                    self.assertIn("Port=${{ job.services.postgres.ports[5432] }}", env["MERIDIAN_TEST_POSTGRES"])
+                    self.assertIn("Port=${{ job.services.postgres.ports['5432'] }}", env["MERIDIAN_TEST_POSTGRES"])
                     self.assertIn("Database=" + service["env"]["POSTGRES_DB"], env["MERIDIAN_TEST_POSTGRES"])
                     self.assertIn("Username=" + user, env["MERIDIAN_TEST_POSTGRES"])
                     self.assertIn("Password=" + service["env"]["POSTGRES_PASSWORD"], env["MERIDIAN_TEST_POSTGRES"])

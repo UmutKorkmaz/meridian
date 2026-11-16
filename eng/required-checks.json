@@ -26,53 +26,53 @@
       "buildSdk": "10.0.300"
     },
     "currentServicing": {
-      "asOf": "2026-10-23",
-      "releaseDate": "2026-10-13",
+      "asOf": "2026-11-16",
+      "releaseDate": "2026-11-10",
       "source": "https://builds.dotnet.microsoft.com/dotnet/release-metadata/{8.0,9.0,10.0}/releases.json",
       "supportPolicy": "https://dotnet.microsoft.com/en-us/platform/support/policy/dotnet-core",
       "metadata": [
         {
           "family": "8.0",
           "url": "https://builds.dotnet.microsoft.com/dotnet/release-metadata/8.0/releases.json",
-          "sha256": "dbb319574ff52bc3ec9873334edcde26a0e06e866d9f01a70efbc1f53ea48748",
-          "readAtUtc": "2026-10-23T10:31:30.530440+00:00",
-          "latestReleaseDate": "2026-10-13"
+          "sha256": "bda39c64671bf3a5ce51c28fc61301a9ce53b1c6bc02e1669f8a9137ab692635",
+          "readAtUtc": "2026-11-16T05:44:16.213723+00:00",
+          "latestReleaseDate": "2026-11-10"
         },
         {
           "family": "9.0",
           "url": "https://builds.dotnet.microsoft.com/dotnet/release-metadata/9.0/releases.json",
-          "sha256": "ffbd9fb69f1a05af0e7cb73b13cd2872c4cc8c403c6e016a4eb03ef8b15d8afb",
-          "readAtUtc": "2026-10-23T10:31:30.574045+00:00",
-          "latestReleaseDate": "2026-10-13"
+          "sha256": "7cc4de7ebb00fa4f4c35fe2df0af4b94e90c6590e6e3514f35b57c235c6b02e1",
+          "readAtUtc": "2026-11-16T05:44:16.504620+00:00",
+          "latestReleaseDate": "2026-11-10"
         },
         {
           "family": "10.0",
           "url": "https://builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json",
-          "sha256": "8ba714cf0020d35ff4a3cb163376df2f4ccaf8e6e1d7021fcb1bd7dd628299d2",
-          "readAtUtc": "2026-10-23T10:31:30.663673+00:00",
-          "latestReleaseDate": "2026-10-13"
+          "sha256": "482b9d79e76b331ef4cd5bcab02af3188f874ce78fd7aae07cb6163650da87c0",
+          "readAtUtc": "2026-11-16T05:44:16.654575+00:00",
+          "latestReleaseDate": "2026-11-10"
         }
       ],
-      "buildSdk": "10.0.402",
+      "buildSdk": "10.0.404",
       "toolchainRootEnvironment": "MERIDIAN_SERVICING_DOTNET_ROOT",
       "lanes": [
         {
           "framework": "net8.0",
-          "sdk": "8.0.426",
-          "runtime": "8.0.32"
+          "sdk": "8.0.428",
+          "runtime": "8.0.34"
         },
         {
           "framework": "net9.0",
-          "sdk": "9.0.319",
-          "runtime": "9.0.21"
+          "sdk": "9.0.321",
+          "runtime": "9.0.23"
         },
         {
           "framework": "net10.0",
-          "sdk": "10.0.402",
-          "runtime": "10.0.13"
+          "sdk": "10.0.404",
+          "runtime": "10.0.15"
         }
       ],
-      "note": "Latest stable patches published 2026-10-13, read from the official release metadata on 2026-10-23 (hashes above). This is a definition, not execution proof: the current-servicing lanes are local-only (ci: null) and are executed by the cumulative campaign with an isolated root (MERIDIAN_SERVICING_DOTNET_ROOT) that holds buildSdk, the three family SDKs and exactly one runtime patch per family. Re-resolve at acceptance and update these rows in the same change."
+      "note": "Latest stable patches published 2026-11-10, read from official metadata on 2026-11-16. The final .NET 8 and .NET 9 patches are compatibility evidence; .NET 10 is actively serviced. These local-only lanes are definitions, not execution proof. Use an isolated root (MERIDIAN_SERVICING_DOTNET_ROOT) with the three SDKs and exactly one runtime patch per family. Refresh the supported family at acceptance."
     }
   },
   "providers": {
@@ -1413,8 +1413,8 @@
       "kind": "current-servicing",
       "check": "current servicing (net8.0)",
       "framework": "net8.0",
-      "sdk": "10.0.402",
-      "runtime": "8.0.32",
+      "sdk": "10.0.404",
+      "runtime": "8.0.34",
       "services": [
         "postgres",
         "redis"
@@ -1428,8 +1428,8 @@
       "kind": "current-servicing",
       "check": "current servicing (net9.0)",
       "framework": "net9.0",
-      "sdk": "10.0.402",
-      "runtime": "9.0.21",
+      "sdk": "10.0.404",
+      "runtime": "9.0.23",
       "services": [
         "postgres",
         "redis"
@@ -1443,8 +1443,8 @@
       "kind": "current-servicing",
       "check": "current servicing (net10.0)",
       "framework": "net10.0",
-      "sdk": "10.0.402",
-      "runtime": "10.0.13",
+      "sdk": "10.0.404",
+      "runtime": "10.0.15",
       "services": [
         "postgres",
         "redis"
@@ -1458,7 +1458,7 @@
       "kind": "package-consumers",
       "check": "current servicing package consumers (net8.0)",
       "framework": "net8.0",
-      "sdk": "8.0.426",
+      "sdk": "8.0.428",
       "consumerScope": "all",
       "services": [
         "redis",
@@ -1472,7 +1472,7 @@
       "kind": "package-consumers",
       "check": "current servicing package consumers (net9.0)",
       "framework": "net9.0",
-      "sdk": "9.0.319",
+      "sdk": "9.0.321",
       "consumerScope": "all",
       "services": [
         "redis",
@@ -1486,7 +1486,7 @@
       "kind": "package-consumers",
       "check": "current servicing package consumers (net10.0)",
       "framework": "net10.0",
-      "sdk": "10.0.402",
+      "sdk": "10.0.404",
       "consumerScope": "all",
       "services": [
         "redis",

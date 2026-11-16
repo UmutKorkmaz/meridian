@@ -298,9 +298,6 @@ jobs:
     env:
       DOTNET_ROLL_FORWARD: LatestPatch
       DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
-      MERIDIAN_TEST_REDIS: 127.0.0.1:${{ job.services.redis.ports[6379] }},abortConnect=true,connectTimeout=5000
-      MERIDIAN_TEST_REDIS_REQUIRED: '1'
-      MERIDIAN_TEST_POSTGRES: Host=127.0.0.1;Port=${{ job.services.postgres.ports[5432] }};Database=meridian_ef_test;Username=postgres;Password=meridian_test_only
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-dotnet@v5
@@ -317,6 +314,10 @@ jobs:
           path: artifacts/candidate-feed
       - name: Require every compiler consumer with real PostgreSQL and Redis
         shell: pwsh
+        env:
+          MERIDIAN_TEST_REDIS: 127.0.0.1:${{ job.services.redis.ports['6379'] }},abortConnect=true,connectTimeout=5000
+          MERIDIAN_TEST_REDIS_REQUIRED: '1'
+          MERIDIAN_TEST_POSTGRES: Host=127.0.0.1;Port=${{ job.services.postgres.ports['5432'] }};Database=meridian_ef_test;Username=postgres;Password=meridian_test_only
         run: ./eng/verify-candidate.ps1 -Mode Run -Feed artifacts/candidate-feed -EvidenceDirectory artifacts/evidence -CandidateVersion '${{ needs.candidate-pack.outputs.candidate }}' -Lane 'package-consumers-redis/${{ matrix.host.framework }}' -Context github-actions -RunId '${{ github.run_id }}'
       - name: Retain immutable attempt evidence
         id: snapshot-28
@@ -386,7 +387,6 @@ jobs:
     env:
       DOTNET_ROLL_FORWARD: LatestPatch
       DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
-      MERIDIAN_TEST_POSTGRES: Host=127.0.0.1;Port=${{ job.services.postgres.ports[5432] }};Database=meridian_projection_test;Username=meridian_test;Password=meridian_test_only
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-dotnet@v5
@@ -404,6 +404,8 @@ jobs:
           path: artifacts/candidate-feed
       - name: Execute required PostgreSQL contracts
         shell: pwsh
+        env:
+          MERIDIAN_TEST_POSTGRES: Host=127.0.0.1;Port=${{ job.services.postgres.ports['5432'] }};Database=meridian_projection_test;Username=meridian_test;Password=meridian_test_only
         run: ./eng/verify-candidate.ps1 -Mode Run -Feed artifacts/candidate-feed -EvidenceDirectory artifacts/evidence -CandidateVersion '${{ needs.candidate-pack.outputs.candidate }}' -Lane 'provider-postgres/${{ matrix.framework }}' -Context github-actions -RunId '${{ github.run_id }}'
       - name: Retain immutable attempt evidence
         id: snapshot-36
@@ -469,7 +471,6 @@ jobs:
     env:
       DOTNET_ROLL_FORWARD: LatestPatch
       DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
-      MERIDIAN_TEST_REDIS: 127.0.0.1:${{ job.services.redis.ports[6379] }},abortConnect=true,connectTimeout=5000
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-dotnet@v5
@@ -487,6 +488,8 @@ jobs:
           path: artifacts/candidate-feed
       - name: Execute required isolated Redis cache contracts and owned Redis leases
         shell: pwsh
+        env:
+          MERIDIAN_TEST_REDIS: 127.0.0.1:${{ job.services.redis.ports['6379'] }},abortConnect=true,connectTimeout=5000
         run: ./eng/verify-candidate.ps1 -Mode Run -Feed artifacts/candidate-feed -EvidenceDirectory artifacts/evidence -CandidateVersion '${{ needs.candidate-pack.outputs.candidate }}' -Lane 'provider-redis-cache/${{ matrix.framework }}' -Context github-actions -RunId '${{ github.run_id }}'
       - name: Retain immutable attempt evidence
         id: snapshot-44
@@ -558,8 +561,6 @@ jobs:
     env:
       DOTNET_ROLL_FORWARD: LatestPatch
       DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
-      MERIDIAN_TEST_POSTGRES: Host=127.0.0.1;Port=${{ job.services.postgres.ports[5432] }};Database=meridian_ef_test;Username=postgres;Password=meridian_test_only
-      MERIDIAN_TEST_REDIS: 127.0.0.1:${{ job.services.redis.ports[6379] }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-dotnet@v5
@@ -577,6 +578,9 @@ jobs:
           path: artifacts/candidate-feed
       - name: Execute required EF8 transactions and real provider contracts
         shell: pwsh
+        env:
+          MERIDIAN_TEST_POSTGRES: Host=127.0.0.1;Port=${{ job.services.postgres.ports['5432'] }};Database=meridian_ef_test;Username=postgres;Password=meridian_test_only
+          MERIDIAN_TEST_REDIS: 127.0.0.1:${{ job.services.redis.ports['6379'] }}
         run: ./eng/verify-candidate.ps1 -Mode Run -Feed artifacts/candidate-feed -EvidenceDirectory artifacts/evidence -CandidateVersion '${{ needs.candidate-pack.outputs.candidate }}' -Lane 'ef-transactions/${{ matrix.framework }}' -Context github-actions -RunId '${{ github.run_id }}'
       - name: Retain immutable attempt evidence
         id: snapshot-52
@@ -642,8 +646,6 @@ jobs:
     env:
       DOTNET_ROLL_FORWARD: LatestPatch
       DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
-      MERIDIAN_TEST_POSTGRES: Host=127.0.0.1;Port=${{ job.services.postgres.ports[5432] }};Database=meridian_ef_test;Username=postgres;Password=meridian_test_only
-      MERIDIAN_TEST_REDIS: 127.0.0.1:${{ job.services.redis.ports[6379] }}
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-dotnet@v5
@@ -658,6 +660,9 @@ jobs:
           path: artifacts/candidate-feed
       - name: Execute isolated EF10 compatibility against the packed candidate
         shell: pwsh
+        env:
+          MERIDIAN_TEST_POSTGRES: Host=127.0.0.1;Port=${{ job.services.postgres.ports['5432'] }};Database=meridian_ef_test;Username=postgres;Password=meridian_test_only
+          MERIDIAN_TEST_REDIS: 127.0.0.1:${{ job.services.redis.ports['6379'] }}
         run: ./eng/verify-candidate.ps1 -Mode Run -Feed artifacts/candidate-feed -EvidenceDirectory artifacts/evidence -CandidateVersion '${{ needs.candidate-pack.outputs.candidate }}' -Lane 'ef10-compatibility/net10.0' -Context github-actions -RunId '${{ github.run_id }}'
       - name: Retain immutable attempt evidence
         id: snapshot-60
@@ -712,7 +717,6 @@ jobs:
         ports: ['6379/tcp']
         options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 5s --health-retries 12
     env:
-      MERIDIAN_TEST_REDIS: 127.0.0.1:${{ job.services.redis.ports[6379] }}
       DOTNET_ROLL_FORWARD: LatestPatch
       DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
     steps:
@@ -729,6 +733,8 @@ jobs:
           path: artifacts/candidate-feed
       - name: HTTP composition, real socket lifecycle and bounded HTTP process smoke
         shell: pwsh
+        env:
+          MERIDIAN_TEST_REDIS: 127.0.0.1:${{ job.services.redis.ports['6379'] }}
         run: ./eng/verify-candidate.ps1 -Mode Run -Feed artifacts/candidate-feed -EvidenceDirectory artifacts/evidence -CandidateVersion '${{ needs.candidate-pack.outputs.candidate }}' -Lane 'http-integration/net10.0' -Context github-actions -RunId '${{ github.run_id }}'
       - name: Retain immutable attempt evidence
         id: snapshot-68
@@ -959,8 +965,6 @@ jobs:
     env:
       DOTNET_ROLL_FORWARD: LatestPatch
       DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
-      MERIDIAN_TEST_POSTGRES: Host=127.0.0.1;Port=${{ job.services.postgres.ports[5432] }};Database=meridian_projection_test;Username=meridian_test;Password=meridian_test_only
-      MERIDIAN_TEST_REDIS: 127.0.0.1:${{ job.services.redis.ports[6379] }},abortConnect=true,connectTimeout=5000
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-dotnet@v5
@@ -975,6 +979,9 @@ jobs:
           path: artifacts/candidate-feed
       - name: Measure coverage (coverlet) and enforce the ratchet and hot-path targets
         shell: pwsh
+        env:
+          MERIDIAN_TEST_POSTGRES: Host=127.0.0.1;Port=${{ job.services.postgres.ports['5432'] }};Database=meridian_projection_test;Username=meridian_test;Password=meridian_test_only
+          MERIDIAN_TEST_REDIS: 127.0.0.1:${{ job.services.redis.ports['6379'] }},abortConnect=true,connectTimeout=5000
         run: ./eng/verify-candidate.ps1 -Mode Run -Feed artifacts/candidate-feed -EvidenceDirectory artifacts/evidence -CandidateVersion '${{ needs.candidate-pack.outputs.candidate }}' -Lane 'coverage/net10.0' -Context github-actions -RunId '${{ github.run_id }}'
       - name: Retain immutable attempt evidence
         id: snapshot-93

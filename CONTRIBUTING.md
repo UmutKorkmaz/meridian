@@ -21,7 +21,7 @@ are not execution evidence; a local receipt applies only to its recorded source 
 
 | Tool | What you need | Used for |
 | --- | --- | --- |
-| .NET SDK 10 | Any 10.0 SDK at or above the `10.0.100` named in `global.json`. `rollForward: latestFeature` picks the **highest installed** 10.0 feature band, so with 10.0.300 and 10.0.402 installed you get 10.0.402. The pinned CI lanes build with exactly 10.0.300. | Building every project |
+| .NET SDK 10 | Any 10.0 SDK at or above the `10.0.100` named in `global.json`. `rollForward: latestFeature` picks the **highest installed** 10.0 feature band, so with 10.0.300 and 10.0.404 installed you get 10.0.404. The pinned CI lanes build with exactly 10.0.300. | Building every project |
 | .NET runtimes 8.0, 9.0 and 10.0 | One runtime of each family | Running the tests and samples for `net8.0`, `net9.0` and `net10.0` |
 | Exact SDKs 8.0.421, 9.0.318 and 10.0.300 | Only for the package-consumer, Native AOT, EF10 and documentation checks. Those scripts write a `global.json` with `rollForward: disable`, so nothing else will do. | `compilerHosts` in [`eng/packages.json`](./eng/packages.json) |
 | PowerShell 7 (`pwsh`) | Tested with 7.6.4; older 7.x releases are untested | Every `eng/*.ps1` script |
@@ -32,19 +32,19 @@ are not execution evidence; a local receipt applies only to its recorded source 
 
 ### Installing SDKs and runtimes
 
-Microsoft supports only the latest patch of each family
+Microsoft supports only the latest patch of each supported family
 ([support policy](https://dotnet.microsoft.com/en-us/platform/support/policy/dotnet-core)). The official release
-metadata read on 2026-10-23 lists the patches released on 2026-10-13:
+metadata read on 2026-11-16 lists the patches released on 2026-11-10:
 
-| Family | Current servicing (use for everyday development) | Pinned compatibility (CI lanes, kept on purpose) |
+| Family | Latest patch checked (8/9 are end of support) | Pinned compatibility (CI lanes, kept on purpose) |
 | --- | --- | --- |
-| 8.0 | SDK 8.0.426, runtime 8.0.32 | SDK 8.0.421, runtime 8.0.27 |
-| 9.0 | SDK 9.0.319, runtime 9.0.21 | SDK 9.0.318, runtime 9.0.20 |
-| 10.0 | SDK 10.0.402, runtime 10.0.13 | SDK 10.0.300, runtime 10.0.8 |
+| 8.0 | SDK 8.0.428, runtime 8.0.34 | SDK 8.0.421, runtime 8.0.27 |
+| 9.0 | SDK 9.0.321, runtime 9.0.23 | SDK 9.0.318, runtime 9.0.20 |
+| 10.0 | SDK 10.0.404, runtime 10.0.15 | SDK 10.0.300, runtime 10.0.8 |
 
 These rows go out of date. The source of truth is `toolchains` in [`eng/required-checks.json`](./eng/required-checks.json),
 and the maintainer checklist describes how they are refreshed. The pinned versions are historical compatibility
-proof, not current Microsoft servicing. Microsoft support for .NET 8 and .NET 9 ends on 2026-11-10. That date is not
+proof, not current Microsoft servicing. Microsoft support for .NET 8 and .NET 9 ended on 2026-11-10. That date is not
 Meridian's target-framework policy: Meridian keeps `net8.0` and `net9.0` until a separately reviewed major release.
 
 To reproduce a CI lane exactly, put only the SDKs that lane uses into a **private** directory, so that no other
@@ -64,7 +64,7 @@ dotnet --list-runtimes   # expect exactly one Microsoft.NETCore.App per family (
 ```
 
 On Windows, use `dotnet-install.ps1 -Version <sdk> -InstallDir <dir> -NoPath` from <https://dot.net/v1/dotnet-install.ps1>.
-The six local `current servicing` lanes use a second private root with SDKs 8.0.426, 9.0.319 and 10.0.402, named by
+The six local `current servicing` lanes use a second private root with SDKs 8.0.428, 9.0.321 and 10.0.404, named by
 `MERIDIAN_SERVICING_DOTNET_ROOT` ([details](./docs/governance/required-checks.md)). A download alone proves nothing;
 always check `--list-sdks` and `--list-runtimes`.
 

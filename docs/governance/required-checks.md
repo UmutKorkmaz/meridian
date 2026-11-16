@@ -213,30 +213,30 @@ C# language version 12 and warnings-as-errors are enforced inside every consumer
 
 ### Current servicing versus pinned compatibility
 
-Microsoft supports only the latest servicing patch of each family
+Microsoft supports only the latest servicing patch of each supported family
 ([support policy](https://dotnet.microsoft.com/en-us/platform/support/policy/dotnet-core)). The official release
-metadata (`releases.json` for 8.0, 9.0 and 10.0, read 2026-10-23, SHA-256 recorded in the policy) names the patches
-released 2026-10-13:
+metadata (`releases.json` for 8.0, 9.0 and 10.0, read 2026-11-16, SHA-256 recorded in the policy) names the patches
+released 2026-11-10:
 
-| Family | Pinned compatibility (kept, unchanged) | Current servicing (this policy) | Proof level |
+| Family | Pinned compatibility (kept, unchanged) | Latest patch checked (8/9 are end of support) | Proof level |
 | --- | --- | --- | --- |
-| net8.0 | SDK 8.0.421 / runtime 8.0.27 | SDK 8.0.426 / runtime 8.0.32 | defined; **not executed** (E4d) |
-| net9.0 | SDK 9.0.318 / runtime 9.0.20 | SDK 9.0.319 / runtime 9.0.21 | defined; **not executed** (E4d) |
-| net10.0 | SDK 10.0.300 / runtime 10.0.8 | SDK 10.0.402 / runtime 10.0.13 | defined; **not executed** (E4d) |
+| net8.0 | SDK 8.0.421 / runtime 8.0.27 | SDK 8.0.428 / runtime 8.0.34 | defined; **not executed** (E4d) |
+| net9.0 | SDK 9.0.318 / runtime 9.0.20 | SDK 9.0.321 / runtime 9.0.23 | defined; **not executed** (E4d) |
+| net10.0 | SDK 10.0.300 / runtime 10.0.8 | SDK 10.0.404 / runtime 10.0.15 | defined; **not executed** (E4d) |
 
-Six local-only lanes (`ci: null`) prove the candidate under these patches. They run with one isolated dotnet root named
+Six local-only lanes (`ci: null`) verify the candidate under these patches. The .NET 8 and .NET 9 runs are final-patch compatibility checks; .NET 10 is still serviced. They run with one isolated dotnet root named
 by `MERIDIAN_SERVICING_DOTNET_ROOT` that holds the current SDKs and exactly one runtime patch per family; no
 machine-specific path is committed.
 
-* `current servicing (<tfm>)`: builds the solution with SDK 10.0.402 and runs every runtime-profile suite unfiltered
+* `current servicing (<tfm>)`: builds the solution with SDK 10.0.404 and runs every runtime-profile suite unfiltered
   (core, adapters and the Redis/PostgreSQL provider tests, so the services are required) on the current runtime patch of
-  the family. The retained toolchain receipt must show SDK 10.0.402 selected and the current patch as the **only** runtime
+  the family. The retained toolchain receipt must show SDK 10.0.404 selected and the current patch as the **only** runtime
   of that family.
 * `current servicing package consumers (<tfm>)`: every inventory consumer (including Redis and EF/PostgreSQL) compiled with the current
-  family SDK (8.0.426 / 9.0.319 / 10.0.402) and run on the current runtime patch.
+  family SDK (8.0.428 / 9.0.321 / 10.0.404) and run on the current runtime patch.
 
 Metadata and downloads are not proof. Re-resolve the latest stable patches at acceptance, update the policy rows and this
-table in the same change, and execute the six lanes. Microsoft support for net8 and net9 ends 2026-11-10; Meridian's own
+table in the same change, and execute the six lanes. Microsoft support for net8 and net9 ended 2026-11-10; Meridian's own
 TFM retirement policy is a separate fact and the TFMs are kept until a separately reviewed major release.
 
 ### Operating cost (not measured)
