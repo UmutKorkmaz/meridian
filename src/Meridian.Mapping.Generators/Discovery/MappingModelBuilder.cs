@@ -422,15 +422,16 @@ internal static class MappingModelBuilder
 
     private static string BuildMetadataPath(INamedTypeSymbol symbol)
     {
+        var containingNamespace = symbol.ContainingNamespace;
         var parts = new Stack<string>();
         for (var current = symbol; current is not null; current = current.ContainingType)
         {
             parts.Push(current.MetadataName);
         }
 
-        if (!symbol.ContainingNamespace.IsGlobalNamespace)
+        if (containingNamespace is { IsGlobalNamespace: false })
         {
-            parts.Push(symbol.ContainingNamespace.ToDisplayString());
+            parts.Push(containingNamespace.ToDisplayString());
         }
 
         return string.Join(".", parts);

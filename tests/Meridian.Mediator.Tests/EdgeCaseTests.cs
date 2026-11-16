@@ -126,7 +126,14 @@ public class EdgeCaseTests
         Assert.Equal("()", Unit.Value.ToString());
         Assert.Equal(0, Unit.Value.GetHashCode());
         Assert.True(Unit.Value.Equals(Unit.Value));
-        Assert.False(Unit.Value.Equals("not a unit"));
+    }
+
+    [Theory]
+    [InlineData("not a unit")]
+    [InlineData(null)]
+    public void UnitType_ObjectEquality_RejectsNonUnitValues(object? value)
+    {
+        Assert.False(Unit.Value.Equals(value));
     }
 
     [Fact]
