@@ -338,6 +338,8 @@ class CiWorkflowTests(unittest.TestCase):
                         self.assertIsNone(installed)
                     else:
                         self.assertEqual(installed, "${{ runner.temp }}/dotnet", name)
+                        self.assertEqual(step["uses"], "actions/setup-dotnet@v6", name)
+                        self.assertIs(step["with"].get("skip-lts-prepass"), True, name)
 
     def test_runtime_and_consumer_lane_hosts_match_their_runner_architecture(self):
         runner_arch = {"ubuntu-latest": ("linux", "x64"), "windows-latest": ("win", "x64"), "macos-latest": ("osx", "arm64")}
@@ -390,12 +392,17 @@ class CiWorkflowTests(unittest.TestCase):
             if lane["ci"] and lane.get("services"):
                 job = self.jobs[lane["ci"]["job"]]
                 # Service ports exist only after the runner starts, so job-level env cannot use them.
-                self.assertFalse(any("job.services." in str(value) for value in job.get("env", {}).values()), lane["id"])
+                self.assertFalse(any(re.search(r"\bjob\s*(?:\.\s*services\b|\[\s*['\"]services['\"])", str(value))
+                                     for value in job.get("env", {}).values()), lane["id"])
                 runners = [step for step in job["steps"] if "verify-candidate.ps1 -Mode Run" in step.get("run", "")]
                 self.assertEqual(len(runners), 1, lane["id"])
                 env = runners[0].get("env", {})
                 for name in lane["services"]:
                     self.assertIn(POLICY["providers"][name]["environment"], env, lane["id"])
+                    port = {"redis": 6379, "postgres": 5432}[name]
+                    self.assertIn(f"{port}/tcp", job["services"][name]["ports"], lane["id"])
+                if lane["ci"]["job"] == "redis-package-compatibility":
+                    self.assertEqual(env.get("MERIDIAN_TEST_REDIS_REQUIRED"), "1", lane["id"])
                 if "redis" in lane["services"]:
                     self.assertIn("127.0.0.1:${{ job.services.redis.ports['6379'] }}", env["MERIDIAN_TEST_REDIS"])
                 if "postgres" in lane["services"]:
@@ -414,7 +421,7 @@ class CiWorkflowTests(unittest.TestCase):
     def test_native_lanes_run_on_matching_real_runners(self):
         job = self.jobs["native-aot"]
         include = {entry["rid"]: entry["runner"] for entry in job["strategy"]["matrix"]["include"]}
-        self.assertEqual(include, {"linux-x64": "ubuntu-24.04", "osx-arm64": "macos-14"})
+        self.assertEqual(include, {"linux-x64": "ubuntu-24.04", "osx-arm64": "macos-15"})
         for lane in POLICY["lanes"]:
             if lane["kind"] == "native-aot":
                 self.assertEqual(lane["host"]["os"], "linux" if lane["rid"] == "linux-x64" else "osx")
@@ -436,11 +443,16 @@ class CrossWorkflowTests(unittest.TestCase):
     def test_checkout_exception_cannot_allow_a_delivery_workflow_downgrade(self):
         with tempfile.TemporaryDirectory(prefix="meridian-checkout-contract-") as directory:
             root = Path(directory)
-            for name, ref in (("ci.yml", "v4"), ("pages.yml", "v4"), ("benchmarks.yml", "v6")):
+            for name, ref in (("ci.yml", "v6"), ("pages.yml", "v4"), ("benchmarks.yml", "v6")):
+                sdk_action = "v6" if name == "ci.yml" else "v5"
                 (root / name).write_text(yaml.safe_dump({"jobs": {"fixture": {"steps": [
-                    {"uses": "actions/checkout@" + ref}, {"uses": "actions/setup-dotnet@v5"}]}}}))
-            with mock.patch(__name__ + ".WORKFLOWS", root), self.assertRaises(AssertionError):
+                    {"uses": "actions/checkout@" + ref}, {"uses": "actions/setup-dotnet@" + sdk_action}]}}}))
+            with mock.patch(__name__ + ".WORKFLOWS", root):
                 self.test_actions_are_referenced_consistently_by_version_tag_or_sha()
+                ci = root / "ci.yml"
+                ci.write_text(ci.read_text().replace("actions/checkout@v6", "actions/checkout@v4"))
+                with self.assertRaisesRegex(AssertionError, r"ci\.yml"):
+                    self.test_actions_are_referenced_consistently_by_version_tag_or_sha()
 
     def test_delivery_workflows_request_only_read_permissions(self):
         # codeql.yml / scorecard.yml / pages.yml legitimately request security-events/id-token/pages writes and are not E4c scope.
@@ -465,13 +477,16 @@ class CrossWorkflowTests(unittest.TestCase):
                 self.assertRegex(ref, r"^(v\d+(\.\d+){0,2}|[0-9a-f]{40})$", f"{path.name}: {action}@{ref}")
                 if action == "actions/checkout":
                     self.assertEqual(ref, "v4" if path.name == "pages.yml" else "v6", path.name)
+                if action == "actions/setup-dotnet":
+                    self.assertEqual(ref, "v6" if path.name == "ci.yml" else "v5", path.name)
                 refs.setdefault(action, set()).add(ref)
         for action, versions in refs.items():
             if action == "actions/checkout":
                 self.assertEqual(versions, {"v4", "v6"})  # Existing Pages workflow remains v4; all delivery workflows use v6.
+            elif action == "actions/setup-dotnet":
+                self.assertEqual(versions, {"v5", "v6"})  # CI needs the v6 input to prevent unpinned runtime installation.
             else:
                 self.assertEqual(len(versions), 1, f"{action} is referenced with several versions: {versions}")
-        self.assertEqual({r for v in [refs["actions/setup-dotnet"]] for r in v}, {"v5"})
 
     def test_artifact_uploads_have_immutable_attempt_or_candidate_identity(self):
         for name in ("ci.yml", "fuzz.yml"):

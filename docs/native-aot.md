@@ -34,7 +34,7 @@ including an enabled-metrics sub-check) and B8 (`2.1.4-b8fix1.20261005.1`, net10
   machine is Apple Silicon with an aarch64 Docker daemon; there is no linux-x64 runner. The CI job `native-aot`
   in `.github/workflows/ci.yml` runs `eng/verify-candidate.ps1 -Mode Run -Lane native-aot/<rid>/<tfm>` (which invokes
   `run-aot-smoke.ps1 -Combined` and `-MappingOnly`) for the three linux-x64 rows on `ubuntu-24.04` and the three
-  osx-arm64 rows on `macos-14`, all from the one immutable `candidate-feed` artifact packed by `candidate-pack`. It has not
+  osx-arm64 rows on `macos-15`, all from the one immutable `candidate-feed` artifact packed by `candidate-pack`. It has not
   run on a real runner yet. To close the gate: run it on real runners, keep the `lane-native-aot-<rid>-<tfm>` evidence and
   `native-aot-<rid>-<tfm>` artifacts and change the PENDING rows to the observed result. Nothing is emulated or cross-published to fill them in.
 * What the host check refuses before it publishes: a mismatching OS or process architecture, macOS Rosetta translation
@@ -42,7 +42,7 @@ including an enabled-metrics sub-check) and B8 (`2.1.4-b8fix1.20261005.1`, net10
   `binfmt_misc` registration for such an emulator, an emulator image mapped in `/proc/self/maps`, and a virtual
   (VirtualApple/QEMU) or non-x86 `/proc/cpuinfo`. These probes are best effort and deliberately conservative (a
   QEMU-model guest is refused). They are a safety net, not the proof: the claim that a row ran natively rests on the
-  provisioned runner (an x64 `ubuntu-24.04` machine, an Apple-silicon `macos-14` machine) plus the executable's own
+  provisioned runner (an x64 `ubuntu-24.04` machine, an Apple-silicon `macos-15` machine) plus the executable's own
   `NATIVE` marker and the ELF/Mach-O header check. Unit cases cover the Linux branch with recorded process trees; an
   actual emulated Linux environment was not available to execute.
 * The CI candidate version is derived once by `candidate-pack` and passed to every lane as a job output, so re-running

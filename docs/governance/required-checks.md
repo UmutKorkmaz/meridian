@@ -241,7 +241,7 @@ TFM retirement policy is a separate fact and the TFMs are kept until a separatel
 
 ### Operating cost (not measured)
 
-A full CI run is about 46 jobs: 9 runtime, 9 + 3 consumer, 3 + 3 + 3 + 1 + 1 provider, 6 native (3 on `macos-14`,
+A full CI run is about 46 jobs: 9 runtime, 9 + 3 consumer, 3 + 3 + 3 + 1 + 1 provider, 6 native (3 on `macos-15`,
 the most expensive runner class), 3 single-purpose lanes, pack, tooling tests and the gate. The consumer lanes restore
 from nuget.org. The nine partial lanes compile 11 of the 13 inventory consumers; all-consumer lanes compile all 13 and
 require both Redis and PostgreSQL. Native publishes dominate wall time; the tooling tests take about 25

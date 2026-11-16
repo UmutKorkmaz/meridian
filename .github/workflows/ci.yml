@@ -50,11 +50,12 @@ jobs:
       DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@v6
         env:
           # Install only the pinned SDKs into a private directory so no preinstalled SDK or runtime patch can be selected.
           DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:
+          skip-lts-prepass: true
           dotnet-version: 10.0.300
       - name: Derive the candidate version once
         id: version
@@ -104,11 +105,12 @@ jobs:
           fetch-depth: 0  # keep full history for release/debug parity checks
 
       - name: Setup .NET SDKs (exact pinned patches; each installs its runtime family)
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         env:
           # Install only the pinned SDKs into a private directory so no preinstalled SDK or runtime patch can be selected.
           DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:
+          skip-lts-prepass: true
           dotnet-version: |
             8.0.421
             9.0.318
@@ -204,11 +206,12 @@ jobs:
       DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@v6
         env:
           # Install only the pinned SDKs into a private directory so no preinstalled SDK or runtime patch can be selected.
           DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:
+          skip-lts-prepass: true
           dotnet-version: |
             10.0.300
             ${{ matrix.host.sdk }}
@@ -300,11 +303,12 @@ jobs:
       DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@v6
         env:
           # Install only the pinned SDKs into a private directory so no preinstalled SDK or runtime patch can be selected.
           DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:
+          skip-lts-prepass: true
           dotnet-version: |
             10.0.300
             ${{ matrix.host.sdk }}
@@ -389,11 +393,12 @@ jobs:
       DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@v6
         env:
           # Install only the pinned SDKs into a private directory so no preinstalled SDK or runtime patch can be selected.
           DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:
+          skip-lts-prepass: true
           dotnet-version: |
             8.0.421
             9.0.318
@@ -473,11 +478,12 @@ jobs:
       DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@v6
         env:
           # Install only the pinned SDKs into a private directory so no preinstalled SDK or runtime patch can be selected.
           DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:
+          skip-lts-prepass: true
           dotnet-version: |
             8.0.421
             9.0.318
@@ -563,11 +569,12 @@ jobs:
       DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@v6
         env:
           # Install only the pinned SDKs into a private directory so no preinstalled SDK or runtime patch can be selected.
           DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:
+          skip-lts-prepass: true
           dotnet-version: |
             8.0.421
             9.0.318
@@ -648,11 +655,12 @@ jobs:
       DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@v6
         env:
           # Install only the pinned SDKs into a private directory so no preinstalled SDK or runtime patch can be selected.
           DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:
+          skip-lts-prepass: true
           dotnet-version: 10.0.300
       - uses: actions/download-artifact@v4
         with:
@@ -721,11 +729,12 @@ jobs:
       DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@v6
         env:
           # Install only the pinned SDKs into a private directory so no preinstalled SDK or runtime patch can be selected.
           DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:
+          skip-lts-prepass: true
           dotnet-version: 10.0.300
       - uses: actions/download-artifact@v4
         with:
@@ -807,17 +816,18 @@ jobs:
           - { framework: net10.0, sdk: 10.0.300 }
         include:
           - { rid: linux-x64, runner: ubuntu-24.04 }
-          - { rid: osx-arm64, runner: macos-14 }
+          - { rid: osx-arm64, runner: macos-15 }
     env:
       DOTNET_ROLL_FORWARD: LatestPatch
       DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@v6
         env:
           # Install only the pinned SDKs into a private directory so no preinstalled SDK or runtime patch can be selected.
           DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:
+          skip-lts-prepass: true
           dotnet-version: |
             10.0.300
             ${{ matrix.host.sdk }}
@@ -901,11 +911,12 @@ jobs:
       DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@v6
         env:
           # Install only the pinned SDKs into a private directory so no preinstalled SDK or runtime patch can be selected.
           DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:
+          skip-lts-prepass: true
           dotnet-version: 10.0.300
       - uses: actions/download-artifact@v4
         with:
@@ -967,11 +978,12 @@ jobs:
       DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@v6
         env:
           # Install only the pinned SDKs into a private directory so no preinstalled SDK or runtime patch can be selected.
           DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:
+          skip-lts-prepass: true
           dotnet-version: 10.0.300
       - uses: actions/download-artifact@v4
         with:
@@ -1017,11 +1029,12 @@ jobs:
       DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@v6
         env:
           # Install only the pinned SDKs into a private directory so no preinstalled SDK or runtime patch can be selected.
           DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:
+          skip-lts-prepass: true
           dotnet-version: |
             8.0.421
             9.0.318
@@ -1070,11 +1083,12 @@ jobs:
       DOTNET_ROLL_FORWARD_TO_PRERELEASE: '0'
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-dotnet@v5
+      - uses: actions/setup-dotnet@v6
         env:
           # Install only the pinned SDKs into a private directory so no preinstalled SDK or runtime patch can be selected.
           DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:
+          skip-lts-prepass: true
           dotnet-version: |
             8.0.421
             9.0.318
@@ -1209,8 +1223,9 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Setup preview SDK
-        uses: actions/setup-dotnet@v5
+        uses: actions/setup-dotnet@v6
         with:
+          skip-lts-prepass: true
           dotnet-version: 11.0.x
 
       # Select preview only in this job's checkout. The committed global.json
