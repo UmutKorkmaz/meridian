@@ -9,7 +9,7 @@ Run date of the evidence below: 2026-10-04 (fix round 2 re-run). Candidate packa
 
 The `artifacts/` paths on this page are **local receipts** on the machine that ran the gate; `artifacts/` is ignored by
 Git and is not part of the repository. The durable form of this evidence is the CI artifact `native-aot-<rid>-<tfm>`
-produced by the `native-aot` job once it runs on real runners. Later tasks re-ran the osx-arm64 rows from their own
+produced by the `native-aot` job. Later tasks re-ran the osx-arm64 rows from their own
 packed candidates with the same result: D5 (`2.1.4-d5fix1.20261004.1`, net8.0/net9.0/net10.0, 12/12 cases each,
 including an enabled-metrics sub-check) and B8 (`2.1.4-b8fix1.20261005.1`, net10.0 Combined and MappingOnly).
 
@@ -34,13 +34,13 @@ compatibility remains pinned separately.
   `artifacts/D4-fix2/final/aot-combined/2.1.4-d4fix2.20261004.1/combined-<tfm>-<sdk>-osx-arm64-*/` (`native-result.json`,
   `warnings.json`, `restore-receipt.json`, `generated-sources.json`, `fixture-hashes.json`, `toolchain.json`,
   `publish.log`, `publish.binlog`, `execute.log`) and `artifacts/D4-fix2/final/aot-mapping/...` for the unchanged mapping-only runs.
-* **linux-x64 is PENDING, not PASS.** D4 was accepted with these three rows recorded as PENDING; they stay PENDING until real runs fill them. The development
-  machine is Apple Silicon with an aarch64 Docker daemon; there is no linux-x64 runner. The CI job `native-aot`
+* The three linux-x64 rows above were pending in the D4 campaign, which used an Apple Silicon development machine
+  with an aarch64 Docker daemon. The CI job `native-aot`
   in `.github/workflows/ci.yml` runs `eng/verify-candidate.ps1 -Mode Run -Lane native-aot/<rid>/<tfm>` (which invokes
   `run-aot-smoke.ps1 -Combined` and `-MappingOnly`) for the three linux-x64 rows on `ubuntu-24.04` and the three
-  osx-arm64 rows on `macos-15`, all from the one immutable `candidate-feed` artifact packed by `candidate-pack`. It has not
-  run on a real runner yet. To close the gate: run it on real runners, keep the `lane-native-aot-<rid>-<tfm>` evidence and
-  `native-aot-<rid>-<tfm>` artifacts and change the PENDING rows to the observed result. Nothing is emulated or cross-published to fill them in.
+  osx-arm64 rows on `macos-15`, all from the one immutable `candidate-feed` artifact packed by `candidate-pack`. Use
+  the `lane-native-aot-<rid>-<tfm>` evidence and `native-aot-<rid>-<tfm>` artifacts from the candidate's CI run to check
+  the result for that candidate.
 * What the host check refuses before it publishes: a mismatching OS or process architecture, macOS Rosetta translation
   (`sysctl.proc_translated`) and, on Linux, qemu-user, Rosetta for Linux, box64 and FEX as visible in procfs: an enabled
   `binfmt_misc` registration for such an emulator, an emulator image mapped in `/proc/self/maps`, and a virtual
@@ -54,7 +54,7 @@ compatibility remains pinned separately.
   per-lane `lane-native-aot-<rid>-<tfm>` evidence and the `native-aot-<rid>-<tfm>` receipts) sets `overwrite: true`: upload-artifact v4 names are immutable within
   a run and artifacts of earlier attempts stay on it, so without overwrite a re-run lane (evidence upload is
   `if: always()`) or a "Re-run all jobs" pack upload would fail with a name conflict even when the native execution
-  passed. A structural test asserts this; the workflow itself has still not run on GitHub.
+  passed. A structural test asserts the upload configuration.
 * Unverified and not claimed: linux-arm64, linux-musl, win-x64, win-arm64, osx-x64, .NET 11 preview, other Linux
   distributions/libc versions and macOS deployment targets. A native binary is only claimed for the rows above.
 

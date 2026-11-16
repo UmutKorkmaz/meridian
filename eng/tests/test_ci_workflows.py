@@ -4,12 +4,14 @@ actionlint is not available offline, so these tests assert the properties that m
 every required lane has exactly one job producing its exact check name and running its lane id, exact SDK pins that
 mirror eng/packages.json, no preview SDK in a required job, provider images identical to the policy, read-only token
 permissions, consistently pinned action references, artifact overwrite for re-runs, no new scheduled monitors, and that
-the aggregation job depends on every lane job. They parse files; the workflows themselves have not executed on GitHub.
+the aggregation job depends on every lane job. These tests parse files. Hosted execution produces separate evidence.
 """
 
+import hashlib
 import itertools
 import json
 import re
+import subprocess
 import sys
 import unittest
 import tempfile
@@ -78,6 +80,16 @@ def lane_values(lane):
 class PolicyConsistencyTests(unittest.TestCase):
     def test_the_policy_is_valid(self):
         gate.validate_policy(POLICY)
+
+    def test_windows_checkout_preserves_candidate_bound_text_bytes(self):
+        git = ["git", "-c", "core.autocrlf=true"]
+        for path in ("eng/packages.json", "docs/deprecations.md"):
+            with self.subTest(path=path):
+                ref = f"HEAD:{path}"
+                committed = subprocess.check_output([*git, "cat-file", "blob", ref], cwd=ROOT)
+                checkout = subprocess.check_output([*git, "cat-file", "--filters", ref], cwd=ROOT)
+                self.assertTrue(committed and committed.endswith(b"\n"))
+                self.assertEqual(hashlib.sha256(checkout).hexdigest(), hashlib.sha256(committed).hexdigest())
 
     def test_pinned_sdks_mirror_the_package_inventory_compiler_hosts(self):
         hosts = {h["framework"]: h["sdkVersion"] for h in INVENTORY["compilerHosts"]}

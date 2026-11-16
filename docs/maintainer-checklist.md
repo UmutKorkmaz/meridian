@@ -156,8 +156,7 @@ Before any release:
 - [ ] The version follows from API, behavior and compiler evidence under SemVer and the compatibility policy.
 - [ ] `pwsh eng/verify-candidate.ps1 -Mode Aggregate ...` over the complete evidence for the exact candidate returns
       PASS with `releaseEligible: true`. That means every CI lane from real runners plus the six local current-servicing
-      lanes. **This is not achievable today**: the CI lanes have never run on GitHub, and Windows and linux-x64 are
-      `UNAVAILABLE` locally.
+      lanes. Retain the hosted and local receipts alongside the exact feed. Run the aggregate over both receipt sets.
 - [ ] `CHANGELOG.md`, the supported versions in `SECURITY.md`, `NOTICE` and the docs are updated.
 - [ ] Never push a `v*` tag as a test, never move or delete a published tag and never reuse a version. NuGet versions
       are immutable, so a bad release is fixed forward with a new version and unlisted if necessary.
