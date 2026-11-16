@@ -71,6 +71,31 @@ public interface IMapperConfigurationExpression
     bool AllowNullDestinationValues { get; set; }
 
     /// <summary>
+    /// Gets or sets whether string values that parse to undefined enum values are allowed.
+    /// Default is <c>false</c>, so strings must name a defined enum member (or, for
+    /// <see cref="FlagsAttribute"/> enums, a comma-separated combination of defined members).
+    /// Set to <c>true</c> only to retain legacy numeric-string enum coercion.
+    /// </summary>
+    /// <remarks>
+    /// Existing custom implementations use the secure default and may set <c>false</c>.
+    /// Implement this property to support opting into undefined enum values; the default
+    /// setter throws <see cref="NotSupportedException"/> when passed <c>true</c>.
+    /// </remarks>
+    bool AllowUndefinedEnumValues
+    {
+        get => false;
+        set
+        {
+            if (value)
+            {
+                throw new NotSupportedException(
+                    "This configuration implementation must override AllowUndefinedEnumValues " +
+                    "to support opting into undefined enum values.");
+            }
+        }
+    }
+
+    /// <summary>
     /// Gets or sets the default maximum recursion depth applied to every type map
     /// that does not set its own <see cref="IMappingExpression{TSource,TDestination}.MaxDepth"/>.
     /// Default is <c>64</c>, matching <c>System.Text.Json</c>'s <c>JsonSerializerOptions.MaxDepth</c>

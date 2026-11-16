@@ -1,3 +1,4 @@
+using Meridian.Mediator.Diagnostics;
 using Meridian.Mediator.Pipeline;
 
 namespace Meridian.Mediator.Behaviors;
@@ -60,6 +61,35 @@ public class UnauthorizedException : Exception
 }
 
 /// <summary>
+/// Controls how <see cref="AuthorizationBehavior{TRequest, TResponse}"/> handles requests
+/// for which no <see cref="IAuthorizationHandler{TRequest}"/> is registered.
+/// </summary>
+public sealed record AuthorizationBehaviorOptions
+{
+    /// <summary>
+    /// Gets or sets a value indicating whether an authorized request may continue when no
+    /// authorization handler is registered. Defaults to <c>false</c>, which rejects the request.
+    /// Set to <c>true</c> only to retain the pre-2.1.4 fail-open behavior during migration.
+    /// </summary>
+    public bool AllowRequestsWithoutAuthorizationHandlers { get; init; }
+}
+
+/// <summary>
+/// Exception thrown when an authorized request has no registered authorization handler.
+/// </summary>
+public sealed class MissingAuthorizationHandlerException : UnauthorizedException
+{
+    /// <summary>
+    /// Initializes a new instance of the <see cref="MissingAuthorizationHandlerException"/> class.
+    /// </summary>
+    /// <param name="requestType">The authorized request type with no handler registration.</param>
+    public MissingAuthorizationHandlerException(Type requestType)
+        : base($"Authorized request type '{requestType.FullName}' has no registered IAuthorizationHandler<{requestType.Name}>.")
+    {
+    }
+}
+
+/// <summary>
 /// Pipeline behavior that enforces authorization for <see cref="IAuthorizedRequest"/> requests.
 /// Resolves all <see cref="IAuthorizationHandler{TRequest}"/> implementations from DI and checks each one.
 /// If any authorization check fails, an <see cref="UnauthorizedException"/> is thrown.
@@ -70,28 +100,114 @@ public class AuthorizationBehavior<TRequest, TResponse> : IPipelineBehavior<TReq
     where TRequest : IAuthorizedRequest
 {
     private readonly IEnumerable<IAuthorizationHandler<TRequest>> _authorizationHandlers;
+    private readonly AuthorizationBehaviorOptions _options;
+    private readonly MediatorMetrics _metrics;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="AuthorizationBehavior{TRequest, TResponse}"/> class.
     /// </summary>
     /// <param name="authorizationHandlers">The authorization handlers for the request type.</param>
     public AuthorizationBehavior(IEnumerable<IAuthorizationHandler<TRequest>> authorizationHandlers)
+        : this(authorizationHandlers, null)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="AuthorizationBehavior{TRequest, TResponse}"/> class
+    /// with options controlling missing-handler compatibility behavior.
+    /// </summary>
+    /// <param name="authorizationHandlers">The authorization handlers for the request type.</param>
+    /// <param name="options">Authorization behavior options. A null value uses the secure defaults.</param>
+    public AuthorizationBehavior(
+        IEnumerable<IAuthorizationHandler<TRequest>> authorizationHandlers,
+        AuthorizationBehaviorOptions? options)
+        : this(authorizationHandlers, options, null)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="AuthorizationBehavior{TRequest, TResponse}"/> class that
+    /// reports rejections to a provider-owned metrics component.
+    /// </summary>
+    /// <param name="authorizationHandlers">The authorization handlers for the request type.</param>
+    /// <param name="options">Authorization behavior options. A null value uses the secure defaults.</param>
+    /// <param name="metrics">The metrics component. A null value leaves metrics disabled.</param>
+    public AuthorizationBehavior(
+        IEnumerable<IAuthorizationHandler<TRequest>> authorizationHandlers,
+        AuthorizationBehaviorOptions? options = null,
+        MediatorMetrics? metrics = null)
     {
         _authorizationHandlers = authorizationHandlers ?? throw new ArgumentNullException(nameof(authorizationHandlers));
+        _options = options ?? new AuthorizationBehaviorOptions();
+        _metrics = metrics ?? MediatorMetrics.Disabled;
     }
 
     /// <inheritdoc/>
     public async Task<TResponse> Handle(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken cancellationToken)
     {
-        foreach (var handler in _authorizationHandlers)
+        if (_authorizationHandlers is ICollection<IAuthorizationHandler<TRequest>> collection)
         {
-            var result = await handler.AuthorizeAsync(request, cancellationToken);
-            if (!result.IsAuthorized)
+            if (collection.Count == 0 && !_options.AllowRequestsWithoutAuthorizationHandlers)
             {
-                throw new UnauthorizedException(result.FailureReason ?? "Unauthorized");
+                _metrics.RecordAuthorizationRejection(typeof(TRequest), AuthorizationRejection.MissingHandler);
+                throw new MissingAuthorizationHandlerException(typeof(TRequest));
             }
+
+            foreach (var handler in collection)
+            {
+                await AuthorizeAsync(handler, request, cancellationToken);
+            }
+
+            return await next();
         }
 
+        if (_authorizationHandlers is IReadOnlyCollection<IAuthorizationHandler<TRequest>> readOnlyCollection)
+        {
+            if (readOnlyCollection.Count == 0 && !_options.AllowRequestsWithoutAuthorizationHandlers)
+            {
+                _metrics.RecordAuthorizationRejection(typeof(TRequest), AuthorizationRejection.MissingHandler);
+                throw new MissingAuthorizationHandlerException(typeof(TRequest));
+            }
+
+            foreach (var handler in readOnlyCollection)
+            {
+                await AuthorizeAsync(handler, request, cancellationToken);
+            }
+
+            return await next();
+        }
+
+        using var enumerator = _authorizationHandlers.GetEnumerator();
+        if (!enumerator.MoveNext())
+        {
+            if (!_options.AllowRequestsWithoutAuthorizationHandlers)
+            {
+                _metrics.RecordAuthorizationRejection(typeof(TRequest), AuthorizationRejection.MissingHandler);
+                throw new MissingAuthorizationHandlerException(typeof(TRequest));
+            }
+
+            return await next();
+        }
+
+        do
+        {
+            await AuthorizeAsync(enumerator.Current, request, cancellationToken);
+        }
+        while (enumerator.MoveNext());
+
         return await next();
+    }
+
+    private async Task AuthorizeAsync(
+        IAuthorizationHandler<TRequest> handler,
+        TRequest request,
+        CancellationToken cancellationToken)
+    {
+        var result = await handler.AuthorizeAsync(request, cancellationToken);
+        if (!result.IsAuthorized)
+        {
+            _metrics.RecordAuthorizationRejection(typeof(TRequest), AuthorizationRejection.Denied);
+            throw new UnauthorizedException(result.FailureReason ?? "Unauthorized");
+        }
     }
 }

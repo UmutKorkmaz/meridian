@@ -34,6 +34,22 @@ public record HvOrphanNotification(string Message) : INotification;
 public class HandlerValidationTests
 {
     [Fact]
+    public void AssertHandlerRegistration_Reports_Duplicate_Request_Handlers()
+    {
+        var services = new ServiceCollection();
+        services.AddMeridianMediator(configuration => { });
+        services.AddTransient<IRequestHandler<HvValidatedRequest, string>, HvValidatedRequestHandler>();
+        services.AddTransient<IRequestHandler<HvValidatedRequest, string>, HvValidatedRequestHandler>();
+        using var provider = services.BuildServiceProvider();
+
+        var observed = Assert.Throws<InvalidOperationException>(() =>
+            provider.AssertHandlerRegistration(typeof(HvValidatedRequest)));
+        Assert.Contains(nameof(HvValidatedRequest), observed.Message);
+        Assert.Contains("2 handlers registered", observed.Message);
+        Assert.Contains(nameof(HvValidatedRequestHandler), observed.Message);
+    }
+
+    [Fact]
     public void AssertHandlerRegistration_Succeeds_WhenAllHandlersRegistered()
     {
         var services = new ServiceCollection();

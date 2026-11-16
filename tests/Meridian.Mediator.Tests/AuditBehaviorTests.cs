@@ -15,7 +15,7 @@ public class AuditBehaviorTests
 
     public sealed class AuditPingHandler : IRequestHandler<AuditPing, AuditPong>
     {
-        public Task<AuditPong> Handle(AuditPing r, CancellationToken ct) =>
+        public Task<AuditPong> Handle(AuditPing r, CancellationToken cancellationToken) =>
             Task.FromResult(new AuditPong(r.Value + 1));
     }
 
@@ -23,7 +23,7 @@ public class AuditBehaviorTests
 
     public sealed class FailingPingHandler : IRequestHandler<FailingPing, Unit>
     {
-        public Task<Unit> Handle(FailingPing r, CancellationToken ct) =>
+        public Task<Unit> Handle(FailingPing r, CancellationToken cancellationToken) =>
             throw new InvalidOperationException("intentional");
     }
 
@@ -56,6 +56,24 @@ public class AuditBehaviorTests
             c.AddAuditBehavior();
         });
         return services.BuildServiceProvider().GetRequiredService<IMediator>();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Audit_Message_Opt_In_Does_Not_Include_Request_Payload(bool recordMessage)
+    {
+        var sink = new CapturingSink();
+        var behavior = new AuditBehavior<string, string>(sink,
+            new MediatorTelemetryOptions { RecordExceptionMessage = recordMessage });
+        var failure = new InvalidOperationException("exception-private-marker");
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => behavior.Handle(
+            "payload-private-marker", () => Task.FromException<string>(failure), default));
+        Assert.Same(failure, error);
+        var entry = Assert.Single(sink.Entries);
+        Assert.Equal(recordMessage ? "exception-private-marker" : "An error occurred during request processing.", entry.FailureMessage);
+        Assert.DoesNotContain("payload-private-marker", entry.ToString());
+        Assert.DoesNotContain(nameof(Audit_Message_Opt_In_Does_Not_Include_Request_Payload), entry.ToString());
     }
 
     [Fact]

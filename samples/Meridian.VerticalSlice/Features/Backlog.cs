@@ -30,7 +30,7 @@ public static class Backlog
 
     public sealed record CreateTodoCommand(string Title, string Owner, string Priority) : IRequest<TodoItemDto>, ICacheInvalidatingRequest
     {
-        public string[] CacheKeysToInvalidate => ["vs:todo:board"];
+        public string[] CacheKeysToInvalidate => [CacheKeyComposer.Compose<GetTodoBoardQuery>("vs:todo:board")];
     }
 
     public sealed class CreateTodoCommandHandler(IMapper mapper, ITodoStore store, IPublisher publisher)
@@ -66,7 +66,7 @@ public static class Backlog
 
     public sealed record StartTodoCommand(Guid TodoId, string Actor) : IRequest<TodoItemDto>, ICacheInvalidatingRequest
     {
-        public string[] CacheKeysToInvalidate => ["vs:todo:board"];
+        public string[] CacheKeysToInvalidate => [CacheKeyComposer.Compose<GetTodoBoardQuery>("vs:todo:board")];
     }
 
     public sealed class StartTodoCommandHandler(ITodoStore store, IMapper mapper, IPublisher publisher)

@@ -4,16 +4,16 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Meridian — .NET Mediator &amp; Mapping</title>
-  <meta name="description" content="Lightweight CQRS-style mediator and high-performance object mapping for .NET 8–11." />
+  <meta name="description" content="Lightweight CQRS-style mediator and object mapping for .NET 8, 9 and 10." />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <header class="hero">
-    <p class="eyebrow">Open Source · .NET 8–11</p>
+    <p class="eyebrow">Open Source · .NET 8 / 9 / 10</p>
     <h1>Meridian</h1>
     <p class="lede">
       A lightweight toolset for .NET applications — <strong>Meridian.Mediator</strong> for CQRS-style
-      in-process messaging and <strong>Meridian.Mapping</strong> for high-performance object mapping.
+      in-process messaging and <strong>Meridian.Mapping</strong> for object mapping with safe-by-default limits.
     </p>
     <div class="actions">
       <a class="btn primary" href="https://github.com/UmutKorkmaz/meridian">View on GitHub</a>
@@ -32,7 +32,7 @@
         </article>
         <article class="card">
           <h3>Meridian.Mapping</h3>
-          <p>Profiles, resolvers, converters, and query projection with a performance-first mapping pipeline.</p>
+          <p>Profiles, resolvers, converters, query projection and a bundled source generator, with depth and collection caps on by default.</p>
         </article>
       </div>
     </section>
@@ -54,21 +54,27 @@
         <li><strong>ModularMonolith</strong> — module registration &amp; cross-module notifications</li>
         <li><strong>VerticalSlice</strong> — feature-first handlers &amp; validation</li>
         <li><strong>EventDrivenCqrs</strong> — write/read split with streams</li>
+        <li><strong>Hexagonal</strong> — ports &amp; adapters layout</li>
       </ul>
     </section>
 
     <section>
       <h2>Docs</h2>
+      <p>Packages target <code>net8.0</code>, <code>net9.0</code> and <code>net10.0</code>; a .NET 11 preview sample lane is optional and not a support claim.
+      Maintainers can build a local API reference for an unpublished candidate with <code>eng/verify-docs.ps1</code>.</p>
       <ul class="links">
         <li><a href="https://github.com/UmutKorkmaz/meridian/blob/main/docs/security-model.md">Security model</a></li>
         <li><a href="https://github.com/UmutKorkmaz/meridian/blob/main/docs/source-gen-guide.md">Source generator guide</a></li>
+        <li><a href="https://github.com/UmutKorkmaz/meridian/blob/main/docs/migrate-from-mediatr.md">Migrate from MediatR</a></li>
+        <li><a href="https://github.com/UmutKorkmaz/meridian/blob/main/docs/migrate-from-automapper.md">Migrate from AutoMapper</a></li>
+        <li><a href="https://github.com/UmutKorkmaz/meridian/blob/main/docs/compatibility-policy.md">Compatibility policy</a></li>
         <li><a href="https://github.com/UmutKorkmaz/meridian/blob/main/CHANGELOG.md">Changelog</a></li>
       </ul>
     </section>
   </main>
 
   <footer>
-    <p>Apache-2.0 · <a href="https://github.com/UmutKorkmaz/meridian">UmutKorkmaz/meridian</a></p>
+    <p>MIT · <a href="https://github.com/UmutKorkmaz/meridian">UmutKorkmaz/meridian</a></p>
   </footer>
 </body>
 </html>

@@ -1,0 +1,135 @@
+{
+  "schemaVersion": 1,
+  "scope": "Release build of Meridian.sln, every target framework",
+  "unit": "unique project+file+line+col+code (multi-target and duplicate prints collapsed)",
+  "rule": "A project may not gain a warning code, may not exceed its per-code count, and no new project may appear with warnings. Fewer warnings pass; lower this file in the same change that removes them.",
+  "total": 234,
+  "byCode": {
+    "CA1000": 4,
+    "CA1001": 1,
+    "CA1036": 1,
+    "CA1051": 9,
+    "CA1068": 1,
+    "CA1305": 38,
+    "CA1707": 3,
+    "CA1711": 20,
+    "CA1715": 4,
+    "CA1716": 2,
+    "CA1720": 1,
+    "CA1805": 1,
+    "CA1822": 2,
+    "CA1848": 3,
+    "CA1859": 6,
+    "CA1861": 108,
+    "CA1866": 1,
+    "CA1873": 1,
+    "CA2211": 5,
+    "CA2263": 2,
+    "CS0436": 18,
+    "EF1002": 3
+  },
+  "projects": {
+    "benchmarks/Meridian.Benchmarks/Meridian.Benchmarks.csproj": {
+      "total": 7,
+      "codes": {
+        "CA1001": 1,
+        "CA1051": 1,
+        "CA1707": 3,
+        "CA1711": 1,
+        "CA1720": 1
+      }
+    },
+    "samples/Meridian.AspNetCore/Meridian.AspNetCore.csproj": {
+      "total": 1,
+      "codes": {
+        "CA1848": 1
+      }
+    },
+    "samples/Meridian.CleanArchitecture/Meridian.CleanArchitecture.csproj": {
+      "total": 1,
+      "codes": {
+        "CA1711": 1
+      }
+    },
+    "samples/Meridian.EventDrivenCqrs/Meridian.EventDrivenCqrs.csproj": {
+      "total": 1,
+      "codes": {
+        "CA1711": 1
+      }
+    },
+    "samples/Meridian.Hexagonal/Meridian.Hexagonal.csproj": {
+      "total": 1,
+      "codes": {
+        "CA1305": 1
+      }
+    },
+    "samples/Meridian.Showcase/Meridian.Showcase.csproj": {
+      "total": 1,
+      "codes": {
+        "CA1711": 1
+      }
+    },
+    "samples/Meridian.VerticalSlice/Meridian.VerticalSlice.csproj": {
+      "total": 1,
+      "codes": {
+        "CA1711": 1
+      }
+    },
+    "src/Meridian.Mapping/Meridian.Mapping.csproj": {
+      "total": 38,
+      "codes": {
+        "CA1305": 37,
+        "CA1711": 1
+      }
+    },
+    "src/Meridian.Mediator/Meridian.Mediator.csproj": {
+      "total": 14,
+      "codes": {
+        "CA1036": 1,
+        "CA1068": 1,
+        "CA1711": 6,
+        "CA1716": 2,
+        "CA1805": 1,
+        "CA1848": 2,
+        "CA1873": 1
+      }
+    },
+    "tests/Meridian.AspNetCore.Tests/Meridian.AspNetCore.Tests.csproj": {
+      "total": 2,
+      "codes": {
+        "CA1711": 1,
+        "CA1861": 1
+      }
+    },
+    "tests/Meridian.Mapping.EntityFramework.Tests/Meridian.Mapping.EntityFramework.Tests.csproj": {
+      "total": 23,
+      "codes": {
+        "CA1861": 19,
+        "CA1866": 1,
+        "EF1002": 3
+      }
+    },
+    "tests/Meridian.Mapping.Tests/Meridian.Mapping.Tests.csproj": {
+      "total": 32,
+      "codes": {
+        "CA1051": 2,
+        "CA1859": 6,
+        "CA1861": 4,
+        "CA2263": 2,
+        "CS0436": 18
+      }
+    },
+    "tests/Meridian.Mediator.Tests/Meridian.Mediator.Tests.csproj": {
+      "total": 112,
+      "codes": {
+        "CA1000": 4,
+        "CA1051": 6,
+        "CA1711": 7,
+        "CA1715": 4,
+        "CA1822": 2,
+        "CA1861": 84,
+        "CA2211": 5
+      }
+    }
+  }
+}

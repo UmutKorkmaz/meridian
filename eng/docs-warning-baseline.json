@@ -1,0 +1,122 @@
+{
+  "schemaVersion": 1,
+  "scope": "Release clean build of packable runtime projects, all target frameworks",
+  "key": "project + file + diagnostic code + message (line numbers and TFM repetitions ignored)",
+  "warnings": [
+    {
+      "project": "src/Meridian.Mapping/Meridian.Mapping.csproj",
+      "file": "src/Meridian.Mapping/Configuration/ValueTransformerCollection.cs",
+      "code": "CA1711",
+      "message": "Rename type name ValueTransformerCollection so that it does not end in 'Collection'"
+    },
+    {
+      "project": "src/Meridian.Mapping/Meridian.Mapping.csproj",
+      "file": "src/Meridian.Mapping/Execution/MappingEngine.cs",
+      "code": "CA1305",
+      "message": "The behavior of 'Convert.ChangeType(object, Type)' could vary based on the current user's locale settings. Replace this call in 'MappingEngine.ConvertValue(object, Type, ResolutionContext, [string], [Type])' with a call to 'Convert.ChangeType(object, Type, IFormatProvider)'."
+    },
+    {
+      "project": "src/Meridian.Mapping/Meridian.Mapping.csproj",
+      "file": "src/Meridian.Mapping/Execution/PropertyMap.cs",
+      "code": "CA1305",
+      "message": "The behavior of 'Convert.ChangeType(object, Type)' could vary based on the current user's locale settings. Replace this call in 'PropertyMap.CompileForPathSetter(PropertyInfo[])' with a call to 'Convert.ChangeType(object, Type, IFormatProvider)'."
+    },
+    {
+      "project": "src/Meridian.Mapping/Meridian.Mapping.csproj",
+      "file": "src/Meridian.Mapping/MapperConfiguration.cs",
+      "code": "CA1305",
+      "message": "The behavior of 'StringBuilder.AppendLine(ref StringBuilder.AppendInterpolatedStringHandler)' could vary based on the current user's locale settings. Replace this call in 'MapperConfiguration.AssertConfigurationIsValid()' with a call to 'StringBuilder.AppendLine(IFormatProvider, ref StringBuilder.AppendInterpolatedStringHandler)'."
+    },
+    {
+      "project": "src/Meridian.Mapping/Meridian.Mapping.csproj",
+      "file": "src/Meridian.Mapping/MapperConfiguration.cs",
+      "code": "CA1305",
+      "message": "The behavior of 'StringBuilder.AppendLine(ref StringBuilder.AppendInterpolatedStringHandler)' could vary based on the current user's locale settings. Replace this call in 'MapperConfiguration.FormatMappingPlan(TypeMap, [int])' with a call to 'StringBuilder.AppendLine(IFormatProvider, ref StringBuilder.AppendInterpolatedStringHandler)'."
+    },
+    {
+      "project": "src/Meridian.Mediator/Meridian.Mediator.csproj",
+      "file": "src/Meridian.Mediator/Behaviors/AuditBehavior.cs",
+      "code": "CA1848",
+      "message": "For improved performance, use the LoggerMessage delegates instead of calling 'LoggerExtensions.LogInformation(ILogger, string?, params object?[])'"
+    },
+    {
+      "project": "src/Meridian.Mediator/Meridian.Mediator.csproj",
+      "file": "src/Meridian.Mediator/Behaviors/AuditBehavior.cs",
+      "code": "CA1848",
+      "message": "For improved performance, use the LoggerMessage delegates instead of calling 'LoggerExtensions.LogWarning(ILogger, string?, params object?[])'"
+    },
+    {
+      "project": "src/Meridian.Mediator/Meridian.Mediator.csproj",
+      "file": "src/Meridian.Mediator/Behaviors/AuditBehavior.cs",
+      "code": "CA1873",
+      "message": "Evaluation of this argument may be expensive and unnecessary if logging is disabled"
+    },
+    {
+      "project": "src/Meridian.Mediator/Meridian.Mediator.csproj",
+      "file": "src/Meridian.Mediator/Pipeline/IPipelineBehavior.cs",
+      "code": "CA1716",
+      "message": "In virtual/interface member IPipelineBehavior<TRequest, TResponse>.Handle(TRequest, RequestHandlerDelegate<TResponse>, CancellationToken), rename parameter next so that it no longer conflicts with the reserved language keyword 'Next'. Using a reserved keyword as the name of a parameter on a virtual/interface member makes it harder for consumers in other languages to override/implement the member."
+    },
+    {
+      "project": "src/Meridian.Mediator/Meridian.Mediator.csproj",
+      "file": "src/Meridian.Mediator/RequestHandlerDelegate.cs",
+      "code": "CA1711",
+      "message": "Rename type name RequestHandlerDelegate so that it does not end in 'Delegate'"
+    },
+    {
+      "project": "src/Meridian.Mediator/Meridian.Mediator.csproj",
+      "file": "src/Meridian.Mediator/Streaming/IStreamPipelineBehavior.cs",
+      "code": "CA1716",
+      "message": "In virtual/interface member IStreamPipelineBehavior<TRequest, TResponse>.Handle(TRequest, StreamHandlerDelegate<TResponse>, CancellationToken), rename parameter next so that it no longer conflicts with the reserved language keyword 'Next'. Using a reserved keyword as the name of a parameter on a virtual/interface member makes it harder for consumers in other languages to override/implement the member."
+    },
+    {
+      "project": "src/Meridian.Mediator/Meridian.Mediator.csproj",
+      "file": "src/Meridian.Mediator/Streaming/StreamHandlerDelegate.cs",
+      "code": "CA1711",
+      "message": "Rename type name StreamHandlerDelegate so that it does not end in 'Delegate'"
+    },
+    {
+      "project": "src/Meridian.Mediator/Meridian.Mediator.csproj",
+      "file": "src/Meridian.Mediator/Unit.cs",
+      "code": "CA1036",
+      "message": "Unit should define operator(s) '<, <=, >, >=' since it implements IComparable"
+    },
+    {
+      "project": "src/Meridian.Mediator/Meridian.Mediator.csproj",
+      "file": "src/Meridian.Mediator/Unit.cs",
+      "code": "CA1805",
+      "message": "Member '_value' is explicitly initialized to its default value"
+    },
+    {
+      "project": "src/Meridian.Mediator/Meridian.Mediator.csproj",
+      "file": "src/Meridian.Mediator/Wrappers/NotificationHandlerWrapper.cs",
+      "code": "CA1711",
+      "message": "Either replace the suffix 'Impl' in member name 'NotificationHandlerWrapperImpl' with the suggested alternate 'Core' or remove the suffix completely"
+    },
+    {
+      "project": "src/Meridian.Mediator/Meridian.Mediator.csproj",
+      "file": "src/Meridian.Mediator/Wrappers/RequestHandlerWrapperImpl.cs",
+      "code": "CA1068",
+      "message": "Method 'Meridian.Mediator.Wrappers.RequestHandlerWrapperImpl<TRequest, TResponse>.HandleWithPipeline(TRequest, System.IServiceProvider, System.Threading.CancellationToken, Meridian.Mediator.RequestHandlerDelegate<TResponse>)' should take CancellationToken as the last parameter"
+    },
+    {
+      "project": "src/Meridian.Mediator/Meridian.Mediator.csproj",
+      "file": "src/Meridian.Mediator/Wrappers/RequestHandlerWrapperImpl.cs",
+      "code": "CA1711",
+      "message": "Either replace the suffix 'Impl' in member name 'RequestHandlerWrapperImpl' with the suggested alternate 'Core' or remove the suffix completely"
+    },
+    {
+      "project": "src/Meridian.Mediator/Meridian.Mediator.csproj",
+      "file": "src/Meridian.Mediator/Wrappers/RequestHandlerWrapperImpl.cs",
+      "code": "CA1711",
+      "message": "Either replace the suffix 'Impl' in member name 'UnitRequestHandlerWrapperImpl' with the suggested alternate 'Core' or remove the suffix completely"
+    },
+    {
+      "project": "src/Meridian.Mediator/Meridian.Mediator.csproj",
+      "file": "src/Meridian.Mediator/Wrappers/StreamRequestHandlerWrapper.cs",
+      "code": "CA1711",
+      "message": "Either replace the suffix 'Impl' in member name 'StreamRequestHandlerWrapperImpl' with the suggested alternate 'Core' or remove the suffix completely"
+    }
+  ],
+  "explained": []
+}

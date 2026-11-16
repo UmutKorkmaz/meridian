@@ -13,7 +13,7 @@ namespace Meridian.Mapping;
 /// and register as a singleton. Provides <see cref="IConfigurationProvider"/>
 /// and creates <see cref="IMapper"/> instances.
 /// </summary>
-public class MapperConfiguration : IConfigurationProvider
+public class MapperConfiguration : IConfigurationProvider, IGeneratedMappingConfigurationProvider
 {
     /// <summary>
     /// Frozen dictionary for all statically-compiled type maps. ~40% faster lookups
@@ -27,9 +27,13 @@ public class MapperConfiguration : IConfigurationProvider
     /// </summary>
     private readonly ConcurrentDictionary<(Type, Type), TypeMap> _dynamicTypeMaps = new();
 
+    /// <inheritdoc />
+    public IReadOnlyList<IGeneratedMappingResolver> GeneratedResolvers { get; }
+
     private readonly Dictionary<(Type, Type), object> _openGenericMappings = new();
     private readonly bool _allowNullCollections;
     private readonly bool _allowNullDestinationValues;
+    private readonly bool _allowUndefinedEnumValues;
     private readonly int _defaultMaxDepth;
     private readonly int _defaultMaxCollectionItems;
     private readonly Configuration.ValueTransformerCollection? _valueTransformers;
@@ -45,8 +49,10 @@ public class MapperConfiguration : IConfigurationProvider
         var expression = new MapperConfigurationExpression();
         configure(expression);
 
+        GeneratedResolvers = Array.AsReadOnly(expression.GeneratedResolvers.ToArray());
         _allowNullCollections = expression.AllowNullCollections;
         _allowNullDestinationValues = expression.AllowNullDestinationValues;
+        _allowUndefinedEnumValues = expression.AllowUndefinedEnumValues;
         _defaultMaxDepth = ValidatePositive(expression.DefaultMaxDepth, nameof(expression.DefaultMaxDepth));
         _defaultMaxCollectionItems = ValidatePositive(expression.DefaultMaxCollectionItems, nameof(expression.DefaultMaxCollectionItems));
         _valueTransformers = expression.ValueTransformers.HasTransformers ? expression.ValueTransformers : null;
@@ -68,8 +74,10 @@ public class MapperConfiguration : IConfigurationProvider
     {
         ArgumentNullException.ThrowIfNull(expression);
 
+        GeneratedResolvers = Array.AsReadOnly(expression.GeneratedResolvers.ToArray());
         _allowNullCollections = expression.AllowNullCollections;
         _allowNullDestinationValues = expression.AllowNullDestinationValues;
+        _allowUndefinedEnumValues = expression.AllowUndefinedEnumValues;
         _defaultMaxDepth = ValidatePositive(expression.DefaultMaxDepth, nameof(expression.DefaultMaxDepth));
         _defaultMaxCollectionItems = ValidatePositive(expression.DefaultMaxCollectionItems, nameof(expression.DefaultMaxCollectionItems));
         _valueTransformers = expression.ValueTransformers.HasTransformers ? expression.ValueTransformers : null;
@@ -103,10 +111,15 @@ public class MapperConfiguration : IConfigurationProvider
         var allowNullDest = _allowNullDestinationValues;
         var hasTransformers = _valueTransformers is not null;
 
+        // Nested maps are looked up in the same finished set the engine's exact-pair FindTypeMap would
+        // consult, so an inlined nested pair is always the map the generic dispatch would have chosen.
+        TypeMap? FindExact(Type source, Type destination) =>
+            typeMaps.TryGetValue((source, destination), out var map) ? map : null;
+
         foreach (var typeMap in typeMaps.Values)
         {
             typeMap.CompiledFastPath =
-                FastPathCompiler.TryCompile(typeMap, allowNullDest, hasTransformers);
+                FastPathCompiler.TryCompile(typeMap, allowNullDest, hasTransformers, GeneratedResolvers.Count > 0, FindExact);
         }
     }
 
@@ -154,6 +167,7 @@ public class MapperConfiguration : IConfigurationProvider
     /// <inheritdoc />
     public void AssertConfigurationIsValid()
     {
+        GeneratedMappingExtensions.Validate(GeneratedResolvers);
         var errors = new StringBuilder();
         var warnings = new StringBuilder();
 
@@ -372,6 +386,9 @@ public class MapperConfiguration : IConfigurationProvider
     public bool AllowNullDestinationValues => _allowNullDestinationValues;
 
     /// <inheritdoc />
+    public bool AllowUndefinedEnumValues => _allowUndefinedEnumValues;
+
+    /// <inheritdoc />
     public int DefaultMaxDepth => _defaultMaxDepth;
 
     /// <inheritdoc />
@@ -511,7 +528,7 @@ public class MapperConfiguration : IConfigurationProvider
         }
     }
 
-    private TypeMap CompileOpenGenericTypeMap(Type closedSourceType, Type closedDestType)
+    private static TypeMap CompileOpenGenericTypeMap(Type closedSourceType, Type closedDestType)
     {
         // Create a default MappingExpression for the closed types (auto-mapping only)
         var exprType = typeof(MappingExpression<,>).MakeGenericType(closedSourceType, closedDestType);
@@ -519,7 +536,7 @@ public class MapperConfiguration : IConfigurationProvider
         return CompileTypeMap(closedSourceType, closedDestType, expression);
     }
 
-    private void CompileTypeMaps(MapperConfigurationExpression expression, Dictionary<(Type, Type), TypeMap> typeMaps)
+    private static void CompileTypeMaps(MapperConfigurationExpression expression, Dictionary<(Type, Type), TypeMap> typeMaps)
     {
         // First pass: auto-register any Include<> derived pairs that don't already exist
         AutoRegisterIncludedDerivedMaps(expression);
@@ -535,7 +552,7 @@ public class MapperConfiguration : IConfigurationProvider
     /// Scans all mapping expressions for Include and IncludeAllDerived
     /// and auto-registers derived maps that don't already exist.
     /// </summary>
-    private void AutoRegisterIncludedDerivedMaps(MapperConfigurationExpression expression)
+    private static void AutoRegisterIncludedDerivedMaps(MapperConfigurationExpression expression)
     {
         var toAdd = new List<(Type, Type, object)>();
 
@@ -589,7 +606,7 @@ public class MapperConfiguration : IConfigurationProvider
     /// - IncludeBase: copies base config into derived
     /// - Include/IncludeAllDerived: wires derived maps for polymorphic dispatch
     /// </summary>
-    private void ApplyInheritance(MapperConfigurationExpression expression, Dictionary<(Type, Type), TypeMap> typeMaps)
+    private static void ApplyInheritance(MapperConfigurationExpression expression, Dictionary<(Type, Type), TypeMap> typeMaps)
     {
         foreach (var (key, mappingExpr) in expression.MappingExpressions)
         {
@@ -707,6 +724,14 @@ public class MapperConfiguration : IConfigurationProvider
             }
         }
 
+        foreach (var member in baseMap.ProjectionOnlyMemberMaps)
+        {
+            if (derivedMap.DestinationType.GetProperty(member.DestinationProperty.Name) is { CanWrite: false } &&
+                !derivedMap.ProjectionOnlyMemberMaps.Any(p => string.Equals(p.DestinationProperty.Name,
+                    member.DestinationProperty.Name, StringComparison.OrdinalIgnoreCase)))
+                derivedMap.ProjectionOnlyMemberMaps.Add(member);
+        }
+
         // Inherit BeforeMap/AfterMap actions
         foreach (var beforeAction in baseMap.BeforeMapActions)
         {
@@ -724,7 +749,7 @@ public class MapperConfiguration : IConfigurationProvider
     /// Builds the polymorphic dispatch lookup: for each type map, finds all
     /// derived type maps so the engine can pick the most specific one at runtime.
     /// </summary>
-    private void BuildPolymorphicDispatch(Dictionary<(Type, Type), TypeMap> typeMaps)
+    private static void BuildPolymorphicDispatch(Dictionary<(Type, Type), TypeMap> typeMaps)
     {
         foreach (var (key, typeMap) in typeMaps)
         {
@@ -744,7 +769,7 @@ public class MapperConfiguration : IConfigurationProvider
         }
     }
 
-    private TypeMap CompileTypeMap(Type sourceType, Type destType, object mappingExpression)
+    private static TypeMap CompileTypeMap(Type sourceType, Type destType, object mappingExpression)
     {
         var typeMap = new TypeMap(sourceType, destType);
 
@@ -764,7 +789,7 @@ public class MapperConfiguration : IConfigurationProvider
     /// Fast path: compiles a TypeMap using the ICompiledMappingExpression interface.
     /// No reflection calls — all config is accessed via direct interface method calls.
     /// </summary>
-    private TypeMap CompileTypeMapFast(Type sourceType, Type destType, ICompiledMappingExpression expr, TypeMap typeMap)
+    private static TypeMap CompileTypeMapFast(Type sourceType, Type destType, ICompiledMappingExpression expr, TypeMap typeMap)
     {
         // Custom converter
         var customConverter = expr.GetCustomConverter();
@@ -870,6 +895,7 @@ public class MapperConfiguration : IConfigurationProvider
 
         // Member configs
         var memberConfigs = expr.GetMemberConfigs();
+        CaptureProjectionOnlyMembers(typeMap, sourceType, destType, memberConfigs);
         CopyIgnoredSourceMembers(typeMap, expr.GetSourceMemberConfigs());
         var hasForAllMembers = expr.GetHasForAllMembers();
         var forAllMembersAction = expr.GetForAllMembersAction();
@@ -1006,7 +1032,7 @@ public class MapperConfiguration : IConfigurationProvider
     /// <summary>
     /// Reflection fallback for CompileTypeMap (used for open generic on-demand compilation).
     /// </summary>
-    private TypeMap CompileTypeMapReflection(Type sourceType, Type destType, object mappingExpression, TypeMap typeMap)
+    private static TypeMap CompileTypeMapReflection(Type sourceType, Type destType, object mappingExpression, TypeMap typeMap)
     {
         var exprType = mappingExpression.GetType();
 
@@ -1140,6 +1166,7 @@ public class MapperConfiguration : IConfigurationProvider
 
         var memberConfigsProp = exprType.GetProperty("MemberConfigs", BindingFlags.NonPublic | BindingFlags.Instance);
         var memberConfigs = memberConfigsProp?.GetValue(mappingExpression) as System.Collections.IDictionary;
+        CaptureProjectionOnlyMembers(typeMap, sourceType, destType, memberConfigs);
         var sourceMemberConfigsProp = exprType.GetProperty("SourceMemberConfigs", BindingFlags.NonPublic | BindingFlags.Instance);
         if (sourceMemberConfigsProp?.GetValue(mappingExpression) is System.Collections.IDictionary sourceMemberConfigs)
         {
@@ -1390,6 +1417,40 @@ public class MapperConfiguration : IConfigurationProvider
         propMap.ExplicitExpansion = config.GetExplicitExpansion();
         propMap.UseDestinationValue = config.GetUseDestinationValue();
         propMap.AllowNull = config.GetAllowNull();
+    }
+
+    private static void CaptureProjectionOnlyMembers(TypeMap map, Type sourceType, Type destinationType,
+        System.Collections.IDictionary? configurations)
+    {
+        if (configurations == null || configurations.Count == 0) return;
+        foreach (var property in destinationType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                     .Where(p => !p.CanWrite && p.GetMethod is { IsPublic: true } && p.GetIndexParameters().Length == 0))
+        {
+            if (configurations[property.Name] is not { } configuration) continue;
+            var member = new PropertyMap(property);
+            ApplyMemberConfig(member, configuration, sourceType);
+            if (member.HasConstantValue)
+            {
+                // Runtime constants intentionally short-circuit member options. Constructor projections
+                // still need omission/guard metadata, and substitution if ForCtorParam overrides the constant.
+                var configType = configuration.GetType();
+                object? Read(string name) => configType.GetProperty(name, BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(configuration);
+                member.ExplicitExpansion = Read("ExplicitExpansionEnabled") is true;
+                member.Condition = Read("ConditionFunc") as Delegate;
+                member.Condition3Arg = Read("Condition3ArgFunc") as Delegate;
+                member.PreCondition = Read("PreConditionFunc") as Delegate;
+                member.ValueResolverType = Read("ValueResolverType") as Type;
+                member.MemberValueResolverType = Read("MemberValueResolverType") as Type;
+                member.MemberConverterFunc = Read("MemberConverterFunc") as Delegate;
+                member.MemberConverterInstance = Read("MemberConverterInstance");
+                member.CustomMapFunc = Read("MapFromFunc") as Delegate;
+                member.CustomMapExpression = Read("MapFromExpression") as LambdaExpression;
+                member.HasNullSubstitute = Read("HasNullSubstitute") is true;
+                member.NullSubstitute = Read("NullSubstituteValue");
+            }
+            // Retain expression/configuration only: Compile() would try to create a setter.
+            map.ProjectionOnlyMemberMaps.Add(member);
+        }
     }
 
     private static void ApplyMemberConfig(PropertyMap propMap, object memberConfig, Type sourceType)

@@ -28,6 +28,12 @@ public class RequestHandlerWrapperImpl<TRequest, TResponse> : RequestHandlerWrap
             () => handler.Handle((TRequest)request, cancellationToken));
     }
 
+    /// <summary>Runs registered pipeline behaviors around <paramref name="handler"/>.</summary>
+    /// <param name="request">The request being dispatched.</param>
+    /// <param name="serviceProvider">The provider that resolves behaviors.</param>
+    /// <param name="cancellationToken">Cancellation for the dispatch.</param>
+    /// <param name="handler">The terminal handler delegate.</param>
+    /// <returns>The pipeline response.</returns>
     protected static Task<TResponse> HandleWithPipeline(
         TRequest request,
         IServiceProvider serviceProvider,

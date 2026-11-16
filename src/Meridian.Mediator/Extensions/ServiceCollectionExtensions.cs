@@ -1,4 +1,8 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Diagnostics.Metrics;
 using System.Reflection;
+using System.Runtime.CompilerServices;
+using Meridian.Mediator.Diagnostics;
 using Meridian.Mediator.Pipeline;
 using Meridian.Mediator.Publishing;
 using Meridian.Mediator.Streaming;
@@ -26,12 +30,29 @@ public static class ServiceCollectionExtensions
         var config = new MeridianMediatorConfiguration();
         configure(config);
 
+        Generated.GeneratedMediatorRegistration.RegisterRegistries(services, config);
+
+        services.TryAddSingleton(Generated.GeneratedMediatorRegistration.CreateComposition);
+
+        // Provider-owned, opt-in metrics: one immutable component per root provider (disabled unless opted in).
+        if (config.Metrics is not null)
+        {
+            services.TryAddSingleton(config.Metrics);
+        }
+
+        services.TryAddSingleton(CreateMetrics);
+
         // Register the mediator itself
         services.TryAddTransient<IMediator>(sp =>
         {
             var publisher = ResolvePublisher(sp, config);
             var telemetryOptions = sp.GetService<MediatorTelemetryOptions>() ?? MediatorTelemetryOptions.Default;
-            return new Mediator(sp, publisher, telemetryOptions);
+            return new Mediator(
+                sp,
+                publisher,
+                telemetryOptions,
+                sp.GetRequiredService<Generated.GeneratedMediatorComposition>(),
+                sp.GetRequiredService<MediatorMetrics>());
         });
         services.TryAddTransient<ISender>(sp => sp.GetRequiredService<IMediator>());
         services.TryAddTransient<IPublisher>(sp => sp.GetRequiredService<IMediator>());
@@ -46,55 +67,114 @@ public static class ServiceCollectionExtensions
         // Scan assemblies for handlers
         foreach (var assembly in config.AssembliesToScan.Distinct())
         {
-            RegisterHandlersFromAssembly(services, assembly, config.Lifetime);
+            if (!RuntimeFeature.IsDynamicCodeSupported)
+                throw DynamicRegistrationGuard.Unsupported("RegisterServicesFromAssembly");
+            RegisterHandlersFromAssembly(services, assembly, config);
         }
 
-        // Register closed pipeline behaviors (sorted by order, then registration sequence)
-        foreach (var (serviceType, implType, _) in config.ClosedBehaviors.OrderBy(b => b.Order))
+        var generatedPipeline = Generated.GeneratedMediatorRegistration.NormalizePipeline(services,config);
+
+        // Register closed and open pipeline behaviors in a single ordered sequence.
+        if (!generatedPipeline) foreach (var (serviceType, implementationType, order, _, lifetime) in config.PipelineBehaviorRegistrations
+                     .OrderBy(behavior => behavior.Order)
+                     .ThenBy(behavior => behavior.RegistrationIndex))
         {
-            services.AddTransient(serviceType, implType);
+            TryAddPipelineBehavior(services, serviceType, implementationType, order, lifetime);
         }
 
-        // Register open pipeline behaviors (sorted by order, then registration sequence)
-        foreach (var (behaviorType, _) in config.OpenBehaviors.OrderBy(b => b.Order))
+        // Normalize finite stream contributions with the legacy closed-before-open phases.
+        var generatedStreams = Generated.GeneratedMediatorRegistration.NormalizeStreams(services, config);
+        if (!generatedStreams) foreach (var (serviceType, implType) in config.ClosedStreamBehaviors)
         {
-            services.AddTransient(typeof(IPipelineBehavior<,>), behaviorType);
+            Generated.GeneratedMediatorRegistration.RegisterStreamBehavior(services, serviceType, implType);
         }
 
-        // Register stream behaviors
-        foreach (var (serviceType, implType) in config.ClosedStreamBehaviors)
+        if (!generatedStreams) foreach (var openStreamBehavior in config.OpenStreamBehaviors)
         {
-            services.AddTransient(serviceType, implType);
-        }
-
-        foreach (var openStreamBehavior in config.OpenStreamBehaviors)
-        {
-            services.AddTransient(typeof(IStreamPipelineBehavior<,>), openStreamBehavior);
+            Generated.GeneratedMediatorRegistration.RegisterStreamBehavior(services, typeof(IStreamPipelineBehavior<,>), openStreamBehavior);
         }
 
         // Register pre-processors and post-processors
-        foreach (var preProcessorType in config.PreProcessorTypes)
+        if (!generatedPipeline) foreach (var preProcessorType in config.PreProcessorTypes)
         {
             RegisterOpenOrClosedGeneric(services, typeof(IRequestPreProcessor<>), preProcessorType);
         }
 
-        foreach (var postProcessorType in config.PostProcessorTypes)
+        if (!generatedPipeline) foreach (var postProcessorType in config.PostProcessorTypes)
         {
             RegisterOpenOrClosedGeneric(services, typeof(IRequestPostProcessor<,>), postProcessorType);
         }
 
         // Register built-in pre/post processor behaviors if needed
-        if (config.RegisterPreProcessorBehavior)
+        if (!generatedPipeline && config.RegisterPreProcessorBehavior)
         {
-            services.AddTransient(typeof(IPipelineBehavior<,>), typeof(RequestPreProcessorBehavior<,>));
+            TryAddPipelineBehavior(services, typeof(IPipelineBehavior<,>), typeof(RequestPreProcessorBehavior<,>), 0);
         }
 
-        if (config.RegisterPostProcessorBehavior)
+        if (!generatedPipeline && config.RegisterPostProcessorBehavior)
         {
-            services.AddTransient(typeof(IPipelineBehavior<,>), typeof(RequestPostProcessorBehavior<,>));
+            TryAddPipelineBehavior(services, typeof(IPipelineBehavior<,>), typeof(RequestPostProcessorBehavior<,>), 0);
         }
+
+        // Snapshot the closed message types known now. Repeated calls each contribute their own snapshot and the
+        // provider merges them before admission; types registered after this call use the overflow label.
+        services.AddSingleton(new MediatorMetricsKnownTypes(CollectClosedMessageTypes(services)));
 
         return services;
+    }
+
+    private static MediatorMetrics CreateMetrics(IServiceProvider sp)
+    {
+        var options = sp.GetService<MediatorMetricsOptions>() ?? MediatorMetricsOptions.Default;
+        if (!options.Enabled)
+        {
+            return new MediatorMetrics(options, Array.Empty<Type>());
+        }
+
+        var known = new List<Type>();
+        foreach (var contribution in sp.GetServices<MediatorMetricsKnownTypes>())
+        {
+            known.AddRange(contribution.Types);
+        }
+
+        foreach (var registry in sp.GetServices<Generated.IGeneratedMediatorRegistry>())
+        {
+            known.AddRange(registry.RequestTypes);
+            known.AddRange(registry.NotificationTypes);
+            known.AddRange(registry.StreamTypes);
+        }
+
+        return new MediatorMetrics(options, known, sp.GetService<IMeterFactory>());
+    }
+
+    private static List<Type> CollectClosedMessageTypes(IServiceCollection services)
+    {
+        var types = new List<Type>();
+        foreach (var descriptor in services)
+        {
+            var serviceType = descriptor.ServiceType;
+            if (!serviceType.IsGenericType || serviceType.ContainsGenericParameters)
+            {
+                continue;
+            }
+
+            var definition = serviceType.GetGenericTypeDefinition();
+            if (definition == typeof(IRequestHandler<,>) || definition == typeof(IRequestHandler<>) ||
+                definition == typeof(INotificationHandler<>) || definition == typeof(IStreamRequestHandler<,>))
+            {
+                types.Add(serviceType.GetGenericArguments()[0]);
+            }
+        }
+
+        return types;
+    }
+
+    /// <summary>Immutable per-call snapshot of the closed message types known to the registration.</summary>
+    internal sealed class MediatorMetricsKnownTypes
+    {
+        internal MediatorMetricsKnownTypes(IReadOnlyList<Type> types) => Types = types;
+
+        internal IReadOnlyList<Type> Types { get; }
     }
 
     private static INotificationPublisher ResolvePublisher(IServiceProvider sp, MeridianMediatorConfiguration config)
@@ -112,8 +192,14 @@ public static class ServiceCollectionExtensions
         return new ForeachAwaitPublisher();
     }
 
-    private static void RegisterHandlersFromAssembly(IServiceCollection services, Assembly assembly, ServiceLifetime lifetime = ServiceLifetime.Transient)
+    [RequiresUnreferencedCode("Assembly scanning reads every type of the assembly by reflection.")]
+    [RequiresDynamicCode("Assembly scanning registers reflection-activated implementations.")]
+    private static void RegisterHandlersFromAssembly(
+        IServiceCollection services,
+        Assembly assembly,
+        MeridianMediatorConfiguration config)
     {
+        var lifetime = config.Lifetime;
         var handlerInterfaceTypes = new[]
         {
             typeof(IRequestHandler<,>),
@@ -160,7 +246,8 @@ public static class ServiceCollectionExtensions
                     var descriptor = new ServiceDescriptor(interfaceType, type, lifetime);
                     if (genericDef == typeof(INotificationHandler<>))
                     {
-                        services.TryAddEnumerable(descriptor);
+                        if (!Generated.GeneratedMediatorRegistration.HasGeneratedRegistration(services, interfaceType, type))
+                            services.TryAddEnumerable(descriptor);
                     }
                     else
                     {
@@ -171,17 +258,26 @@ public static class ServiceCollectionExtensions
                 // Register pipeline-related types
                 if (pipelineInterfaceTypes.Contains(genericDef))
                 {
-                    services.Add(new ServiceDescriptor(interfaceType, type, lifetime));
+                    if (genericDef == typeof(IPipelineBehavior<,>))
+                    {
+                        config.RegisterScannedClosedBehavior(interfaceType, type, lifetime);
+                    }
+                    else
+                    {
+                        services.TryAddEnumerable(new ServiceDescriptor(interfaceType, type, lifetime));
+                    }
                 }
             }
         }
     }
 
-    private static void RegisterOpenOrClosedGeneric(IServiceCollection services, Type openServiceType, Type implementationType)
+    internal static void RegisterOpenOrClosedGeneric(IServiceCollection services, Type openServiceType, Type implementationType)
     {
+        if (!RuntimeFeature.IsDynamicCodeSupported)
+            throw DynamicRegistrationGuard.Unsupported("Registering a request processor outside a generated registry");
         if (implementationType.IsGenericTypeDefinition)
         {
-            services.AddTransient(openServiceType, implementationType);
+            services.TryAddEnumerable(ServiceDescriptor.Transient(openServiceType, implementationType));
         }
         else
         {
@@ -190,13 +286,48 @@ public static class ServiceCollectionExtensions
             {
                 if (iface.IsGenericType && iface.GetGenericTypeDefinition() == openServiceType)
                 {
-                    services.AddTransient(iface, implementationType);
+                    services.TryAddEnumerable(ServiceDescriptor.Transient(iface, implementationType));
                     return;
                 }
             }
 
             // Fallback: register directly
-            services.AddTransient(implementationType);
+            services.TryAddTransient(implementationType);
         }
     }
+
+    internal static void TryAddPipelineBehavior(
+        IServiceCollection services,
+        Type serviceType,
+        Type implementationType,
+        int order,
+        ServiceLifetime lifetime = ServiceLifetime.Transient)
+    {
+        if (!RuntimeFeature.IsDynamicCodeSupported)
+            throw DynamicRegistrationGuard.Unsupported("Registering a pipeline behavior outside a generated registry");
+        var permitDistinctOrders = serviceType == typeof(IPipelineBehavior<,>) && implementationType.IsGenericTypeDefinition;
+        if (services.Any(descriptor =>
+                descriptor.ServiceType == typeof(PipelineBehaviorRegistration) &&
+                descriptor.ImplementationInstance is PipelineBehaviorRegistration registration &&
+                registration.ServiceType == serviceType &&
+                registration.ImplementationType == implementationType &&
+                (!permitDistinctOrders || registration.Order == order)))
+        {
+            return;
+        }
+
+        var descriptor = new ServiceDescriptor(serviceType, implementationType, lifetime);
+        services.Add(descriptor);
+        services.AddSingleton(new PipelineBehaviorRegistration(serviceType, implementationType, order, descriptor));
+    }
+
+    internal static void RemoveOwnedPipelineDescriptors(IServiceCollection services)
+    {
+        foreach (var descriptor in services.Where(d => d.ImplementationInstance is PipelineBehaviorRegistration).ToArray())
+        {
+            services.Remove(((PipelineBehaviorRegistration)descriptor.ImplementationInstance!).Descriptor);
+            services.Remove(descriptor);
+        }
+    }
+    private sealed record PipelineBehaviorRegistration(Type ServiceType, Type ImplementationType, int Order, ServiceDescriptor Descriptor);
 }

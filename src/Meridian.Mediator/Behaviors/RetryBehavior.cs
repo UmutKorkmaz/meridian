@@ -1,4 +1,6 @@
+using Meridian.Mediator.Diagnostics;
 using Meridian.Mediator.Pipeline;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Meridian.Mediator.Behaviors;
 
@@ -35,6 +37,27 @@ public interface IRetryableRequest
 public class RetryBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TResponse>
     where TRequest : IRetryableRequest
 {
+    private readonly MediatorMetrics _metrics;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="RetryBehavior{TRequest, TResponse}"/> class with metrics disabled.
+    /// </summary>
+    public RetryBehavior()
+        : this(null)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="RetryBehavior{TRequest, TResponse}"/> class that reports
+    /// actual additional attempts to a provider-owned metrics component.
+    /// </summary>
+    /// <param name="metrics">The metrics component. A null value leaves metrics disabled.</param>
+    [ActivatorUtilitiesConstructor]
+    public RetryBehavior(MediatorMetrics? metrics)
+    {
+        _metrics = metrics ?? MediatorMetrics.Disabled;
+    }
+
     /// <inheritdoc/>
     public async Task<TResponse> Handle(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken cancellationToken)
     {
@@ -52,6 +75,13 @@ public class RetryBehavior<TRequest, TResponse> : IPipelineBehavior<TRequest, TR
                 attempt++;
                 var delay = RetryPolicy.CalculateDelay(request.RetryDelay, attempt);
                 await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+
+                // Counted immediately before the additional invocation actually runs: a retry whose delay was
+                // canceled never reaches this point.
+                if (_metrics.RetryEnabled)
+                {
+                    _metrics.RecordRetryAttempt(typeof(TRequest));
+                }
             }
         }
     }

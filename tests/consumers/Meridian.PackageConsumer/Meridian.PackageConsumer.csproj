@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <TargetFramework Condition="'$(ConsumerFramework)' == ''">net10.0</TargetFramework>
+    <TargetFramework Condition="'$(ConsumerFramework)' != ''">$(ConsumerFramework)</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <MeridianPackageVersion Condition="'$(MeridianPackageVersion)' == ''">2.1.3</MeridianPackageVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Meridian.Mapping" Version="[$(MeridianPackageVersion)]" />
+    <PackageReference Include="Meridian.Mediator" Version="[$(MeridianPackageVersion)]" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.9" />
+  </ItemGroup>
+</Project>

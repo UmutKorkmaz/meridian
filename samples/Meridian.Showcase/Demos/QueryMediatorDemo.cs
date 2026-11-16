@@ -82,6 +82,8 @@ public sealed class GetCatalogItemHandler : IRequestHandler<GetCatalogItemQuery,
     private static readonly ConcurrentDictionary<string, int> AttemptCounts = new();
     private readonly IMapper _mapper;
 
+    // Mutable backing state lets the command demo prove a refreshed cache read.
+    public static decimal CatalogPrice { get; set; } = 42.50m;
     public static int InvocationCount { get; private set; }
     public static string? LastCorrelationId { get; private set; }
 
@@ -105,7 +107,7 @@ public sealed class GetCatalogItemHandler : IRequestHandler<GetCatalogItemQuery,
         {
             Sku = request.Sku.Trim().ToUpperInvariant(),
             Name = "  Meridian Widget  ",
-            Price = 42.50m
+            Price = CatalogPrice
         };
 
         return Task.FromResult(_mapper.Map<CatalogItemDto>(entity));
@@ -114,6 +116,7 @@ public sealed class GetCatalogItemHandler : IRequestHandler<GetCatalogItemQuery,
     public static void Reset()
     {
         InvocationCount = 0;
+        CatalogPrice = 42.50m;
         LastCorrelationId = null;
         AttemptCounts.Clear();
     }

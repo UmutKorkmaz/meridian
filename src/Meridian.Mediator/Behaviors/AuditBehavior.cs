@@ -38,6 +38,10 @@ public sealed record AuditEntry(
 /// </remarks>
 public interface IAuditSink
 {
+    /// <summary>Records one completed audit entry.</summary>
+    /// <param name="entry">The redacted audit record.</param>
+    /// <param name="cancellationToken">Cancellation for the sink operation.</param>
+    /// <returns>A task that completes when the sink has accepted the record.</returns>
     Task RecordAsync(AuditEntry entry, CancellationToken cancellationToken);
 }
 
@@ -52,11 +56,14 @@ public sealed class LoggerAuditSink : IAuditSink
 {
     private readonly ILogger<LoggerAuditSink> _logger;
 
+    /// <summary>Creates a sink that writes audit entries to <paramref name="logger"/>.</summary>
+    /// <param name="logger">The destination logger.</param>
     public LoggerAuditSink(ILogger<LoggerAuditSink> logger)
     {
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
+    /// <inheritdoc/>
     public Task RecordAsync(AuditEntry entry, CancellationToken cancellationToken)
     {
         if (entry.Success)
@@ -108,17 +115,23 @@ public sealed class AuditBehavior<TRequest, TResponse> : IPipelineBehavior<TRequ
     private readonly IAuditSink _sink;
     private readonly MediatorTelemetryOptions _telemetryOptions;
 
+    /// <summary>Creates the behavior with privacy-preserving default telemetry options.</summary>
+    /// <param name="sink">The audit destination.</param>
     public AuditBehavior(IAuditSink sink)
         : this(sink, MediatorTelemetryOptions.Default)
     {
     }
 
+    /// <summary>Creates the behavior with explicit telemetry options.</summary>
+    /// <param name="sink">The audit destination.</param>
+    /// <param name="telemetryOptions">Controls whether failure messages are recorded.</param>
     public AuditBehavior(IAuditSink sink, MediatorTelemetryOptions telemetryOptions)
     {
         _sink = sink ?? throw new ArgumentNullException(nameof(sink));
         _telemetryOptions = telemetryOptions ?? throw new ArgumentNullException(nameof(telemetryOptions));
     }
 
+    /// <inheritdoc/>
     public async Task<TResponse> Handle(
         TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken cancellationToken)
     {
@@ -128,44 +141,48 @@ public sealed class AuditBehavior<TRequest, TResponse> : IPipelineBehavior<TRequ
         // Use allocation-free Stopwatch.GetTimestamp() and Stopwatch.GetElapsedTime() to avoid per-request heap allocations in hot paths.
         var startTimestamp = Stopwatch.GetTimestamp();
 
+        TResponse response;
         try
         {
-            var response = await next().ConfigureAwait(false);
-
-            await _sink.RecordAsync(
-                new AuditEntry(startedAt, correlationId, requestTypeName,
-                    (long)Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds, Success: true,
-                    FailureMessage: null, FailureType: null),
-                cancellationToken).ConfigureAwait(false);
-
-            return response;
+            response = await next().ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-
-            // Best-effort audit of the failure. We deliberately do not let a
-            // sink failure mask the original exception — if the sink throws,
-            // its exception is suppressed via AggregateException-style
-            // bookkeeping below.
+            using var cleanup = BehaviorFailure.CreateCleanupBudget();
             try
             {
                 await _sink.RecordAsync(
                     new AuditEntry(startedAt, correlationId, requestTypeName,
                         (long)Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds, Success: false,
                         FailureMessage: GetFailureMessage(ex), FailureType: ex.GetType().FullName),
-                    CancellationToken.None).ConfigureAwait(false);
+                    cleanup.Token).ConfigureAwait(false);
             }
             catch (Exception sinkEx)
             {
-                throw new AggregateException(
-                    "Request handler failed AND audit sink failed while recording the failure. " +
-                    "The original handler exception is the inner exception of this AggregateException; " +
-                    "the sink failure is the second.",
-                    ex, sinkEx);
+                var failure = new AggregateException(
+                    "Request handler failed AND audit sink failed while recording the failure.", ex, sinkEx);
+                BehaviorFailure.SuppressRetry(failure);
+                throw failure;
             }
 
             throw;
         }
+
+        try
+        {
+            await _sink.RecordAsync(
+                new AuditEntry(startedAt, correlationId, requestTypeName,
+                    (long)Stopwatch.GetElapsedTime(startTimestamp).TotalMilliseconds, Success: true,
+                    FailureMessage: null, FailureType: null),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            BehaviorFailure.SuppressRetry(ex);
+            throw;
+        }
+
+        return response;
     }
 
     private string GetFailureMessage(Exception ex) =>

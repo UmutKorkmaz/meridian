@@ -1,0 +1,37 @@
+using Microsoft.CodeAnalysis;
+
+namespace Meridian.Mapping.Generators.Diagnostics;
+
+internal static class MapperDiagnostics
+{
+    private const string Category = "Meridian.Mapping.Generators";
+    internal static readonly DiagnosticDescriptor NestedContainerMustBePartial = new(
+        "MERIDIANGEN001", "Nested mapper containers require partial containing types",
+        "Meridian mapper container '{0}' is nested inside non-partial containing type '{1}'. Mark every containing type partial or move the mapper container to namespace scope.",
+        Category, DiagnosticSeverity.Warning, true);
+    internal static readonly DiagnosticDescriptor LegacyUnmapped = new(
+        "MERIDIANGEN002", "Destination member is not mapped", "Destination member '{0}' is not mapped: {1}",
+        Category, DiagnosticSeverity.Info, true);
+    // MERIDIANGEN002 intentionally has one ID with a mode-dependent severity: Info in Legacy mapping mode and Error in
+    // Structural mode. Release tracking records the Legacy severity (AnalyzerReleases.Unshipped.md) and cannot express a
+    // second severity for the same ID, so RS2001 is suppressed for exactly this descriptor. Changing the ID, severity or
+    // opt-in rules would change consumer diagnostics and warnings-as-errors outcomes.
+#pragma warning disable RS2001
+    internal static readonly DiagnosticDescriptor StructuralUnmapped = new(
+        "MERIDIANGEN002", "Destination member is not mapped", "Destination member '{0}' is not mapped: {1}",
+        Category, DiagnosticSeverity.Error, true);
+#pragma warning restore RS2001
+    internal static readonly DiagnosticDescriptor UnsupportedConstruction = new(
+        "MERIDIANGEN003", "Destination construction is not supported",
+        "Meridian cannot generate a mapper for destination '{0}': {1}. Use a concrete destination with a supported constructor and satisfy its required members. Structural mode supports public constructor parameter mapping; runtime IMapper supports runtime-only construction configuration.",
+        Category, DiagnosticSeverity.Error, true);
+    internal static readonly DiagnosticDescriptor MethodCollision = new(
+        "MERIDIANGEN004", "Generated mapping method collision", "Meridian mapping method '{0}' conflicts: {1}",
+        Category, DiagnosticSeverity.Error, true);
+    internal static readonly DiagnosticDescriptor UnsupportedStructural = new(
+        "MERIDIANGEN005", "Generated mapping capability is not supported", "Meridian cannot generate this mapping: {0}",
+        Category, DiagnosticSeverity.Error, true);
+    internal static readonly DiagnosticDescriptor InvalidConfiguration = new(
+        "MERIDIANGEN006", "Invalid generated mapping configuration", "Meridian mapping configuration is invalid: {0}",
+        Category, DiagnosticSeverity.Error, true);
+}

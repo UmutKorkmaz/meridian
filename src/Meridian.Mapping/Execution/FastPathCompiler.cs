@@ -23,28 +23,51 @@ namespace Meridian.Mapping.Execution;
 /// the vast majority of real-world mappers.
 /// </para>
 /// <para>
-/// The generated expression tree uses <see cref="Expression.Property"/>
-/// for direct property access and <see cref="Expression.Convert"/> for
-/// primitive conversions. Nested type mappings are routed back through
-/// <see cref="IMapper.Map(object, Type, Type)"/> — safe, but one virtual
-/// call per nested property. When the nested TypeMap has its own
-/// fast path, the second call hits <see cref="MappingEngine.MapWithTypeMap"/>'s
-/// fast-path branch and stays on the hot path.
+/// The generated expression tree uses <see cref="Expression.Property(Expression, System.Reflection.PropertyInfo)"/>
+/// for direct property access. Non-assignable values are routed through
+/// <see cref="MappingEngine.ConvertValue"/>, which is the same conversion
+/// routine used by the interpreter. Nested type mappings therefore retain
+/// depth-aware dispatch while all conversion semantics have one owner.
+/// </para>
+/// <para>
+/// Eligible nested maps (see <see cref="TryCompile"/>) are emitted inline into the
+/// parent's delegate instead of dispatching through <see cref="MappingEngine.ConvertValue"/>.
+/// Inlining is a compile-time snapshot: replacing a nested <see cref="TypeMap.CompiledFastPath"/>
+/// afterwards does not affect an already-compiled parent, so tests that need the interpreter must
+/// clear every type map's delegate, parents included.
 /// </para>
 /// </remarks>
 internal static class FastPathCompiler
 {
-    private static readonly MethodInfo _engineMapMethod =
+    /// <summary>Maximum nesting depth of nested maps inlined into one compiled delegate.</summary>
+    internal const int MaxInlineDepth = 4;
+
+    /// <summary>Upper bound on nested maps inlined into one root delegate, bounding expression-tree growth for wide graphs.</summary>
+    internal const int MaxInlinedMapsPerRoot = 32;
+
+    private static readonly MethodInfo _engineConvertValueMethod =
         typeof(MappingEngine).GetMethod(
-            nameof(MappingEngine.Map),
-            BindingFlags.Public | BindingFlags.Instance,
+            nameof(MappingEngine.ConvertValue),
+            BindingFlags.NonPublic | BindingFlags.Instance,
             null,
-            [typeof(object), typeof(Type), typeof(Type), typeof(ResolutionContext)],
+            [typeof(object), typeof(Type), typeof(ResolutionContext), typeof(string), typeof(Type)],
             null)
-        ?? throw new InvalidOperationException("MappingEngine.Map(object, Type, Type, ResolutionContext) not found.");
+        ?? throw new InvalidOperationException("MappingEngine.ConvertValue(object, Type, ResolutionContext, string, Type) not found.");
+
+    private static readonly MethodInfo _engineConvertAssignableValueMethod =
+        typeof(MappingEngine).GetMethod(nameof(MappingEngine.ConvertAssignableValue), BindingFlags.NonPublic | BindingFlags.Instance)!;
 
     private static readonly MethodInfo _contextIncrementDepthMethod =
         typeof(ResolutionContext).GetMethod(nameof(ResolutionContext.IncrementDepth))!;
+
+    private static readonly MethodInfo _contextAtRelativeDepthMethod =
+        typeof(ResolutionContext).GetMethod(nameof(ResolutionContext.AtRelativeDepth), BindingFlags.NonPublic | BindingFlags.Instance)!;
+
+    private static readonly MethodInfo _engineIsDepthExceededMethod =
+        typeof(MappingEngine).GetMethod(nameof(MappingEngine.IsDepthExceeded), BindingFlags.NonPublic | BindingFlags.Instance)!;
+
+    private static readonly MethodInfo _objectGetTypeMethod =
+        typeof(object).GetMethod(nameof(GetType))!;
 
     /// <summary>
     /// Attempts to compile a fast-path delegate for <paramref name="typeMap"/>.
@@ -63,48 +86,50 @@ internal static class FastPathCompiler
     /// Value transformers run per-property in the interpreter; the fast
     /// path does not model them and refuses compilation.
     /// </param>
+    /// <param name="hasGeneratedMappings">Whether generated mapping resolvers are registered.</param>
+    /// <param name="findTypeMap">
+    /// Exact-pair lookup in the finished set of type maps. When supplied, nested maps that are themselves
+    /// eligible are inlined (see remarks); when <c>null</c> every nested map keeps the engine's generic dispatch.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// A nested pair <c>(S, D)</c> is inlined only when every condition the engine's generic dispatch
+    /// (<see cref="MappingEngine.ConvertValue"/>) would evaluate before reaching an exact-pair type map holds at
+    /// compile time: both types are non-collection, non-string reference types, <c>(S, D)</c> has an exact type
+    /// map that passes the same eligibility test as a root map (so no resolvers, actions, converters,
+    /// <c>PreserveReferences</c>, polymorphism or constructor mapping), and the pair is not already being
+    /// inlined (cycles keep engine dispatch). A non-sealed <c>S</c> additionally guards on the runtime type
+    /// being exactly <c>S</c> because the engine looks nested maps up by runtime type; any other value takes
+    /// the generic path unchanged. Each inlined map keeps its own depth check
+    /// (<see cref="MappingEngine.IsDepthExceeded"/>) at its relative depth, and its conversions use a context
+    /// created at the depth the engine's chain of <see cref="ResolutionContext.IncrementDepth"/> calls would
+    /// have produced, so per-map and inherited limits, items, state and services behave identically.
+    /// </para>
+    /// </remarks>
     public static Func<object, MappingEngine, ResolutionContext, object>? TryCompile(
         TypeMap typeMap,
         bool allowNullDestinationValues,
-        bool hasValueTransformers)
+        bool hasValueTransformers,
+        bool hasGeneratedMappings = false,
+        Func<Type, Type, TypeMap?>? findTypeMap = null)
     {
-        if (!IsSimpleTypeMap(typeMap, allowNullDestinationValues, hasValueTransformers))
-            return null;
-
-        var parameterlessCtor = typeMap.DestinationType.GetConstructor(
-            BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
-        if (parameterlessCtor is null)
-            return null;
-
-        var srcParam = Expression.Parameter(typeof(object), "srcObj");
-        var engineParam = Expression.Parameter(typeof(MappingEngine), "engine");
-        var ctxParam = Expression.Parameter(typeof(ResolutionContext), "ctx");
-        var srcTyped = Expression.Variable(typeMap.SourceType, "src");
-        var dst = Expression.Variable(typeMap.DestinationType, "dst");
-
-        var body = new List<Expression>
+        if (findTypeMap is not null)
         {
-            Expression.Assign(srcTyped, Expression.Convert(srcParam, typeMap.SourceType)),
-            Expression.Assign(dst, Expression.New(parameterlessCtor)),
-        };
-
-        foreach (var pm in typeMap.PropertyMaps)
-        {
-            if (pm.Ignored) continue;
-
-            var assign = TryBuildAssignment(pm, srcTyped, dst, engineParam, ctxParam);
-            if (assign is null) return null;  // unreachable given IsSimpleTypeMap, but defensive
-            body.Add(assign);
+            try
+            {
+                var inlined = TryBuildExpression(typeMap, allowNullDestinationValues, hasValueTransformers, hasGeneratedMappings, findTypeMap)?.Compile();
+                if (inlined is not null)
+                    return inlined;
+            }
+            catch
+            {
+                // An unanticipated inlining failure must not cost the root its (non-inlined) fast path.
+            }
         }
-
-        body.Add(Expression.Convert(dst, typeof(object)));
-
-        var block = Expression.Block(typeof(object), [srcTyped, dst], body);
 
         try
         {
-            return Expression.Lambda<Func<object, MappingEngine, ResolutionContext, object>>(
-                block, srcParam, engineParam, ctxParam).Compile();
+            return TryBuildExpression(typeMap, allowNullDestinationValues, hasValueTransformers, hasGeneratedMappings, findTypeMap: null)?.Compile();
         }
         catch
         {
@@ -112,6 +137,99 @@ internal static class FastPathCompiler
             // the interpreter is a safe fallback — correctness over speed.
             return null;
         }
+    }
+
+    /// <summary>
+    /// Builds, without compiling, the expression tree <see cref="TryCompile"/> would compile.
+    /// Also the seam tests use to inspect which nested maps were inlined.
+    /// </summary>
+    internal static Expression<Func<object, MappingEngine, ResolutionContext, object>>? TryBuildExpression(
+        TypeMap typeMap,
+        bool allowNullDestinationValues,
+        bool hasValueTransformers,
+        bool hasGeneratedMappings = false,
+        Func<Type, Type, TypeMap?>? findTypeMap = null)
+    {
+        if (!IsSimpleTypeMap(typeMap, allowNullDestinationValues, hasValueTransformers))
+            return null;
+
+        var srcParam = Expression.Parameter(typeof(object), "srcObj");
+        var engineParam = Expression.Parameter(typeof(MappingEngine), "engine");
+        var ctxParam = Expression.Parameter(typeof(ResolutionContext), "ctx");
+        var srcTyped = Expression.Variable(typeMap.SourceType, "src");
+
+        var state = new BuildState(
+            findTypeMap, allowNullDestinationValues, hasValueTransformers, hasGeneratedMappings, typeMap, engineParam, ctxParam);
+        var mapped = BuildMapBody(typeMap, srcTyped, level: 0, state);
+        if (mapped is null)
+            return null;
+
+        var block = Expression.Block(
+            typeof(object),
+            [srcTyped],
+            Expression.Assign(srcTyped, Expression.Convert(srcParam, typeMap.SourceType)),
+            Expression.Convert(mapped, typeof(object)));
+
+        try
+        {
+            return Expression.Lambda<Func<object, MappingEngine, ResolutionContext, object>>(
+                block, srcParam, engineParam, ctxParam);
+        }
+        catch
+        {
+            // Same defensive fallback as compilation: the interpreter is always correct.
+            return null;
+        }
+    }
+
+    /// <summary>Per-root build state: configuration flags, the shared engine/context parameters and the inlining bookkeeping.</summary>
+    private sealed class BuildState(
+        Func<Type, Type, TypeMap?>? findTypeMap,
+        bool allowNullDestinationValues,
+        bool hasValueTransformers,
+        bool hasGeneratedMappings,
+        TypeMap root,
+        ParameterExpression engine,
+        ParameterExpression ctx)
+    {
+        public Func<Type, Type, TypeMap?>? FindTypeMap { get; } = findTypeMap;
+        public bool AllowNullDestinationValues { get; } = allowNullDestinationValues;
+        public bool HasValueTransformers { get; } = hasValueTransformers;
+        public bool HasGeneratedMappings { get; } = hasGeneratedMappings;
+        public ParameterExpression Engine { get; } = engine;
+        public ParameterExpression Context { get; } = ctx;
+
+        /// <summary>Maps currently being emitted, root first; used to keep cycles on the engine's dispatch.</summary>
+        public List<TypeMap> Stack { get; } = [root];
+
+        public int InlinedMaps { get; set; }
+    }
+
+    /// <summary>
+    /// Emits <c>new TDest()</c> plus every member assignment for <paramref name="map"/>, typed as its
+    /// destination. <paramref name="level"/> is how many inlined maps deep this body sits (0 for the root).
+    /// </summary>
+    private static BlockExpression? BuildMapBody(TypeMap map, ParameterExpression srcTyped, int level, BuildState state)
+    {
+        var parameterlessCtor = map.DestinationType.GetConstructor(
+            BindingFlags.Public | BindingFlags.Instance, null, Type.EmptyTypes, null);
+        if (parameterlessCtor is null)
+            return null;
+
+        var dst = Expression.Variable(map.DestinationType, "dst");
+        var body = new List<Expression> { Expression.Assign(dst, Expression.New(parameterlessCtor)) };
+
+        foreach (var pm in map.PropertyMaps)
+        {
+            if (pm.Ignored) continue;
+
+            var assign = TryBuildAssignment(pm, srcTyped, dst, level, state);
+            if (assign is null) return null;  // unreachable given IsSimpleTypeMap, but defensive
+            body.Add(assign);
+        }
+
+        body.Add(dst);
+        return Expression.Block(map.DestinationType, [dst], body);
     }
 
     /// <summary>
@@ -256,12 +374,12 @@ internal static class FastPathCompiler
             || def == typeof(IReadOnlyDictionary<,>);
     }
 
-    private static Expression? TryBuildAssignment(
+    private static BinaryExpression? TryBuildAssignment(
         PropertyMap pm,
         ParameterExpression srcTyped,
         ParameterExpression dst,
-        ParameterExpression engineParam,
-        ParameterExpression ctxParam)
+        int level,
+        BuildState state)
     {
         var sourceExpr = BuildSourceExpression(pm, srcTyped);
         if (sourceExpr is null) return null;
@@ -274,49 +392,47 @@ internal static class FastPathCompiler
 
         if (destType.IsAssignableFrom(sourceExpr.Type))
         {
-            // Happy path: same type or source-is-subclass-of-dest.
-            valueExpr = sourceExpr;
-        }
-        else if (IsSimpleConvertible(sourceExpr.Type, destType))
-        {
-            // Primitive numeric conversion, enum<->number, nullable<T> fold.
-            valueExpr = Expression.Convert(sourceExpr, destType);
+            // With registered generated mappings, the shared dispatcher checks
+            // explicit/generated pairs before preserving an unregistered alias.
+            // Pass the source once; the dispatcher handles null without a second getter read.
+            valueExpr = state.HasGeneratedMappings
+                ? Expression.Convert(Expression.Call(state.Engine, _engineConvertAssignableValueMethod,
+                    Expression.Convert(sourceExpr, typeof(object)), Expression.Constant(sourceExpr.Type, typeof(Type)),
+                    Expression.Constant(destType, typeof(Type)),
+                    ChildContext(level, state)), destType)
+                : sourceExpr;
         }
         else
         {
-            // Nested object type — dispatch back through MappingEngine.Map
-            // with a depth-incremented context so DefaultMaxDepth and
-            // PreserveReferences enforcement survive the nested call.
-            var boxed = Expression.Convert(sourceExpr, typeof(object));
-            var incrementedCtx = Expression.Call(ctxParam, _contextIncrementDepthMethod);
-            var mapCall = Expression.Call(
-                engineParam,
-                _engineMapMethod,
-                boxed,
-                Expression.Constant(sourceExpr.Type, typeof(Type)),
-                Expression.Constant(destType, typeof(Type)),
-                incrementedCtx);
+            // Route non-assignable values and explicitly opted-in generated
+            // pairs through the interpreter's one conversion routine, or inline
+            // an eligible nested map. The member is read exactly once, like the
+            // interpreter's CompiledGetter, and the single value feeds both the
+            // null check and the conversion.
+            var member = Expression.Variable(sourceExpr.Type, "member");
+            var converted = TryInlineNestedMap(member, destType, destProp.Name, level, state)
+                ?? BuildEngineConversion(member, destType, destProp.Name, level, state);
 
-            var converted = destType == typeof(object)
-                ? (Expression)mapCall
-                : Expression.Convert(mapCall, destType);
-
-            if (!sourceExpr.Type.IsValueType)
+            Expression conditional;
+            if (!sourceExpr.Type.IsValueType || Nullable.GetUnderlyingType(sourceExpr.Type) is not null)
             {
-                // sourceExpr is a reference type — guard against null to avoid
-                // MappingEngine.Map treating null source as a no-op cast.
+                // Reference and nullable-value sources can produce a null boxed
+                // value. Match the interpreter by assigning the destination's
+                // default without asking the conversion routine to inspect null.
                 var nullConst = Expression.Constant(null, sourceExpr.Type);
-                var isNull = Expression.Equal(sourceExpr, nullConst);
+                var isNull = Expression.Equal(member, nullConst);
                 var defaultDest = destType.IsValueType
                     ? (Expression)Expression.Default(destType)
                     : Expression.Constant(null, destType);
 
-                valueExpr = Expression.Condition(isNull, defaultDest, converted);
+                conditional = Expression.Condition(isNull, defaultDest, converted);
             }
             else
             {
-                valueExpr = converted;
+                conditional = converted;
             }
+
+            valueExpr = Expression.Block(conditional.Type, [member], Expression.Assign(member, sourceExpr), conditional);
         }
 
         // Belt and suspenders: every branch above is supposed to land at
@@ -331,6 +447,89 @@ internal static class FastPathCompiler
         }
 
         return Expression.Assign(destAccess, valueExpr);
+    }
+
+    /// <summary>
+    /// The context the interpreter hands to member conversions of a map <paramref name="level"/> inlined
+    /// levels below the root: one level deeper than that map's own context. The root keeps the public
+    /// <see cref="ResolutionContext.IncrementDepth"/> call; deeper levels create the final context directly.
+    /// </summary>
+    private static MethodCallExpression ChildContext(int level, BuildState state) => level == 0
+        ? Expression.Call(state.Context, _contextIncrementDepthMethod)
+        : Expression.Call(state.Context, _contextAtRelativeDepthMethod, Expression.Constant(level + 1));
+
+    /// <summary>The engine's generic conversion for a non-null <paramref name="member"/>, typed as the destination.</summary>
+    private static Expression BuildEngineConversion(
+        ParameterExpression member, Type destType, string destinationMember, int level, BuildState state)
+    {
+        var conversionCall = Expression.Call(
+            state.Engine,
+            _engineConvertValueMethod,
+            Expression.Convert(member, typeof(object)),
+            Expression.Constant(destType, typeof(Type)),
+            ChildContext(level, state),
+            Expression.Constant(destinationMember, typeof(string)),
+            Expression.Constant(member.Type, typeof(Type)));
+
+        return destType == typeof(object)
+            ? conversionCall
+            : Expression.Convert(conversionCall, destType);
+    }
+
+    /// <summary>
+    /// Inlines the exact-pair type map for <paramref name="member"/> -> <paramref name="destType"/> when it is
+    /// provably what <see cref="MappingEngine.ConvertValue"/> would run; returns <c>null</c> to keep the generic dispatch.
+    /// </summary>
+    private static Expression? TryInlineNestedMap(
+        ParameterExpression member, Type destType, string destinationMember, int level, BuildState state)
+    {
+        var sourceType = member.Type;
+        if (state.FindTypeMap is null
+            || level >= MaxInlineDepth
+            || state.InlinedMaps >= MaxInlinedMapsPerRoot)
+            return null;
+
+        // ConvertValue only reaches an exact-pair type map for non-string, non-collection reference
+        // pairs (assignability and enum handling come first). Anything else keeps its dispatch.
+        if (!sourceType.IsClass || !destType.IsClass
+            || sourceType == typeof(string) || destType == typeof(string)
+            || MappingEngine.IsCollectionMapping(sourceType, destType, out _, out _))
+            return null;
+
+        var nested = state.FindTypeMap(sourceType, destType);
+        if (nested is null
+            || nested.SourceType != sourceType
+            || nested.DestinationType != destType
+            || state.Stack.Contains(nested)
+            || !IsSimpleTypeMap(nested, state.AllowNullDestinationValues, state.HasValueTransformers))
+            return null;
+
+        state.Stack.Add(nested);
+        state.InlinedMaps++;
+        var body = BuildMapBody(nested, member, level + 1, state);
+        state.Stack.RemoveAt(state.Stack.Count - 1);
+        if (body is null)
+            return null;
+
+        // The nested map is one level below this map: its own depth boundary (per-map override and inherited
+        // limits included) is evaluated exactly where the engine would, before any member is touched.
+        var depthExceeded = Expression.Call(
+            state.Engine,
+            _engineIsDepthExceededMethod,
+            state.Context,
+            Expression.Constant(level + 1),
+            Expression.Constant(nested.MaxDepth, typeof(int?)));
+        Expression mapped = Expression.Condition(depthExceeded, Expression.Constant(null, destType), body);
+
+        if (sourceType.IsSealed)
+            return mapped;
+
+        // The engine resolves the nested map by the value's runtime type; only a value of exactly the
+        // declared type is known to resolve to the inlined map.
+        var exactType = Expression.Equal(
+            Expression.Call(member, _objectGetTypeMethod),
+            Expression.Constant(sourceType, typeof(Type)));
+        return Expression.Condition(exactType, mapped, BuildEngineConversion(member, destType, destinationMember, level, state));
     }
 
     private static Expression? BuildSourceExpression(PropertyMap pm, ParameterExpression srcTyped)
@@ -377,27 +576,6 @@ internal static class FastPathCompiler
         }
 
         return null;
-    }
-
-    /// <summary>
-    /// Matches the interpreter's Convert.ChangeType-style conversion path
-    /// for primitive types, enums, and nullables — the cases where
-    /// <see cref="Expression.Convert"/> produces correct IL.
-    /// </summary>
-    private static bool IsSimpleConvertible(Type source, Type dest)
-    {
-        source = Nullable.GetUnderlyingType(source) ?? source;
-        dest = Nullable.GetUnderlyingType(dest) ?? dest;
-
-        if (source.IsPrimitive && dest.IsPrimitive) return true;
-        if (source.IsEnum && dest.IsEnum) return true;
-        if (source.IsEnum && dest.IsPrimitive) return true;
-        if (source.IsPrimitive && dest.IsEnum) return true;
-        if (source == typeof(decimal) && dest.IsPrimitive) return true;
-        if (source.IsPrimitive && dest == typeof(decimal)) return true;
-        if (source == dest) return true;
-
-        return false;
     }
 
     private sealed class ParameterReplacer : ExpressionVisitor

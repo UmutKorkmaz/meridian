@@ -1,0 +1,38 @@
+- name: Overview
+  href: index.md
+- name: Capabilities
+  href: capabilities.md
+- name: Guides
+  items:
+  - name: Migrate from AutoMapper
+    href: migrate-from-automapper.md
+  - name: Migrate from MediatR
+    href: migrate-from-mediatr.md
+  - name: Generated mapping
+    href: generated-mapping.md
+  - name: Generated mapping contract
+    href: generated-mapping-contract.md
+  - name: Source generator (summary)
+    href: source-gen-guide.md
+  - name: Optional integrations
+    href: integrations.md
+  - name: Mediator metrics
+    href: mediator-metrics.md
+  - name: Native AOT
+    href: native-aot.md
+  - name: Projection providers
+    href: projection-providers.md
+- name: Policies
+  items:
+  - name: Compatibility policy
+    href: compatibility-policy.md
+  - name: Deprecation ledger
+    href: deprecations.md
+  - name: Package compatibility
+    href: package-compatibility.md
+  - name: Warning dispositions
+    href: warning-dispositions.md
+  - name: Security model
+    href: security-model.md
+- name: API reference
+  href: api/

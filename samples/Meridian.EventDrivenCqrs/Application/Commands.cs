@@ -1,4 +1,5 @@
 using Meridian.Mediator;
+using Meridian.Mediator.Behaviors;
 
 namespace Meridian.EventDrivenCqrs;
 
@@ -7,7 +8,7 @@ public static class Commands
     public sealed record OpenOrderCommand(string CustomerId, string ProductSku, int Quantity)
         : IRequest<OrderStatusDto>, ICacheInvalidatingRequest
     {
-        public string[] CacheKeysToInvalidate => ["orders:summary"];
+        public string[] CacheKeysToInvalidate => [CacheKeyComposer.Compose<Queries.ListOrdersSummaryQuery>("orders:summary")];
     }
 
     public sealed class OpenOrderCommandHandler(IOrderWriteStore writeStore, IPublisher publisher, IMapper mapper)
@@ -59,7 +60,7 @@ public static class Commands
     public sealed record AdvanceOrderCommand(string OrderId, string NextStatus)
         : IRequest<OrderStatusDto>, ICacheInvalidatingRequest
     {
-        public string[] CacheKeysToInvalidate => ["orders:summary", $"order:view:{OrderId}"];
+        public string[] CacheKeysToInvalidate => [CacheKeyComposer.Compose<Queries.ListOrdersSummaryQuery>("orders:summary"), CacheKeyComposer.Compose<Queries.GetOrderProjectionQuery>($"order:view:{OrderId}")];
     }
 
     public sealed class AdvanceOrderCommandHandler(

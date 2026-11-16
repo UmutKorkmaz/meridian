@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+    <!-- XML reference docs ship beside each runtime assembly (Directory.Build.targets runs after the SDK computes DocumentationFile). -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsPackable>true</IsPackable>
+    <PackageId>Meridian.Mediator.FluentValidation</PackageId>
+    <Version>2.1.3</Version>
+    <Description>Async FluentValidation adapters for Meridian Mediator validation pipelines.</Description>
+    <PackageTags>mediator;fluentvalidation;validation;cqrs</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="FluentValidation" Version="12.1.1" />
+    <PackageReference Include="FluentValidation.DependencyInjectionExtensions" Version="12.1.1" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.9" />
+    <ProjectReference Include="../Meridian.Mediator/Meridian.Mediator.csproj" />
+  </ItemGroup>
+</Project>

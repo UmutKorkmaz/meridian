@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <TargetFramework Condition="'$(ConsumerFramework)' == ''">net10.0</TargetFramework>
+    <TargetFramework Condition="'$(ConsumerFramework)' != ''">$(ConsumerFramework)</TargetFramework>
+    <LangVersion>12.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+    <MeridianPackageVersion Condition="'$(MeridianPackageVersion)' == ''">2.1.3</MeridianPackageVersion>
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(BaseIntermediateOutputPath)generated</CompilerGeneratedFilesOutputPath>
+  </PropertyGroup>
+  <!-- Ordinary package verification builds and runs this consumer managed. eng/run-aot-smoke.ps1 -Combined
+       passes NativeAotSmoke=true to restore and publish, which selects Native AOT with trimming. Every
+       individual trim/AOT warning stays visible and fails the publish; nothing is suppressed. -->
+  <PropertyGroup Condition="'$(NativeAotSmoke)' == 'true'">
+    <PublishAot>true</PublishAot>
+    <PublishTrimmed>true</PublishTrimmed>
+    <TrimmerSingleWarn>false</TrimmerSingleWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Meridian.Mapping" Version="[$(MeridianPackageVersion)]" />
+    <PackageReference Include="Meridian.Mediator.Generators" Version="[$(MeridianPackageVersion)]" PrivateAssets="all" />
+    <PackageReference Include="Meridian.Mediator" Version="[$(MeridianPackageVersion)]" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.9" />
+  </ItemGroup>
+</Project>

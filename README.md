@@ -1,103 +1,182 @@
 # Meridian
 
-Meridian is a lightweight, framework-style toolset for .NET applications:
+[![NuGet Meridian.Mediator](https://img.shields.io/nuget/v/Meridian.Mediator.svg)](https://www.nuget.org/packages/Meridian.Mediator)
+[![NuGet Meridian.Mapping](https://img.shields.io/nuget/v/Meridian.Mapping.svg)](https://www.nuget.org/packages/Meridian.Mapping)
+[![CI](https://github.com/UmutKorkmaz/meridian/actions/workflows/ci.yml/badge.svg)](https://github.com/UmutKorkmaz/meridian/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 
-- `Meridian.Mapping` for high-performance object-to-object mapping
-- `Meridian.Mediator` for CQRS-style in-process request/response, notifications, and streams
+Lightweight building blocks for .NET **8 / 9 / 10** (package targets `net8.0`, `net9.0`, `net10.0`):
 
-## Simple Setup
+| Package | Role |
+| --- | --- |
+| **[Meridian.Mediator](https://www.nuget.org/packages/Meridian.Mediator)** | CQRS-style in-process requests, notifications, streams, and pipeline behaviors |
+| **[Meridian.Mapping](https://www.nuget.org/packages/Meridian.Mapping)** | Profile-based object mapping with safe-by-default depth/collection caps and a bundled source generator |
 
-The shortest useful mediator setup is:
+The published stable version is **2.1.3**. Generated mediator dispatch, Structural generated mapping, metrics and the
+optional `Meridian.Mediator.*` packages (FluentValidation, Caching, Redis, Entity Framework Core, ASP.NET Core,
+Generators) exist only in the unpublished candidate; see the [capability ledger](./docs/capabilities.md) for the
+version status and verified boundary of every feature.
 
-```csharp
-using Meridian.Mediator.Extensions;
-using Microsoft.Extensions.DependencyInjection;
+Docs site: <https://umutkorkmaz.github.io/meridian/>
 
-var services = new ServiceCollection();
+## Why Meridian
 
-services.AddMeridianMediator(cfg =>
-{
-    cfg.RegisterServicesFromAssemblyContaining<Program>();
-});
-```
+| Concern | Meridian stance |
+| --- | --- |
+| License | MIT |
+| Mediator + mapper | Two focused packages; optional backends live in separate packages |
+| Safety defaults | Mapping depth/collection caps; exception messages and stack traces excluded from telemetry by default (2.1.x) |
+| Performance | Benchmark harness in `benchmarks/`. Earlier numbers are historical and current candidate timings are inconclusive; no performance claim is made until they are re-measured on a dedicated host. |
+| AOT-friendly paths | Opt-in `[GenerateMapper]` methods and generated mediator registries; native execution verified on osx-arm64 only ([details](./docs/native-aot.md)) |
+| Supply chain | CodeQL and Scorecard workflows are configured; candidates are packed with recorded hashes and a dependency inventory. Signing, provenance attestations and publication are release steps that have not run for the candidate. |
 
-Use the focused abstractions from DI depending on what you need:
+Compatibility guarantees: [docs/compatibility-policy.md](./docs/compatibility-policy.md).  
+Security model: [docs/security-model.md](./docs/security-model.md).  
+2.1.x security notes: [CHANGELOG.md](./CHANGELOG.md) (`GHSA-f5v8-v6q3-q4h6`).
 
-```csharp
-var sender = provider.GetRequiredService<ISender>();
-var publisher = provider.GetRequiredService<IPublisher>();
-var streamSender = provider.GetRequiredService<IStreamSender>();
-```
-
-For pipeline registration, prefer the explicit APIs:
-
-```csharp
-services.AddMeridianMediator(cfg =>
-{
-    cfg.RegisterServicesFromAssemblyContaining<Program>();
-    cfg.AddBehavior<MyClosedBehavior>();
-    cfg.AddStreamBehavior<MyClosedStreamBehavior>();
-    cfg.AddOpenBehavior(typeof(MyOpenBehavior<,>));
-    cfg.AddOpenStreamBehavior(typeof(MyOpenStreamBehavior<,>));
-});
-```
-
-`AddBehavior(Type, Type, ...)` and `AddStreamBehavior(Type, Type)` remain only as compatibility shims. Prefer the typed or explicit closed-registration APIs for new code.
-
-## Getting Started
-
-Install from NuGet once published:
+## Install
 
 ```bash
-dotnet add package Meridian.Mapping
 dotnet add package Meridian.Mediator
+dotnet add package Meridian.Mapping
 ```
+
+## Quick start — Mediator
+
+<!-- snippet: mediator-registration -->
+```csharp
+var services = new ServiceCollection();
+services.AddMeridianMediator(cfg =>
+{
+    cfg.RegisterServicesFromAssemblyContaining<GetPriceHandler>();
+});
+```
+
+Focused abstractions:
+
+<!-- snippet: mediator-abstractions -->
+```csharp
+var sender = scope.ServiceProvider.GetRequiredService<ISender>();
+var publisher = scope.ServiceProvider.GetRequiredService<IPublisher>();
+var streams = scope.ServiceProvider.GetRequiredService<IStreamSender>();
+```
+
+Pipeline registration (prefer typed / open APIs):
+
+<!-- snippet: mediator-open-behavior -->
+```csharp
+services.AddTransient<IValidator<CreateProduct>, CreateProductValidator>();
+services.AddMeridianMediator(cfg =>
+{
+    cfg.RegisterServicesFromAssemblyContaining<GetPriceHandler>();
+    cfg.AddOpenBehavior(typeof(ValidationBehavior<,>));
+    cfg.AddBehavior<CreateProductTiming>(order: 10);
+});
+```
+
+Recommended composition (correlation → audit → localized validation):
+
+<!-- snippet: standard-pipeline -->
+```csharp
+var services = new ServiceCollection();
+services.AddSingleton<IAuditSink, RecordingAuditSink>();             // replace the logger sink
+services.AddSingleton(typeof(IStringLocalizer<>), typeof(MessageCatalog<>));
+services.AddMeridianStandard(typeof(RenameCatalog).Assembly);       // correlation -> audit -> localized validation
+```
+
+## Quick start — Mapping
+
+<!-- snippet: mapping-registration -->
+```csharp
+var services = new ServiceCollection();
+services.AddMeridianMapping(cfg =>
+{
+    cfg.AddProfile<CatalogProfile>();
+    // Defaults: DefaultMaxDepth = 64, DefaultMaxCollectionItems = 10_000
+});
+```
+
+<!-- snippet: mapping-profile -->
+```csharp
+public sealed class CatalogProfile : Profile
+{
+    public CatalogProfile()
+    {
+        CreateMap<Product, ProductDto>()
+            .ForMember(d => d.DisplayName, o => o.MapFrom(s => s.Name));
+    }
+}
+```
+
+Optional generated maps (Legacy by default, Structural opt-in, optional `IMapper` integration):
+[docs/generated-mapping.md](./docs/generated-mapping.md).
+
+Every C# block above is a compiled, executed region of
+[`tests/consumers/Meridian.DocumentationConsumer/Program.cs`](./tests/consumers/Meridian.DocumentationConsumer/Program.cs).
 
 ## Samples
 
-This repo includes architecture-focused samples to show different ways to structure a project with the same core primitives:
-
-| Sample | Architecture Style | Focus |
-| --- | --- | --- |
-| `samples/Meridian.QuickStart` | Minimal Consumer | Smallest end-to-end setup for mediator + mapping |
-| `samples/Meridian.Showcase` | Baseline | End-to-end mapping + mediator feature showcase |
-| `samples/Meridian.CleanArchitecture` | Clean Architecture | Domain/use-case boundaries, repository abstraction, transactional command flow |
-| `samples/Meridian.ModularMonolith` | Modular Monolith | Module-level service registration and cross-module notifications |
-| `samples/Meridian.VerticalSlice` | Vertical Slice | Feature-first request grouping with per-slice handlers and validation |
-| `samples/Meridian.EventDrivenCqrs` | Event-Driven CQRS | Write/read split using commands, notifications, and timeline stream |
-
-Run a sample:
+| Sample | Architecture |
+| --- | --- |
+| `samples/Meridian.QuickStart` | Minimal end-to-end mediator + mapping |
+| `samples/Meridian.Showcase` | Feature tour |
+| `samples/Meridian.CleanArchitecture` | Clean Architecture |
+| `samples/Meridian.ModularMonolith` | Modular monolith |
+| `samples/Meridian.VerticalSlice` | Vertical slice |
+| `samples/Meridian.EventDrivenCqrs` | Event-driven CQRS + streams |
+| `samples/Meridian.Hexagonal` | Ports & adapters |
+| `samples/Meridian.AspNetCore` | Orders HTTP API with the optional packages (.NET 10, needs Redis) |
+| `samples/Meridian.NativeAot` | Generated mediator dispatch and mapping published with Native AOT |
 
 ```bash
-dotnet run --project samples/Meridian.CleanArchitecture/Meridian.CleanArchitecture.csproj
+dotnet run --project samples/Meridian.QuickStart -c Release
 ```
 
-## Testing
+See [samples/README.md](./samples/README.md).
 
-From repository root:
+## Migration
+
+- [MediatR → Meridian.Mediator](./docs/migrate-from-mediatr.md)
+- [AutoMapper → Meridian.Mapping](./docs/migrate-from-automapper.md)
+
+## Testing
 
 ```bash
 dotnet restore Meridian.sln
 dotnet build Meridian.sln -c Release
-dotnet test Meridian.sln -c Release
+# Run the backend-free suites and filters from the required-check policy (PowerShell):
+pwsh -NoProfile -Command '$p = Get-Content -Raw eng/required-checks.json | ConvertFrom-Json; foreach ($t in "net8.0", "net9.0", "net10.0") { foreach ($e in $p.countProfiles.runtime.$t) { dotnet test "tests/$($e.suite)/$($e.suite).csproj" -c Release -f $t --no-build --filter $e.filter; if ($LASTEXITCODE -ne 0) { throw "Runtime tests failed" } } }'
 ```
 
-Validate every sample:
+Install the exact SDK/runtime families in [CONTRIBUTING](./CONTRIBUTING.md#installing-sdks-and-runtimes).
+The runtime profile above deliberately excludes provider cases. The full solution requires both
+`MERIDIAN_TEST_REDIS` and `MERIDIAN_TEST_POSTGRES`; missing backends fail rather than skip
+([owned provider setup](./docs/provider-testing.md)).
+
+## Documentation index
+
+- [docs/README.md](./docs/README.md) — full doc map
+- [docs/capabilities.md](./docs/capabilities.md) — capability and evidence ledger
+- [docs/integrations.md](./docs/integrations.md) — optional packages
+- [CHANGELOG.md](./CHANGELOG.md)
+- [SECURITY.md](./SECURITY.md)
+- [CONTRIBUTING.md](./CONTRIBUTING.md)
+- [docs/ROADMAP.md](./docs/ROADMAP.md)
+
+Build and check the documentation locally (compiles every snippet against the packed packages, checks links and
+builds the API reference under `artifacts/docs/`; nothing is published):
 
 ```bash
-dotnet run --project samples/Meridian.QuickStart/Meridian.QuickStart.csproj -c Release
-dotnet run --project samples/Meridian.Showcase/Meridian.Showcase.csproj -c Release
-dotnet run --project samples/Meridian.CleanArchitecture/Meridian.CleanArchitecture.csproj -c Release
-dotnet run --project samples/Meridian.ModularMonolith/Meridian.ModularMonolith.csproj -c Release
-dotnet run --project samples/Meridian.VerticalSlice/Meridian.VerticalSlice.csproj -c Release
-dotnet run --project samples/Meridian.EventDrivenCqrs/Meridian.EventDrivenCqrs.csproj -c Release
+pwsh eng/pack-packages.ps1 -CandidateVersion 2.1.4-local.1 -OutputDirectory artifacts/candidate
+pwsh eng/verify-docs.ps1 -Configuration Release -Feed artifacts/candidate
 ```
 
-## Preparing NuGet Packages
+## Packaging (maintainers)
+
+`eng/packages.json` is the single package inventory. Pack and verify a local candidate (never published by these
+scripts):
 
 ```bash
-dotnet pack src/Meridian.Mapping/Meridian.Mapping.csproj -c Release --output ./artifacts
-dotnet pack src/Meridian.Mediator/Meridian.Mediator.csproj -c Release --output ./artifacts
-dotnet nuget push ./artifacts/Meridian.Mapping.*.nupkg --source https://api.nuget.org/v3/index.json --api-key <API_KEY>
-dotnet nuget push ./artifacts/Meridian.Mediator.*.nupkg --source https://api.nuget.org/v3/index.json --api-key <API_KEY>
+pwsh eng/pack-packages.ps1 -CandidateVersion 2.1.4-local.1 -OutputDirectory artifacts/candidate
+pwsh eng/verify-packages.ps1 -CandidateVersion 2.1.4-local.1 -Feed artifacts/candidate
 ```

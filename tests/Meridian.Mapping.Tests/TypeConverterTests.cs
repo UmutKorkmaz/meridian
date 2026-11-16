@@ -7,7 +7,7 @@ namespace Meridian.Mapping.Tests;
 
 public class TypeConverterTests
 {
-    private IMapper CreateMapper(Action<IMapperConfigurationExpression> configure)
+    private static IMapper CreateMapper(Action<IMapperConfigurationExpression> configure)
     {
         var config = new MapperConfiguration(configure);
         return config.CreateMapper();
@@ -15,7 +15,7 @@ public class TypeConverterTests
 
     // ── Converter implementations ───────────────────────────────
 
-    private class SourceToDestConverter : ITypeConverter<Source, Destination>
+    private sealed class SourceToDestConverter : ITypeConverter<Source, Destination>
     {
         public Destination Convert(Source source, Destination destination, ResolutionContext context)
         {
@@ -29,7 +29,7 @@ public class TypeConverterTests
         }
     }
 
-    private class DoubleAgeConverter : ITypeConverter<Source, Destination>
+    private sealed class DoubleAgeConverter : ITypeConverter<Source, Destination>
     {
         public Destination Convert(Source source, Destination destination, ResolutionContext context)
         {
@@ -73,7 +73,7 @@ public class TypeConverterTests
                 .ConvertUsing(s => new Destination
                 {
                     Id = s.Id * 10,
-                    Name = s.Name.ToUpper(),
+                    Name = s.Name.ToUpperInvariant(),
                     Email = s.Email,
                     Age = s.Age
                 });
@@ -116,5 +116,30 @@ public class TypeConverterTests
         var result = mapper.Map<Source, Destination>(source);
 
         Assert.Equal(30, result.Age); // Doubled by converter
+    }
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ConverterFailuresRetainOriginalExceptionForInstanceAndDiPaths(bool useDi)
+    {
+        var failure = new InvalidOperationException("converter failed");
+        var converter = new FailingConverter(failure);
+        using var provider = new ServiceCollection().AddSingleton(converter).BuildServiceProvider();
+        var configuration = new MapperConfiguration(c =>
+        {
+            var map = c.CreateMap<Source, Destination>();
+            if (useDi) map.ConvertUsing<FailingConverter>();
+            else map.ConvertUsing(converter);
+        });
+        var mapper = configuration.CreateMapper(provider);
+        var observed = Record.Exception(() => mapper.Map<Source, Destination>(new() { Id = 42 }));
+        Assert.NotNull(observed);
+        Assert.Same(failure, observed.GetBaseException());
+    }
+    public sealed class FailingConverter : ITypeConverter<Source, Destination>
+    {
+        private readonly Exception _failure;
+        public FailingConverter(Exception failure) => _failure = failure;
+        public Destination Convert(Source source, Destination destination, ResolutionContext context) => throw _failure;
     }
 }

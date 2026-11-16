@@ -1,3 +1,4 @@
+using System.Runtime.ExceptionServices;
 using Meridian.Mediator.Pipeline;
 
 namespace Meridian.Mediator.Behaviors;
@@ -61,17 +62,68 @@ public class TransactionBehavior<TRequest, TResponse> : IPipelineBehavior<TReque
     /// <inheritdoc/>
     public async Task<TResponse> Handle(TRequest request, RequestHandlerDelegate<TResponse> next, CancellationToken cancellationToken)
     {
-        await using var transaction = await _transactionProvider.BeginAsync(cancellationToken);
+        if (_transactionProvider is ITransactionExecutionProvider executionProvider)
+        {
+            try
+            {
+                return await executionProvider.ExecuteAsync(token =>
+                {
+                    token.ThrowIfCancellationRequested();
+                    return next();
+                }, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception failure)
+            {
+                BehaviorFailure.SuppressRetry(failure);
+                throw;
+            }
+        }
+
+        var transaction = await _transactionProvider.BeginAsync(cancellationToken).ConfigureAwait(false);
+        TResponse response = default!;
+        List<Exception>? failures = null;
+        var handlerSucceeded = false;
         try
         {
-            var response = await next();
-            await transaction.CommitAsync(cancellationToken);
-            return response;
+            response = await next().ConfigureAwait(false);
+            handlerSucceeded = true;
+            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
         }
-        catch
+        catch (Exception primary)
         {
-            await transaction.RollbackAsync(cancellationToken);
-            throw;
+            failures = [primary];
+            if (handlerSucceeded) BehaviorFailure.SuppressRetry(primary);
+            using var cleanup = BehaviorFailure.CreateCleanupBudget();
+            try
+            {
+                await transaction.RollbackAsync(cleanup.Token).ConfigureAwait(false);
+            }
+            catch (Exception rollbackFailure)
+            {
+                failures.Add(rollbackFailure);
+            }
         }
+
+        // DisposeAsync has no cancellation contract. Await it to observe its failure;
+        // providers must bound their own disposal rather than leaving orphaned work.
+        try
+        {
+            await transaction.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception disposalFailure)
+        {
+            failures ??= [];
+            failures.Add(disposalFailure);
+            BehaviorFailure.SuppressRetry(disposalFailure);
+        }
+
+        if (failures is { Count: 1 }) ExceptionDispatchInfo.Capture(failures[0]).Throw();
+        if (failures is { Count: > 1 })
+        {
+            var failure = new AggregateException("Request and transaction cleanup failed.", failures);
+            BehaviorFailure.SuppressRetry(failure);
+            throw failure;
+        }
+        return response;
     }
 }

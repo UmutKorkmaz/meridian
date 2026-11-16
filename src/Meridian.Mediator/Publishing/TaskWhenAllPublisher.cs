@@ -1,3 +1,5 @@
+using System.Runtime.ExceptionServices;
+
 namespace Meridian.Mediator.Publishing;
 
 /// <summary>
@@ -24,7 +26,7 @@ public class TaskWhenAllPublisher : INotificationPublisher
     /// <inheritdoc/>
     public async Task Publish(IEnumerable<NotificationHandlerExecutor> handlerExecutors, INotification notification, CancellationToken cancellationToken)
     {
-        // ⚡ Bolt: Fast path for zero handlers - prevents SemaphoreSlim and List<Task> allocations
+        // Fast path for zero handlers - prevents SemaphoreSlim and List<Task> allocations
         if (handlerExecutors is ICollection<NotificationHandlerExecutor> { Count: 0 } ||
             handlerExecutors is IReadOnlyCollection<NotificationHandlerExecutor> { Count: 0 })
         {
@@ -32,6 +34,7 @@ public class TaskWhenAllPublisher : INotificationPublisher
         }
 
         List<Task> tasks;
+        var exceptions = new List<Exception>();
         using var limiter = _maxDegreeOfParallelism == -1 ? null : new SemaphoreSlim(_maxDegreeOfParallelism);
 
         if (handlerExecutors is ICollection<NotificationHandlerExecutor> collection)
@@ -51,14 +54,14 @@ public class TaskWhenAllPublisher : INotificationPublisher
         {
             foreach (var handler in handlerExecutors)
             {
-                tasks.Add(handler.HandlerCallback(notification, cancellationToken));
+                tasks.Add(RunUnbounded(handler, notification, cancellationToken));
             }
         }
         else
         {
             foreach (var handler in handlerExecutors)
             {
-                tasks.Add(RunBounded(handler, notification, cancellationToken, limiter));
+                tasks.Add(RunBounded(handler, notification, limiter, exceptions, cancellationToken));
             }
         }
 
@@ -70,14 +73,16 @@ public class TaskWhenAllPublisher : INotificationPublisher
         }
         catch
         {
-            // Task.WhenAll throws only the first exception — collect ALL faulted exceptions.
-            var exceptions = tasks
-                .Where(t => t.IsFaulted)
-                .SelectMany(t => t.Exception!.InnerExceptions)
-                .ToList();
+            // Await surfaces one fault; retain each original handler task's complete fault set.
+            if (limiter is null)
+                exceptions.AddRange(tasks.Where(t => t.IsFaulted)
+                    .SelectMany(t => t.Exception!.InnerExceptions));
+
+            if (exceptions.Count == 0)
+                throw; // preserve the selected cancellation when no handler task faulted
 
             if (exceptions.Count == 1)
-                throw; // preserve original stack trace for single exception
+                ExceptionDispatchInfo.Capture(exceptions[0]).Throw();
 
             throw new AggregateException(
                 $"{exceptions.Count} notification handler(s) failed for {notification.GetType().Name}.",
@@ -85,16 +90,50 @@ public class TaskWhenAllPublisher : INotificationPublisher
         }
     }
 
+    private static Task RunUnbounded(
+        NotificationHandlerExecutor handler,
+        INotification notification,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return handler.HandlerCallback(notification, cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            return CaptureSynchronousFailure(exception);
+        }
+    }
+
+    private static async Task CaptureSynchronousFailure(Exception exception)
+    {
+        await Task.FromException(exception).ConfigureAwait(false);
+    }
+
     private static async Task RunBounded(
         NotificationHandlerExecutor handler,
         INotification notification,
-        CancellationToken cancellationToken,
-        SemaphoreSlim limiter)
+        SemaphoreSlim limiter,
+        List<Exception> exceptions,
+        CancellationToken cancellationToken)
     {
         await limiter.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await handler.HandlerCallback(notification, cancellationToken).ConfigureAwait(false);
+            var handlerTask = RunUnbounded(handler, notification, cancellationToken);
+            try
+            {
+                await handlerTask.ConfigureAwait(false);
+            }
+            catch
+            {
+                if (handlerTask.IsFaulted)
+                {
+                    lock (exceptions)
+                        exceptions.AddRange(handlerTask.Exception!.InnerExceptions);
+                }
+                throw;
+            }
         }
         finally
         {
@@ -127,7 +166,7 @@ public class ResilientTaskWhenAllPublisher : INotificationPublisher
     /// <inheritdoc/>
     public async Task Publish(IEnumerable<NotificationHandlerExecutor> handlerExecutors, INotification notification, CancellationToken cancellationToken)
     {
-        // ⚡ Bolt: Fast path for zero handlers - prevents SemaphoreSlim and List<Task> allocations
+        // Fast path for zero handlers - prevents SemaphoreSlim and List<Task> allocations
         if (handlerExecutors is ICollection<NotificationHandlerExecutor> { Count: 0 } ||
             handlerExecutors is IReadOnlyCollection<NotificationHandlerExecutor> { Count: 0 })
         {
@@ -156,14 +195,14 @@ public class ResilientTaskWhenAllPublisher : INotificationPublisher
         {
             foreach (var handler in handlerExecutors)
             {
-                tasks.Add(RunResilient(handler, notification, cancellationToken, exceptions));
+                tasks.Add(RunResilient(handler, notification, exceptions, cancellationToken));
             }
         }
         else
         {
             foreach (var handler in handlerExecutors)
             {
-                tasks.Add(RunBoundedResilient(handler, notification, cancellationToken, limiter, exceptions));
+                tasks.Add(RunBoundedResilient(handler, notification, limiter, exceptions, cancellationToken));
             }
         }
 
@@ -180,8 +219,8 @@ public class ResilientTaskWhenAllPublisher : INotificationPublisher
     private static async Task RunResilient(
         NotificationHandlerExecutor handler,
         INotification notification,
-        CancellationToken cancellationToken,
-        List<Exception> exceptions)
+        List<Exception> exceptions,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -199,14 +238,14 @@ public class ResilientTaskWhenAllPublisher : INotificationPublisher
     private static async Task RunBoundedResilient(
         NotificationHandlerExecutor handler,
         INotification notification,
-        CancellationToken cancellationToken,
         SemaphoreSlim limiter,
-        List<Exception> exceptions)
+        List<Exception> exceptions,
+        CancellationToken cancellationToken)
     {
         await limiter.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            await RunResilient(handler, notification, cancellationToken, exceptions).ConfigureAwait(false);
+            await RunResilient(handler, notification, exceptions, cancellationToken).ConfigureAwait(false);
         }
         finally
         {

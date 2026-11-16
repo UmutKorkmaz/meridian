@@ -2,3 +2,6 @@
 *.cs text eol=lf
 *.csproj text eol=lf
 *.sln text eol=lf
+# Candidate evidence binds these source bytes across runner operating systems.
+/eng/packages.json text eol=lf
+/docs/deprecations.md text eol=lf

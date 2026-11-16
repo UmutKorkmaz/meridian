@@ -2,11 +2,11 @@
 
 **Audience:** library maintainers, security researchers, and adopters
 evaluating Meridian for use in regulated environments.
-**Last reviewed:** 2026-04-16
+**Last reviewed:** 2026-07-21
 
 This document describes what Meridian defends against, what it does not,
 and how its defences are enforced. For vulnerability reporting, see
-[SECURITY.md](../SECURITY.md).
+[SECURITY.md](https://github.com/UmutKorkmaz/meridian/blob/main/SECURITY.md).
 
 ## Scope
 
@@ -262,8 +262,21 @@ source in a non-obvious way (truncation, sign flip, lossy conversion).
   library that shares the CLR heap can inspect Meridian's caches and
   compiled delegates. If you need isolation, use OS-level boundaries.
 
+## Compatibility of security defaults
+
+Security defaults (depth/collection caps, telemetry privacy flags, publisher
+fan-out caps introduced in 2.1.x) are part of Meridian’s consumer contract.
+We will not silently loosen privacy or remove caps on a minor release.
+See [compatibility-policy.md](./compatibility-policy.md).
+
 ## Reporting a suspected issue
 
 If you believe you have found a security defect in Meridian, follow the
-private reporting flow in [SECURITY.md](../SECURITY.md). Do not open a
+private reporting flow in [SECURITY.md](https://github.com/UmutKorkmaz/meridian/blob/main/SECURITY.md). Do not open a
 public GitHub issue for unpatched security findings.
+
+## Mediator cleanup and uncertain outcomes
+
+Failure cleanup uses independent cooperative five-second cancellation tokens for claim release, rollback, and failure-audit writes. Uncooperative providers and tokenless transaction disposal can still block. Cleanup failures remain observable beside the primary failure. Successful business work followed by completion/commit/audit/cache-invalidation failure is uncertain; the built-in retry behavior suppresses replay, and atomic claims remain held for provider reconciliation. Cache invalidation stops at the first removal failure, including caller cancellation after success; the failed removal may have applied and later keys are not attempted. Because Meridian does not identify the failing key, applications must reconcile provider state and re-invalidate all of the request's keys without replaying completed business work. Legacy non-atomic stores still permit duplicates. There is no exactly-once guarantee.
+
+Default audit/log/Activity output excludes request payloads and exception messages/stacks. Explicit Activity stack-only opt-in retains stack frames while omitting the exception message. Consumers control correlation IDs and provider logging, so secrets must not be placed in either. See the failure-composition migration notes in [compatibility-policy.md](compatibility-policy.md).

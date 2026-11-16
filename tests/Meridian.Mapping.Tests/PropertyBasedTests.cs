@@ -1,6 +1,8 @@
+using System.Diagnostics;
+using System.Globalization;
 using FsCheck;
-using FsCheck.Xunit;
 using Meridian.Mapping;
+using Xunit.Abstractions;
 
 namespace Meridian.Mapping.Tests;
 
@@ -12,12 +14,32 @@ namespace Meridian.Mapping.Tests;
 /// documented <see cref="MeridianMappingLimitException"/>.
 /// </summary>
 /// <remarks>
-/// Each property runs FsCheck's default 100 generated cases unless
-/// otherwise specified. The <c>MaxTest</c> can be bumped in CI via
-/// <c>[Property(MaxTest = 10000)]</c> for nightly runs.
+/// Ordinary runs retain budgets of 100/100/50/10/25. Nightly runs use
+/// MERIDIAN_FSCHECK_MAX_TEST for scalar/depth properties and
+/// MERIDIAN_FSCHECK_COLLECTION_MAX_TEST for collection properties.
 /// </remarks>
-public class PropertyBasedTests
+public class PropertyBasedTests : IDisposable
 {
+    private readonly ITestOutputHelper _output;
+    private readonly Stopwatch _elapsed = Stopwatch.StartNew();
+
+    public PropertyBasedTests(ITestOutputHelper output) => _output = output;
+
+    public void Dispose()
+    {
+        _elapsed.Stop();
+        GC.SuppressFinalize(this);
+        using var process = Process.GetCurrentProcess();
+        // Peak working set is shared by this test host, not attributable to
+        // this property alone. FsCheck prints the actual successful case count.
+        var peak = process.PeakWorkingSet64;
+        var peakText = peak > 0 ? peak.ToString(CultureInfo.InvariantCulture) : "unavailable";
+        var replay = Environment.GetEnvironmentVariable("MERIDIAN_FSCHECK_REPLAY")
+            ?? "random (FsCheck reports replay on failure)";
+        _output.WriteLine(FormattableString.Invariant(
+            $"Property evidence: configured_replay={replay}; elapsed_ms={_elapsed.Elapsed.TotalMilliseconds:F3}; test_host_peak_working_set_bytes={peakText}; managed_heap_in_use_bytes={GC.GetTotalMemory(false)}; managed_heap_budget_bytes={GC.GetGCMemoryInfo().TotalAvailableMemoryBytes}"));
+    }
+
     public sealed record Scalar(int I, long L, double D, bool B, string S);
     public sealed record ScalarDto(int I, long L, double D, bool B, string S);
 
@@ -47,7 +69,7 @@ public class PropertyBasedTests
 
     // ── Round-trip property ────────────────────────────────────────────
 
-    [Property(DisplayName = "Round-trip MutableScalar -> Dto -> MutableScalar preserves all fields")]
+    [MeridianProperty(DisplayName = "Round-trip MutableScalar -> Dto -> MutableScalar preserves all fields")]
     public bool RoundTrip_Preserves_All_Fields(int i, long l, NormalFloat d, bool b, NonNull<string> s)
     {
         var original = new MutableScalar { I = i, L = l, D = d.Item, B = b, S = s.Item };
@@ -74,7 +96,7 @@ public class PropertyBasedTests
         public string Payload { get; set; } = "";
     }
 
-    [Property(DisplayName = "Mapping arbitrary string payloads never throws anything but documented exceptions")]
+    [MeridianProperty(DisplayName = "Mapping arbitrary string payloads never throws anything but documented exceptions")]
     public bool Arbitrary_Payloads_Never_Throw_Undocumented(NonNull<string> payload)
     {
         var cfg = new MapperConfiguration(c =>
@@ -116,8 +138,7 @@ public class PropertyBasedTests
     private static readonly IMapper _collectionMapper = new MapperConfiguration(c =>
         c.CreateMap<Item, ItemDto>()).CreateMapper();
 
-    [Property(DisplayName = "Any collection whose size fits within the cap maps successfully",
-              MaxTest = 50)]  // each case allocates up to ~10k items — bound test count
+    [CollectionMeridianProperty(50, DisplayName = "Any collection whose size fits within the cap maps successfully")]  // each case allocates up to ~10k items — bound test count
     public bool Bounded_Collection_Always_Succeeds(PositiveInt sizeHint)
     {
         var size = Math.Min(sizeHint.Item, 5_000);  // stay well under DefaultMaxCollectionItems=10_000
@@ -128,8 +149,7 @@ public class PropertyBasedTests
         return result.Count == size;
     }
 
-    [Property(DisplayName = "Any collection exceeding the cap throws MeridianMappingLimitException",
-              MaxTest = 10)]  // fewer cases since each allocates 10k+ items
+    [CollectionMeridianProperty(10, DisplayName = "Any collection exceeding the cap throws MeridianMappingLimitException")]  // fewer cases since each allocates 10k+ items
     public bool Oversized_Collection_Always_Throws(PositiveInt overCap)
     {
         var size = 10_001 + (overCap.Item % 100);  // just above the cap, not huge
@@ -164,8 +184,7 @@ public class PropertyBasedTests
     private static readonly IMapper _nodeMapper = new MapperConfiguration(c =>
         c.CreateMap<Node, NodeDto>()).CreateMapper();
 
-    [Property(DisplayName = "Any finite depth graph maps without StackOverflow under default config",
-              MaxTest = 25)]
+    [MeridianProperty(25, DisplayName = "Any finite depth graph maps without StackOverflow under default config")]
     public bool Arbitrary_Depth_Never_Stack_Overflows(PositiveInt depthHint)
     {
         var depth = Math.Min(depthHint.Item, 5_000);  // bounded to keep test runtime reasonable

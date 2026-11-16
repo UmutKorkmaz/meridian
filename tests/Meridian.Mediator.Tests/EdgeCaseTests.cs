@@ -42,7 +42,7 @@ public class IntRequestHandler : IRequestHandler<IntRequest, int>
 [Collection("VoidCommandHandler-static-state")]
 public class EdgeCaseTests
 {
-    private IMediator BuildMediator(Action<IServiceCollection>? configureServices = null)
+    private static IMediator BuildMediator(Action<IServiceCollection>? configureServices = null)
     {
         var services = new ServiceCollection();
         services.AddMeridianMediator(cfg => { });
@@ -126,7 +126,14 @@ public class EdgeCaseTests
         Assert.Equal("()", Unit.Value.ToString());
         Assert.Equal(0, Unit.Value.GetHashCode());
         Assert.True(Unit.Value.Equals(Unit.Value));
-        Assert.False(Unit.Value.Equals("not a unit"));
+    }
+
+    [Theory]
+    [InlineData("not a unit")]
+    [InlineData(null)]
+    public void UnitType_ObjectEquality_RejectsNonUnitValues(object? value)
+    {
+        Assert.False(Unit.Value.Equals(value));
     }
 
     [Fact]

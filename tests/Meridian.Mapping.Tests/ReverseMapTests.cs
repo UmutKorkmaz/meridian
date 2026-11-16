@@ -2,7 +2,7 @@ namespace Meridian.Mapping.Tests;
 
 public class ReverseMapTests
 {
-    private IMapper CreateMapper(Action<IMapperConfigurationExpression> configure)
+    private static IMapper CreateMapper(Action<IMapperConfigurationExpression> configure)
     {
         var config = new MapperConfiguration(configure);
         return config.CreateMapper();
@@ -66,5 +66,20 @@ public class ReverseMapTests
         Assert.Equal("John", reversed.FullName);
         Assert.Equal("Eng", reversed.Title);
         Assert.Equal(5, reversed.YearsExperience);
+    }
+    [Fact]
+    public void ReverseRenameAllowsExplicitOverrideAndExplicitNestedPath()
+    {
+        var mapper = CreateMapper(c => c.CreateMap<PersonSource, FlatPersonDest>()
+            .ReverseMap()
+            .ForMember(d => d.Name, o => o.MapFrom(s => "override:" + s.Name))
+            .ForPath(d => d.Address.City, o => o.MapFrom(s => s.AddressCity)));
+        var result = mapper.Map<FlatPersonDest, PersonSource>(new()
+        {
+            Name = "Meridian",
+            AddressCity = "Istanbul"
+        });
+        Assert.Equal("override:Meridian", result.Name);
+        Assert.Equal("Istanbul", result.Address.City);
     }
 }

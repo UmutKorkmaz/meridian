@@ -1,0 +1,507 @@
+{
+  "schema": "meridian-coverage-baseline/1",
+  "tolerance": 0.5,
+  "targets": {
+    "line": 90.0,
+    "branch": 80.0
+  },
+  "aggregate": {
+    "line": 91.7,
+    "branch": 80.9
+  },
+  "files": {
+    "src/Meridian.Mapping.Generators/Diagnostics/MapperDiagnostics.cs": {
+      "line": 100.0,
+      "branch": null
+    },
+    "src/Meridian.Mapping.Generators/Discovery/ConstructorModelBuilder.cs": {
+      "line": 74.5,
+      "branch": 69.3
+    },
+    "src/Meridian.Mapping.Generators/Discovery/ConversionClassifier.cs": {
+      "line": 97.0,
+      "branch": 84.7
+    },
+    "src/Meridian.Mapping.Generators/Discovery/MappingModelBuilder.cs": {
+      "line": 93.4,
+      "branch": 82.3
+    },
+    "src/Meridian.Mapping.Generators/Discovery/MemberConfigurationBuilder.cs": {
+      "line": 99.2,
+      "branch": 93.7
+    },
+    "src/Meridian.Mapping.Generators/Discovery/StructuralBindingBuilder.cs": {
+      "line": 100.0,
+      "branch": 79.0
+    },
+    "src/Meridian.Mapping.Generators/Emission/CollectionEmitter.cs": {
+      "line": 100.0,
+      "branch": 100.0
+    },
+    "src/Meridian.Mapping.Generators/Emission/ConstructionEmitter.cs": {
+      "line": 100.0,
+      "branch": 92.3
+    },
+    "src/Meridian.Mapping.Generators/Emission/ConversionEmitter.cs": {
+      "line": 100.0,
+      "branch": 100.0
+    },
+    "src/Meridian.Mapping.Generators/Emission/GeneratedContextEmitter.cs": {
+      "line": 100.0,
+      "branch": null
+    },
+    "src/Meridian.Mapping.Generators/Emission/MapperEmitter.cs": {
+      "line": 100.0,
+      "branch": 98.2
+    },
+    "src/Meridian.Mapping.Generators/Emission/NestedMapperEmitter.cs": {
+      "line": 100.0,
+      "branch": 87.5
+    },
+    "src/Meridian.Mapping.Generators/Emission/ResolverEmitter.cs": {
+      "line": 100.0,
+      "branch": 92.8
+    },
+    "src/Meridian.Mapping.Generators/MeridianMapperGenerator.cs": {
+      "line": 100.0,
+      "branch": 50.0
+    },
+    "src/Meridian.Mapping.Generators/Models/ConstructorModel.cs": {
+      "line": 87.5,
+      "branch": 100.0
+    },
+    "src/Meridian.Mapping.Generators/Models/ConversionModel.cs": {
+      "line": 100.0,
+      "branch": null
+    },
+    "src/Meridian.Mapping.Generators/Models/GeneratedOptions.cs": {
+      "line": 100.0,
+      "branch": null
+    },
+    "src/Meridian.Mapping.Generators/Models/MapPairModel.cs": {
+      "line": 81.8,
+      "branch": 100.0
+    },
+    "src/Meridian.Mapping.Generators/Models/MapperModel.cs": {
+      "line": 60.0,
+      "branch": 54.7
+    },
+    "src/Meridian.Mapping.Generators/Models/MemberModel.cs": {
+      "line": 100.0,
+      "branch": null
+    },
+    "src/Meridian.Mapping/Configuration/CtorParamConfigurationExpression.cs": {
+      "line": 100.0,
+      "branch": 50.0
+    },
+    "src/Meridian.Mapping/Configuration/MappingExpression.cs": {
+      "line": 91.5,
+      "branch": 54.6
+    },
+    "src/Meridian.Mapping/Configuration/MemberConfigurationExpression.cs": {
+      "line": 95.3,
+      "branch": 50.0
+    },
+    "src/Meridian.Mapping/Configuration/SourceMemberConfigurationExpression.cs": {
+      "line": 100.0,
+      "branch": null
+    },
+    "src/Meridian.Mapping/Configuration/ValueTransformerCollection.cs": {
+      "line": 100.0,
+      "branch": 100.0
+    },
+    "src/Meridian.Mapping/Execution/DelegateCompiler.cs": {
+      "line": 100.0,
+      "branch": null
+    },
+    "src/Meridian.Mapping/Execution/FastPathCompiler.cs": {
+      "line": 96.4,
+      "branch": 81.5
+    },
+    "src/Meridian.Mapping/Execution/MappingEngine.cs": {
+      "line": 96.0,
+      "branch": 86.6
+    },
+    "src/Meridian.Mapping/Execution/MethodLookupCache.cs": {
+      "line": 88.8,
+      "branch": 50.0
+    },
+    "src/Meridian.Mapping/Execution/ObjectCreator.cs": {
+      "line": 72.9,
+      "branch": 43.7
+    },
+    "src/Meridian.Mapping/Execution/PropertyMap.cs": {
+      "line": 96.8,
+      "branch": 64.0
+    },
+    "src/Meridian.Mapping/Execution/ResolutionContext.cs": {
+      "line": 100.0,
+      "branch": 80.0
+    },
+    "src/Meridian.Mapping/Execution/TypeMap.cs": {
+      "line": 100.0,
+      "branch": 62.5
+    },
+    "src/Meridian.Mapping/Extensions/ServiceCollectionExtensions.cs": {
+      "line": 97.1,
+      "branch": 100.0
+    },
+    "src/Meridian.Mapping/Generated/GeneratedMappingDescriptor.cs": {
+      "line": 100.0,
+      "branch": null
+    },
+    "src/Meridian.Mapping/Generated/GeneratedMappingExtensions.cs": {
+      "line": 88.8,
+      "branch": 75.0
+    },
+    "src/Meridian.Mapping/Generated/GeneratedMappingOptions.cs": {
+      "line": 100.0,
+      "branch": null
+    },
+    "src/Meridian.Mapping/IConfigurationProvider.cs": {
+      "line": 100.0,
+      "branch": null
+    },
+    "src/Meridian.Mapping/IMapperConfigurationExpression.cs": {
+      "line": 0.0,
+      "branch": 0.0
+    },
+    "src/Meridian.Mapping/Mapper.cs": {
+      "line": 64.5,
+      "branch": 62.5
+    },
+    "src/Meridian.Mapping/MapperConfiguration.cs": {
+      "line": 74.8,
+      "branch": 60.5
+    },
+    "src/Meridian.Mapping/MapperConfigurationExpression.cs": {
+      "line": 77.3,
+      "branch": 78.5
+    },
+    "src/Meridian.Mapping/MappingOperationOptions.cs": {
+      "line": 100.0,
+      "branch": null
+    },
+    "src/Meridian.Mapping/MeridianEnumMappingException.cs": {
+      "line": 100.0,
+      "branch": 50.0
+    },
+    "src/Meridian.Mapping/MeridianMappingLimitException.cs": {
+      "line": 96.0,
+      "branch": 50.0
+    },
+    "src/Meridian.Mapping/Profile.cs": {
+      "line": 50.0,
+      "branch": 42.8
+    },
+    "src/Meridian.Mapping/Queryable/ExpressionBuilder.cs": {
+      "line": 92.6,
+      "branch": 82.7
+    },
+    "src/Meridian.Mapping/Queryable/QueryableExtensions.cs": {
+      "line": 79.3,
+      "branch": 56.2
+    },
+    "src/Meridian.Mapping/TurkishCultureSupport.cs": {
+      "line": 100.0,
+      "branch": null
+    },
+    "src/Meridian.Mediator.AspNetCore/MeridianExceptionHandler.cs": {
+      "line": 92.0,
+      "branch": 90.3
+    },
+    "src/Meridian.Mediator.AspNetCore/MeridianHttpExtensions.cs": {
+      "line": 100.0,
+      "branch": 100.0
+    },
+    "src/Meridian.Mediator.Caching/CacheContractRegistry.cs": {
+      "line": 100.0,
+      "branch": 93.1
+    },
+    "src/Meridian.Mediator.Caching/CacheKeyDecorator.cs": {
+      "line": 100.0,
+      "branch": 100.0
+    },
+    "src/Meridian.Mediator.Caching/CacheProviderOptions.cs": {
+      "line": 100.0,
+      "branch": null
+    },
+    "src/Meridian.Mediator.Caching/CacheValueCodec.cs": {
+      "line": 100.0,
+      "branch": 92.3
+    },
+    "src/Meridian.Mediator.Caching/CacheValueDataException.cs": {
+      "line": 100.0,
+      "branch": 50.0
+    },
+    "src/Meridian.Mediator.Caching/DistributedCacheProvider.cs": {
+      "line": 100.0,
+      "branch": 90.0
+    },
+    "src/Meridian.Mediator.Caching/JsonCacheValueSerializer.cs": {
+      "line": 100.0,
+      "branch": 87.5
+    },
+    "src/Meridian.Mediator.Caching/MemoryCacheProvider.cs": {
+      "line": 98.7,
+      "branch": 96.8
+    },
+    "src/Meridian.Mediator.Caching/ScopedCacheProvider.cs": {
+      "line": 97.5,
+      "branch": 100.0
+    },
+    "src/Meridian.Mediator.Caching/ServiceCollectionExtensions.cs": {
+      "line": 98.2,
+      "branch": 90.0
+    },
+    "src/Meridian.Mediator.EntityFrameworkCore/EfTransactionOptions.cs": {
+      "line": 100.0,
+      "branch": null
+    },
+    "src/Meridian.Mediator.EntityFrameworkCore/EfTransactionScope.cs": {
+      "line": 100.0,
+      "branch": 83.3
+    },
+    "src/Meridian.Mediator.EntityFrameworkCore/EfTransactionScopeProvider.cs": {
+      "line": 98.0,
+      "branch": 93.0
+    },
+    "src/Meridian.Mediator.EntityFrameworkCore/ServiceCollectionExtensions.cs": {
+      "line": 100.0,
+      "branch": 91.6
+    },
+    "src/Meridian.Mediator.FluentValidation/FluentValidationAdapter.cs": {
+      "line": 100.0,
+      "branch": 100.0
+    },
+    "src/Meridian.Mediator.FluentValidation/ServiceCollectionExtensions.cs": {
+      "line": 100.0,
+      "branch": 100.0
+    },
+    "src/Meridian.Mediator.Generators/Diagnostics/MediatorDiagnostics.cs": {
+      "line": 100.0,
+      "branch": null
+    },
+    "src/Meridian.Mediator.Generators/Emission/BehaviorRegistryEmitter.cs": {
+      "line": 92.9,
+      "branch": 82.2
+    },
+    "src/Meridian.Mediator.Generators/Emission/NotificationRegistryEmitter.cs": {
+      "line": 100.0,
+      "branch": 100.0
+    },
+    "src/Meridian.Mediator.Generators/Emission/RequestRegistryEmitter.cs": {
+      "line": 100.0,
+      "branch": 100.0
+    },
+    "src/Meridian.Mediator.Generators/Emission/StreamRegistryEmitter.cs": {
+      "line": 100.0,
+      "branch": 100.0
+    },
+    "src/Meridian.Mediator.Generators/MeridianMediatorGenerator.cs": {
+      "line": 96.5,
+      "branch": 74.8
+    },
+    "src/Meridian.Mediator.Generators/Models/RegistryModel.cs": {
+      "line": 75.0,
+      "branch": 75.0
+    },
+    "src/Meridian.Mediator.Redis/RedisIdempotencyOptions.cs": {
+      "line": 100.0,
+      "branch": 83.3
+    },
+    "src/Meridian.Mediator.Redis/RedisLeasedIdempotencyStore.cs": {
+      "line": 95.4,
+      "branch": 77.2
+    },
+    "src/Meridian.Mediator.Redis/ServiceCollectionExtensions.cs": {
+      "line": 95.0,
+      "branch": 83.3
+    },
+    "src/Meridian.Mediator/Behaviors/AuditBehavior.cs": {
+      "line": 98.2,
+      "branch": 91.6
+    },
+    "src/Meridian.Mediator/Behaviors/AuthorizationBehavior.cs": {
+      "line": 100.0,
+      "branch": 100.0
+    },
+    "src/Meridian.Mediator/Behaviors/CachingBehavior.cs": {
+      "line": 100.0,
+      "branch": 92.8
+    },
+    "src/Meridian.Mediator/Behaviors/CorrelationContext.cs": {
+      "line": 100.0,
+      "branch": 100.0
+    },
+    "src/Meridian.Mediator/Behaviors/IdempotencyBehavior.cs": {
+      "line": 98.3,
+      "branch": 95.8
+    },
+    "src/Meridian.Mediator/Behaviors/IdempotencyLease.cs": {
+      "line": 100.0,
+      "branch": null
+    },
+    "src/Meridian.Mediator/Behaviors/IdempotencyOutcomeUnknownException.cs": {
+      "line": 100.0,
+      "branch": null
+    },
+    "src/Meridian.Mediator/Behaviors/LeasedIdempotencyClaim.cs": {
+      "line": 100.0,
+      "branch": null
+    },
+    "src/Meridian.Mediator/Behaviors/LocalizedValidationBehavior.cs": {
+      "line": 91.6,
+      "branch": 83.3
+    },
+    "src/Meridian.Mediator/Behaviors/LoggingBehavior.cs": {
+      "line": 100.0,
+      "branch": 66.6
+    },
+    "src/Meridian.Mediator/Behaviors/RetryBehavior.cs": {
+      "line": 95.0,
+      "branch": 100.0
+    },
+    "src/Meridian.Mediator/Behaviors/RetryPolicy.cs": {
+      "line": 100.0,
+      "branch": 100.0
+    },
+    "src/Meridian.Mediator/Behaviors/TransactionBehavior.cs": {
+      "line": 100.0,
+      "branch": 93.7
+    },
+    "src/Meridian.Mediator/Behaviors/ValidationBehavior.cs": {
+      "line": 100.0,
+      "branch": 91.6
+    },
+    "src/Meridian.Mediator/Diagnostics/MediatorMetrics.cs": {
+      "line": 97.8,
+      "branch": 91.2
+    },
+    "src/Meridian.Mediator/Diagnostics/ObservedStream.cs": {
+      "line": 90.9,
+      "branch": 85.5
+    },
+    "src/Meridian.Mediator/Extensions/DynamicRegistrationGuard.cs": {
+      "line": 0.0,
+      "branch": null
+    },
+    "src/Meridian.Mediator/Extensions/MediatorHandlerValidation.cs": {
+      "line": 68.3,
+      "branch": 63.0
+    },
+    "src/Meridian.Mediator/Extensions/MeridianMediatorConfiguration.cs": {
+      "line": 100.0,
+      "branch": 100.0
+    },
+    "src/Meridian.Mediator/Extensions/ServiceCollectionExtensions.cs": {
+      "line": 96.3,
+      "branch": 94.8
+    },
+    "src/Meridian.Mediator/Extensions/StandardPipelineExtensions.cs": {
+      "line": 100.0,
+      "branch": 83.3
+    },
+    "src/Meridian.Mediator/Generated/GeneratedMediatorBehaviorCapability.cs": {
+      "line": 100.0,
+      "branch": null
+    },
+    "src/Meridian.Mediator/Generated/GeneratedMediatorComposition.cs": {
+      "line": 97.1,
+      "branch": 82.1
+    },
+    "src/Meridian.Mediator/Generated/GeneratedMediatorContribution.cs": {
+      "line": 100.0,
+      "branch": 100.0
+    },
+    "src/Meridian.Mediator/Generated/GeneratedMediatorRegistration.cs": {
+      "line": 97.2,
+      "branch": 86.8
+    },
+    "src/Meridian.Mediator/Generated/GeneratedRequestExceptionProcessorBehavior.cs": {
+      "line": 97.1,
+      "branch": 100.0
+    },
+    "src/Meridian.Mediator/Mediator.cs": {
+      "line": 97.1,
+      "branch": 84.6
+    },
+    "src/Meridian.Mediator/MediatorMetricsOptions.cs": {
+      "line": 100.0,
+      "branch": null
+    },
+    "src/Meridian.Mediator/MediatorTelemetryOptions.cs": {
+      "line": 100.0,
+      "branch": null
+    },
+    "src/Meridian.Mediator/Pipeline/RequestExceptionHandlerState.cs": {
+      "line": 100.0,
+      "branch": null
+    },
+    "src/Meridian.Mediator/Pipeline/RequestExceptionProcessorBehavior.cs": {
+      "line": 97.8,
+      "branch": 100.0
+    },
+    "src/Meridian.Mediator/Pipeline/RequestPostProcessorBehavior.cs": {
+      "line": 100.0,
+      "branch": 100.0
+    },
+    "src/Meridian.Mediator/Pipeline/RequestPreProcessorBehavior.cs": {
+      "line": 100.0,
+      "branch": 100.0
+    },
+    "src/Meridian.Mediator/Publishing/ForeachAwaitPublisher.cs": {
+      "line": 100.0,
+      "branch": 100.0
+    },
+    "src/Meridian.Mediator/Publishing/NotificationHandlerExecutor.cs": {
+      "line": 66.6,
+      "branch": null
+    },
+    "src/Meridian.Mediator/Publishing/TaskWhenAllPublisher.cs": {
+      "line": 98.9,
+      "branch": 100.0
+    },
+    "src/Meridian.Mediator/Unit.cs": {
+      "line": 81.8,
+      "branch": null
+    },
+    "src/Meridian.Mediator/Wrappers/NotificationHandlerWrapper.cs": {
+      "line": 31.5,
+      "branch": 25.0
+    },
+    "src/Meridian.Mediator/Wrappers/RequestHandlerWrapperImpl.cs": {
+      "line": 82.7,
+      "branch": 83.3
+    },
+    "src/Meridian.Mediator/Wrappers/StreamRequestHandlerWrapper.cs": {
+      "line": 76.1,
+      "branch": 83.3
+    }
+  },
+  "hotPaths": [
+    "src/Meridian.Mapping/Execution/FastPathCompiler.cs",
+    "src/Meridian.Mapping/Execution/MappingEngine.cs",
+    "src/Meridian.Mediator/Mediator.cs",
+    "src/Meridian.Mediator/Generated/GeneratedMediatorBehaviorCapability.cs",
+    "src/Meridian.Mediator/Generated/GeneratedMediatorComposition.cs",
+    "src/Meridian.Mediator/Generated/GeneratedMediatorContribution.cs",
+    "src/Meridian.Mediator/Generated/GeneratedMediatorRegistration.cs",
+    "src/Meridian.Mediator/Generated/GeneratedRequestExceptionProcessorBehavior.cs",
+    "src/Meridian.Mediator/Behaviors/AuditBehavior.cs",
+    "src/Meridian.Mediator/Behaviors/AuthorizationBehavior.cs",
+    "src/Meridian.Mediator/Behaviors/CachingBehavior.cs",
+    "src/Meridian.Mediator/Behaviors/IdempotencyBehavior.cs",
+    "src/Meridian.Mediator/Behaviors/LocalizedValidationBehavior.cs",
+    "src/Meridian.Mediator/Behaviors/RetryBehavior.cs",
+    "src/Meridian.Mediator/Behaviors/RetryPolicy.cs",
+    "src/Meridian.Mediator/Behaviors/TransactionBehavior.cs",
+    "src/Meridian.Mediator/Behaviors/ValidationBehavior.cs",
+    "src/Meridian.Mediator/Diagnostics/MediatorMetrics.cs",
+    "src/Meridian.Mediator/Diagnostics/ObservedStream.cs",
+    "src/Meridian.Mediator/Extensions/ServiceCollectionExtensions.cs",
+    "src/Meridian.Mediator/Extensions/MeridianMediatorConfiguration.cs",
+    "src/Meridian.Mediator/Extensions/DynamicRegistrationGuard.cs",
+    "src/Meridian.Mediator/Publishing/TaskWhenAllPublisher.cs"
+  ]
+}

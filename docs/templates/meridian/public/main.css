@@ -1,0 +1,4 @@
+/* Long API names and package paths must wrap inside narrow search results. */
+#search-results .sr-item {
+    overflow-wrap: anywhere;
+}

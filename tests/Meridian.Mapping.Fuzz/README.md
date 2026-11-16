@@ -65,12 +65,67 @@ corpus under `findings/queue/`. Commit interesting new seeds back.
 
 ## CI integration — deferred
 
-The PLAN.md Phase 4.2 calls for a nightly CI workflow. We are deferring
+The [docs/PLAN.md](../../docs/PLAN.md) Phase 4.2 calls for a nightly CI workflow. We are deferring
 that because AFL is an OS-level dependency and GitHub-hosted runners
 install it inconsistently. The `.github/workflows/fuzz.yml` workflow in
 this repository runs the property-based tests in FsCheck with a high
-iteration count every night; those cover the same invariants at lower
-fidelity.
+iteration count every night at 02:00 UTC and on manual dispatch. These
+FsCheck runs cover mapping invariants at lower fidelity; they do not execute
+AFL or establish coverage-guided fuzzing results.
+
+### Property budgets and evidence
+
+`MeridianPropertyAttribute` reads `MERIDIAN_FSCHECK_MAX_TEST` for scalar and
+depth properties. `CollectionMeridianPropertyAttribute` separately reads
+`MERIDIAN_FSCHECK_COLLECTION_MAX_TEST`. Unset variables preserve the ordinary
+PR budgets: round-trip 100, payload 100, bounded collection 50, oversized
+collection 10, and depth 25. Overrides must be positive 32-bit integers;
+empty, malformed, zero, negative, and overflowing values fail explicitly.
+Constructor default budgets replace named `MaxTest` assignments, which would
+otherwise overwrite an environment override after attribute construction.
+
+Nightly CI uses 10000 scalar/depth cases and 500 cases for each collection
+property on net10.0. The 30-minute job budget and 1 GiB managed heap limit
+(`DOTNET_GCHeapHardLimit=40000000`, hexadecimal bytes) keep the run bounded.
+The managed heap limit is not a process RSS limit.
+
+Success output includes FsCheck's **actual** `Ok, passed ... tests.` count
+for each property. Each property also records elapsed milliseconds, the
+shared test host's measured peak working set when the OS reports it, managed
+heap bytes in use, and the runtime's effective managed heap budget. A zero
+peak from the OS is logged as `unavailable` (observed with .NET on macOS).
+Peak working set belongs to the entire host and cannot be attributed to one
+property. Managed heap usage is sampled at disposal and shared by the host;
+it is not a per-property allocation total. Elapsed time spans the test
+instance lifetime.
+Detailed console logs, TRX execution durations, and SDK/runtime information
+are uploaded in `fuzz-property-results`, including on failure.
+
+FsCheck's normal success message omits replay seeds. CI therefore generates
+an unsigned 64-bit seed for each run and supplies the optional
+`MERIDIAN_FSCHECK_REPLAY=seed,gamma` to the base FsCheck attribute. Gamma must
+be an odd unsigned 64-bit integer; CI uses `11400714819323198485`. All five
+properties receive that replay pair. The pair printed in property evidence
+is the configured pair consumed by FsCheck (covered by a runner-configuration
+test), not an inferred seed from success output. Unset replay preserves
+FsCheck's ordinary PR randomness. Replay validation is intentionally limited
+to this two-component form, without an optional start size.
+
+To reproduce the nightly property suite in a fresh process:
+
+```bash
+MERIDIAN_FSCHECK_MAX_TEST=10000 \
+MERIDIAN_FSCHECK_COLLECTION_MAX_TEST=500 \
+MERIDIAN_FSCHECK_REPLAY=12345,11400714819323198485 \
+DOTNET_GCHeapHardLimit=40000000 \
+dotnet test tests/Meridian.Mapping.Tests -c Release -f net10.0 \
+    --filter FullyQualifiedName~PropertyBasedTests \
+    --logger 'console;verbosity=detailed'
+```
+
+Use the recorded nightly replay pair to investigate a particular run.
+Environment variables are read only; configuration tests use an injected
+reader rather than changing process-global variables during discovery.
 
 When a dedicated runner with AFL installed is available, the workflow
 can call this harness directly:

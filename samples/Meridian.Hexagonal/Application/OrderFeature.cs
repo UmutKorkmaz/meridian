@@ -7,18 +7,31 @@ public sealed class HexagonalProfile : Profile
     public HexagonalProfile()
     {
         CreateMap<Product, CatalogItem>()
+            .ForCtorParam(nameof(CatalogItem.Price), opt => opt.MapFrom(src => src.UnitPrice.Amount))
+            .ForCtorParam(nameof(CatalogItem.PriceLabel), opt => opt.MapFrom(src => src.UnitPrice.Display))
+            .ForCtorParam(nameof(CatalogItem.InStock), opt => opt.MapFrom(src => src.Stock > 0))
             .ForMember(dest => dest.PriceLabel, opt => opt.MapFrom(src => src.UnitPrice.Display))
             .ForMember(dest => dest.Price, opt => opt.MapFrom(src => src.UnitPrice.Amount))
             .ForMember(dest => dest.InStock, opt => opt.MapFrom(src => src.Stock > 0))
             .ForMember(dest => dest.Stock, opt => opt.MapFrom(src => src.Stock));
 
         CreateMap<Order, OrderConfirmation>()
+            .ForCtorParam(nameof(OrderConfirmation.OrderId), opt => opt.MapFrom(src => src.Id))
+            .ForCtorParam(nameof(OrderConfirmation.Customer), opt => opt.MapFrom(src => src.CustomerName))
+            .ForCtorParam(nameof(OrderConfirmation.UnitPriceLabel), opt => opt.MapFrom(src => (src.Total / Math.Max(src.Quantity, 1)).ToString()))
+            .ForCtorParam(nameof(OrderConfirmation.TotalLabel), opt => opt.MapFrom(src => $"{src.Total:0.00} {src.Currency}"))
             .ForMember(dest => dest.OrderId, opt => opt.MapFrom(src => src.Id))
             .ForMember(dest => dest.Customer, opt => opt.MapFrom(src => src.CustomerName))
             .ForMember(dest => dest.UnitPriceLabel, opt => opt.MapFrom(src => src.Total / Math.Max(src.Quantity, 1)))
             .ForMember(dest => dest.TotalLabel, opt => opt.MapFrom(src => $"{src.Total:0.00} {src.Currency}"));
 
         CreateMap<Order, OrderDetails>()
+            .ForCtorParam(nameof(OrderDetails.OrderId), opt => opt.MapFrom(src => src.Id))
+            .ForCtorParam(nameof(OrderDetails.Customer), opt => opt.MapFrom(src => src.CustomerName))
+            .ForCtorParam(nameof(OrderDetails.Status), opt => opt.MapFrom(_ => "Accepted"))
+            .ForCtorParam(nameof(OrderDetails.TotalLabel), opt => opt.MapFrom(src => $"{src.Total:0.00} {src.Currency}"))
+            .ForCtorParam(nameof(OrderDetails.StockImpact), opt => opt.MapFrom(src => src.Quantity))
+            .ForCtorParam(nameof(OrderDetails.PlacedAt), opt => opt.MapFrom(src => src.CreatedAt.ToString("s")))
             .ForMember(dest => dest.OrderId, opt => opt.MapFrom(src => src.Id))
             .ForMember(dest => dest.Customer, opt => opt.MapFrom(src => src.CustomerName))
             .ForMember(dest => dest.Status, opt => opt.MapFrom(_ => "Accepted"))
@@ -72,7 +85,7 @@ public sealed class BrowseCatalogQueryValidator : IValidator<BrowseCatalogQuery>
 public sealed record PlaceOrderCommand(string CustomerName, string ProductSku, int Quantity)
     : IRequest<OrderConfirmation>, ICacheInvalidatingRequest, ITransactionalRequest
 {
-    public string[] CacheKeysToInvalidate => ["hexagonal:catalog"];
+    public string[] CacheKeysToInvalidate => [CacheKeyComposer.Compose<BrowseCatalogQuery>("hexagonal:catalog")];
 }
 
 public sealed class PlaceOrderCommandHandler : IRequestHandler<PlaceOrderCommand, OrderConfirmation>

@@ -6,14 +6,6 @@
     <RootNamespace>Meridian.Benchmarks</RootNamespace>
     <IsPackable>false</IsPackable>
     <!--
-      AutoMapper v14 is intentionally pinned as the "last MIT" baseline.
-      NuGet audit flags GHSA-rvv3-g6hj-g44x on restore, but this package is
-      benchmark-only and never shipped transitively from Meridian packages.
-      Suppress the warning here so solution-wide restore/test output stays
-      actionable without hiding package audits elsewhere.
-    -->
-    <NoWarn>$(NoWarn);NU1903</NoWarn>
-    <!--
       BenchmarkDotNet requires Release + optimizations. We enforce Release
       only here; the orchestrator script passes -c Release to dotnet run.
     -->
@@ -25,14 +17,44 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.9" />
     <PackageReference Include="BenchmarkDotNet" Version="0.15.8" />
-    <!-- Comparison baselines: last MIT versions of the libraries we replace -->
-    <PackageReference Include="MediatR" Version="12.5.0" />
-    <PackageReference Include="AutoMapper" Version="14.0.0" />
   </ItemGroup>
+
+  <!--
+    Comparison competitors (benchmark-only; this project is not packable and nothing here flows into a Meridian
+    package). Every version is an explicit exact pin; licenses were read from the restored nuspec of that exact version:
+      Mapster 10.0.13        MIT         current stable
+      Riok.Mapperly 4.3.1    Apache-2.0  current stable; a source generator, so it is an analyzer here only
+      MediatR 12.5.0         Apache-2.0  HISTORICAL pin: the last permissively licensed release (not MIT)
+    Newer MediatR releases use a commercial license and are intentionally not benchmarked.
+  -->
+  <ItemGroup>
+    <PackageReference Include="Mapster" Version="[10.0.13]" />
+    <PackageReference Include="Riok.Mapperly" Version="[4.3.1]" PrivateAssets="all" />
+    <PackageReference Include="MediatR" Version="[12.5.0]" />
+  </ItemGroup>
+
+  <!--
+    Directory.Build.targets grants this assembly InternalsVisibleTo access to Meridian.Mapping, whose own compilation also
+    contains the generator-emitted internal attribute types. The generator wired into this project emits identical copies,
+    so the compiler reports CS0436 (source type shadows imported type) for each attribute use. That single, expected code is
+    suppressed here; no other warning code is.
+  -->
+  <PropertyGroup>
+    <NoWarn>$(NoWarn);CS0436</NoWarn>
+  </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="../../src/Meridian.Mapping/Meridian.Mapping.csproj" />
     <ProjectReference Include="../../src/Meridian.Mediator/Meridian.Mediator.csproj" />
+    <!--
+      Project references do not forward analyzers, so the two source generators are wired in directly, exactly as the
+      repository's generator tests do. They only generate benchmark-side code; neither generator DLL is a runtime
+      reference of this executable.
+    -->
+    <ProjectReference Include="../../src/Meridian.Mapping.Generators/Meridian.Mapping.Generators.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../../src/Meridian.Mediator.Generators/Meridian.Mediator.Generators.csproj"
+                      OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>

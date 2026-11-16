@@ -9,8 +9,17 @@ namespace Meridian.Mapping;
 /// mapping expressions and profiles during configuration, before they are
 /// compiled into <see cref="Execution.TypeMap"/> instances.
 /// </summary>
-public class MapperConfigurationExpression : IMapperConfigurationExpression
+public class MapperConfigurationExpression : IMapperConfigurationExpression, IGeneratedMappingConfiguration
 {
+    internal List<IGeneratedMappingResolver> GeneratedResolvers { get; } = new();
+
+    /// <inheritdoc />
+    public void AddGeneratedResolver(IGeneratedMappingResolver resolver)
+    {
+        ArgumentNullException.ThrowIfNull(resolver);
+        GeneratedResolvers.Add(resolver);
+    }
+
     internal Dictionary<(Type Source, Type Dest), object> MappingExpressions { get; } = new();
     internal Dictionary<(Type Source, Type Dest), object> OpenGenericMappings { get; } = new();
 
@@ -19,6 +28,9 @@ public class MapperConfigurationExpression : IMapperConfigurationExpression
 
     /// <inheritdoc />
     public bool AllowNullDestinationValues { get; set; } = true;
+
+    /// <inheritdoc />
+    public bool AllowUndefinedEnumValues { get; set; }
 
     /// <inheritdoc />
     public int DefaultMaxDepth { get; set; } = 64;

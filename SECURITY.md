@@ -11,24 +11,50 @@ carry the HIGH-severity fixes from `GHSA-f5v8-v6q3-q4h6`. Effective
 
 | Version   | Supported |
 | --------- | --------- |
-| 2.1.x     | ✅        |
+| 2.1.x (prefer latest, currently 2.1.3) | ✅ |
 | 2.0.x     | ❌ (deprecated 2026-04-16 — upgrade to 2.1.1+) |
 | < 2.0     | ❌        |
 
+The optional `Meridian.Mediator.*` packages (FluentValidation, Caching, Redis,
+EntityFrameworkCore, AspNetCore, Generators) and the newer features of the
+core packages exist only as an unpublished candidate. Reports against that
+code are welcome, but it has no supported release yet
+([capability ledger](./docs/capabilities.md)).
+
+### Target frameworks and .NET runtime support
+
+Supported 2.1.x releases target `net8.0`, `net9.0` and `net10.0`. A target
+framework is never removed in a minor release; retiring one is a separately
+reviewed major-version decision
+([compatibility policy](./docs/compatibility-policy.md)).
+
+Microsoft support for .NET 8 and .NET 9 ends on 2026-11-10. After that date
+Microsoft no longer ships security fixes for those runtimes. Meridian keeps
+targeting them in 2.x, but a vulnerability in the .NET runtime itself can only
+be fixed by running on a Microsoft-supported .NET version, so please plan to do
+that. Microsoft supports only the latest patch of each family
+([support policy](https://dotnet.microsoft.com/en-us/platform/support/policy/dotnet-core)).
+
 ## Reporting a Vulnerability
 
-**Do not open a public GitHub issue for security vulnerabilities.**
+**Do not open a public GitHub issue, pull request or discussion for security
+vulnerabilities.**
 
 Use GitHub's private vulnerability reporting:
 
 1. Go to <https://github.com/UmutKorkmaz/meridian/security/advisories/new>
 2. Fill out the advisory template with reproduction steps, affected versions,
    and impact assessment
-3. Submit — you will receive an acknowledgement within 48 hours
+3. Submit — we aim to acknowledge within 48 hours (see the response targets below)
 
-If you cannot use GitHub's reporting flow, email **security@meridian-dotnet.dev**
-with a GPG-encrypted message (key fingerprint published in this file once
-available).
+If you cannot use GitHub's reporting flow, email **security@meridian-dotnet.dev**.
+No encryption key is published yet, so do not put exploit details in plain
+email: send a short note asking for a private channel and we will set one up.
+
+Please do not include real credentials, connection strings or customer data in
+a report. The repository's own tests take backend endpoints from environment
+variables and need only disposable test instances
+([provider testing](./docs/provider-testing.md)).
 
 ## Response SLA
 
@@ -41,6 +67,11 @@ available).
 
 The clock starts when we acknowledge your report. Embargoes may be extended
 by mutual agreement for complex issues.
+
+Meridian currently has **one maintainer** and no backup responder. The targets
+above are commitments we work toward, not guarantees. If one is going to be
+missed, we will tell you rather than go quiet. The maintainer's handling steps
+are in the [maintainer checklist](./docs/maintainer-checklist.md#security-response).
 
 ## Scope
 
@@ -75,6 +106,13 @@ will not pursue legal action against researchers who:
 
 Reporters of accepted vulnerabilities are credited in `CHANGELOG.md` and the
 published GHSA unless they request anonymity.
+
+## Related docs
+
+- [docs/security-model.md](./docs/security-model.md) — threat model and mitigations
+- [docs/compatibility-policy.md](./docs/compatibility-policy.md) — SemVer and default-behavior guarantees
+- [docs/maintainer-checklist.md](./docs/maintainer-checklist.md) — security response and release duties
+- [NOTICE](./NOTICE) — third-party dependency licenses and build-time tooling
 
 ## Historical Advisories
 

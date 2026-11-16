@@ -1,0 +1,1532 @@
+{
+  "schema": "meridian-required-checks/1",
+  "policyVersion": 1,
+  "description": "Required checks for a Meridian release candidate. Lane ids are stable; check names are the exact GitHub job names. Evaluated by eng/candidate_gate.py, which re-derives every lane verdict from the raw files the lane retained. Relative paths in this file are relative to the repository root (the parent of eng/).",
+  "toolchains": {
+    "pinnedCompatibility": {
+      "source": "eng/packages.json compilerHosts (SDK) and the pinned local toolchain (runtimes)",
+      "lanes": [
+        {
+          "framework": "net8.0",
+          "sdk": "8.0.421",
+          "runtime": "8.0.27"
+        },
+        {
+          "framework": "net9.0",
+          "sdk": "9.0.318",
+          "runtime": "9.0.20"
+        },
+        {
+          "framework": "net10.0",
+          "sdk": "10.0.300",
+          "runtime": "10.0.8"
+        }
+      ],
+      "note": "Historical/pinned compatibility proof, not Microsoft current servicing. Every pinned lane builds with buildSdk 10.0.300; SDK-host consumer lanes compile with the per-family SDK; runtime lanes must offer exactly the per-family runtime patch.",
+      "buildSdk": "10.0.300"
+    },
+    "currentServicing": {
+      "asOf": "2026-11-16",
+      "releaseDate": "2026-11-10",
+      "source": "https://builds.dotnet.microsoft.com/dotnet/release-metadata/{8.0,9.0,10.0}/releases.json",
+      "supportPolicy": "https://dotnet.microsoft.com/en-us/platform/support/policy/dotnet-core",
+      "metadata": [
+        {
+          "family": "8.0",
+          "url": "https://builds.dotnet.microsoft.com/dotnet/release-metadata/8.0/releases.json",
+          "sha256": "bda39c64671bf3a5ce51c28fc61301a9ce53b1c6bc02e1669f8a9137ab692635",
+          "readAtUtc": "2026-11-16T05:44:16.213723+00:00",
+          "latestReleaseDate": "2026-11-10"
+        },
+        {
+          "family": "9.0",
+          "url": "https://builds.dotnet.microsoft.com/dotnet/release-metadata/9.0/releases.json",
+          "sha256": "7cc4de7ebb00fa4f4c35fe2df0af4b94e90c6590e6e3514f35b57c235c6b02e1",
+          "readAtUtc": "2026-11-16T05:44:16.504620+00:00",
+          "latestReleaseDate": "2026-11-10"
+        },
+        {
+          "family": "10.0",
+          "url": "https://builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json",
+          "sha256": "482b9d79e76b331ef4cd5bcab02af3188f874ce78fd7aae07cb6163650da87c0",
+          "readAtUtc": "2026-11-16T05:44:16.654575+00:00",
+          "latestReleaseDate": "2026-11-10"
+        }
+      ],
+      "buildSdk": "10.0.404",
+      "toolchainRootEnvironment": "MERIDIAN_SERVICING_DOTNET_ROOT",
+      "lanes": [
+        {
+          "framework": "net8.0",
+          "sdk": "8.0.428",
+          "runtime": "8.0.34"
+        },
+        {
+          "framework": "net9.0",
+          "sdk": "9.0.321",
+          "runtime": "9.0.23"
+        },
+        {
+          "framework": "net10.0",
+          "sdk": "10.0.404",
+          "runtime": "10.0.15"
+        }
+      ],
+      "note": "Latest stable patches published 2026-11-10, read from official metadata on 2026-11-16. The final .NET 8 and .NET 9 patches are compatibility evidence; .NET 10 is actively serviced. These local-only lanes are definitions, not execution proof. Use an isolated root (MERIDIAN_SERVICING_DOTNET_ROOT) with the three SDKs and exactly one runtime patch per family. Refresh the supported family at acceptance."
+    }
+  },
+  "providers": {
+    "redis": {
+      "image": "redis:7.4-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99",
+      "environment": "MERIDIAN_TEST_REDIS"
+    },
+    "postgres": {
+      "image": "postgres:16.4-alpine@sha256:5660c2cbfea50c7a9127d17dc4e48543eedd3d7a41a595a2dfa572471e37e64c",
+      "environment": "MERIDIAN_TEST_POSTGRES"
+    }
+  },
+  "samples": {
+    "net8.0": 6,
+    "net9.0": 6,
+    "net10.0": 7
+  },
+  "propertyCases": [
+    10000,
+    500,
+    10000,
+    500,
+    10000
+  ],
+  "nativeCases": [
+    "typed-object-query",
+    "void-forms",
+    "standard-pipeline",
+    "standard-composition",
+    "scoped-construction",
+    "notification-composition",
+    "stream-lifetime",
+    "generated-mapping",
+    "strict-failure",
+    "native-runtime",
+    "native-nonstrict-unknown",
+    "native-scanning-unsupported"
+  ],
+  "infrastructureChecks": [
+    {
+      "check": "candidate packages",
+      "workflow": "ci.yml",
+      "job": "candidate-pack"
+    },
+    {
+      "check": "candidate gate",
+      "workflow": "ci.yml",
+      "job": "candidate-gate"
+    },
+    {
+      "check": "eng tooling tests",
+      "workflow": "ci.yml",
+      "job": "eng-tooling-tests"
+    }
+  ],
+  "optionalChecks": [
+    {
+      "check": "preview samples (net11.0, optional)",
+      "workflow": "ci.yml",
+      "job": "preview"
+    }
+  ],
+  "countProfiles": {
+    "runtime": {
+      "net8.0": [
+        {
+          "suite": "Meridian.Mapping.EntityFramework.Tests",
+          "minimum": 90,
+          "filter": "Provider!=PostgreSQL&Provider!=Redis"
+        },
+        {
+          "suite": "Meridian.Mapping.Tests",
+          "minimum": 780,
+          "filter": "Provider!=PostgreSQL&Provider!=Redis"
+        },
+        {
+          "suite": "Meridian.Mediator.AspNetCore.Tests",
+          "minimum": 26,
+          "filter": "Provider!=PostgreSQL&Provider!=Redis"
+        },
+        {
+          "suite": "Meridian.Mediator.Caching.Tests",
+          "minimum": 99,
+          "filter": "Provider!=PostgreSQL&Provider!=Redis"
+        },
+        {
+          "suite": "Meridian.Mediator.EntityFrameworkCore.Tests",
+          "minimum": 27,
+          "filter": "Provider!=PostgreSQL&Provider!=Redis"
+        },
+        {
+          "suite": "Meridian.Mediator.FluentValidation.Tests",
+          "minimum": 11,
+          "filter": "Provider!=PostgreSQL&Provider!=Redis"
+        },
+        {
+          "suite": "Meridian.Mediator.Generators.Tests",
+          "minimum": 97,
+          "filter": "Provider!=PostgreSQL&Provider!=Redis"
+        },
+        {
+          "suite": "Meridian.Mediator.Redis.Tests",
+          "minimum": 1,
+          "filter": "Provider!=PostgreSQL&Provider!=Redis"
+        },
+        {
+          "suite": "Meridian.Mediator.Tests",
+          "minimum": 544,
+          "filter": "Provider!=PostgreSQL&Provider!=Redis"
+        }
+      ],
+      "net9.0": [
+        {
+          "suite": "Meridian.Mapping.EntityFramework.Tests",
+          "minimum": 90,
+          "filter": "Provider!=PostgreSQL&Provider!=Redis"
+        },
+        {
+          "suite": "Meridian.Mapping.Tests",
+          "minimum": 780,
+          "filter": "Provider!=PostgreSQL&Provider!=Redis"
+        },
+        {
+          "suite": "Meridian.Mediator.AspNetCore.Tests",
+          "minimum": 26,
+          "filter": "Provider!=PostgreSQL&Provider!=Redis"
+        },
+        {
+          "suite": "Meridian.Mediator.Caching.Tests",
+          "minimum": 99,
+          "filter": "Provider!=PostgreSQL&Provider!=Redis"
+        },
+        {
+          "suite": "Meridian.Mediator.EntityFrameworkCore.Tests",
+          "minimum": 27,
+          "filter": "Provider!=PostgreSQL&Provider!=Redis"
+        },
+        {
+          "suite": "Meridian.Mediator.FluentValidation.Tests",
+          "minimum": 11,
+          "filter": "Provider!=PostgreSQL&Provider!=Redis"
+        },
+        {
+          "suite": "Meridian.Mediator.Generators.Tests",
+          "minimum": 97,
+          "filter": "Provider!=PostgreSQL&Provider!=Redis"
+        },
+        {
+          "suite": "Meridian.Mediator.Redis.Tests",
+          "minimum": 1,
+          "filter": "Provider!=PostgreSQL&Provider!=Redis"
+        },
+        {
+          "suite": "Meridian.Mediator.Tests",
+          "minimum": 544,
+          "filter": "Provider!=PostgreSQL&Provider!=Redis"
+        }
+      ],
+      "net10.0": [
+        {
+          "suite": "Meridian.Mapping.EntityFramework.Tests",
+          "minimum": 90,
+          "filter": "Provider!=PostgreSQL&Provider!=Redis"
+        },
+        {
+          "suite": "Meridian.Mapping.Tests",
+          "minimum": 780,
+          "filter": "Provider!=PostgreSQL&Provider!=Redis"
+        },
+        {
+          "suite": "Meridian.Mediator.AspNetCore.Tests",
+          "minimum": 26,
+          "filter": "Provider!=PostgreSQL&Provider!=Redis"
+        },
+        {
+          "suite": "Meridian.Mediator.Caching.Tests",
+          "minimum": 99,
+          "filter": "Provider!=PostgreSQL&Provider!=Redis"
+        },
+        {
+          "suite": "Meridian.Mediator.EntityFrameworkCore.Tests",
+          "minimum": 27,
+          "filter": "Provider!=PostgreSQL&Provider!=Redis"
+        },
+        {
+          "suite": "Meridian.Mediator.FluentValidation.Tests",
+          "minimum": 11,
+          "filter": "Provider!=PostgreSQL&Provider!=Redis"
+        },
+        {
+          "suite": "Meridian.Mediator.Generators.Tests",
+          "minimum": 97,
+          "filter": "Provider!=PostgreSQL&Provider!=Redis"
+        },
+        {
+          "suite": "Meridian.Mediator.Redis.Tests",
+          "minimum": 1,
+          "filter": "Provider!=PostgreSQL&Provider!=Redis"
+        },
+        {
+          "suite": "Meridian.Mediator.Tests",
+          "minimum": 544,
+          "filter": "Provider!=PostgreSQL&Provider!=Redis"
+        }
+      ]
+    },
+    "postgres": {
+      "net8.0": [
+        {
+          "suite": "Meridian.Mapping.EntityFramework.Tests",
+          "minimum": 90,
+          "filter": "Provider=PostgreSQL"
+        }
+      ],
+      "net9.0": [
+        {
+          "suite": "Meridian.Mapping.EntityFramework.Tests",
+          "minimum": 90,
+          "filter": "Provider=PostgreSQL"
+        }
+      ],
+      "net10.0": [
+        {
+          "suite": "Meridian.Mapping.EntityFramework.Tests",
+          "minimum": 90,
+          "filter": "Provider=PostgreSQL"
+        }
+      ]
+    },
+    "redis-cache": {
+      "net8.0": [
+        {
+          "suite": "Meridian.Mediator.Caching.Tests",
+          "minimum": 1,
+          "filter": "Provider=Redis"
+        },
+        {
+          "suite": "Meridian.Mediator.Redis.Tests",
+          "minimum": 27,
+          "filter": "Provider=Redis"
+        }
+      ],
+      "net9.0": [
+        {
+          "suite": "Meridian.Mediator.Caching.Tests",
+          "minimum": 1,
+          "filter": "Provider=Redis"
+        },
+        {
+          "suite": "Meridian.Mediator.Redis.Tests",
+          "minimum": 27,
+          "filter": "Provider=Redis"
+        }
+      ],
+      "net10.0": [
+        {
+          "suite": "Meridian.Mediator.Caching.Tests",
+          "minimum": 1,
+          "filter": "Provider=Redis"
+        },
+        {
+          "suite": "Meridian.Mediator.Redis.Tests",
+          "minimum": 27,
+          "filter": "Provider=Redis"
+        }
+      ]
+    },
+    "ef-transactions": {
+      "net8.0": [
+        {
+          "suite": "Meridian.Mediator.EntityFrameworkCore.Tests",
+          "minimum": 42
+        }
+      ],
+      "net9.0": [
+        {
+          "suite": "Meridian.Mediator.EntityFrameworkCore.Tests",
+          "minimum": 42
+        }
+      ],
+      "net10.0": [
+        {
+          "suite": "Meridian.Mediator.EntityFrameworkCore.Tests",
+          "minimum": 42
+        }
+      ]
+    },
+    "ef10": {
+      "net10.0": [
+        {
+          "suite": "Meridian.Ef10Compatibility",
+          "minimum": 42
+        }
+      ]
+    },
+    "http": {
+      "net10.0": [
+        {
+          "suite": "Meridian.AspNetCore.Tests",
+          "minimum": 59
+        }
+      ]
+    },
+    "property": {
+      "net10.0": [
+        {
+          "suite": "Meridian.Mapping.Tests",
+          "minimum": 5,
+          "filter": "FullyQualifiedName~PropertyBasedTests"
+        }
+      ]
+    },
+    "coverage": {
+      "net10.0": [
+        {
+          "suite": "Meridian.Mapping.EntityFramework.Tests",
+          "minimum": 90
+        },
+        {
+          "suite": "Meridian.Mapping.Tests",
+          "minimum": 780
+        },
+        {
+          "suite": "Meridian.Mediator.AspNetCore.Tests",
+          "minimum": 26
+        },
+        {
+          "suite": "Meridian.Mediator.Caching.Tests",
+          "minimum": 99
+        },
+        {
+          "suite": "Meridian.Mediator.EntityFrameworkCore.Tests",
+          "minimum": 27
+        },
+        {
+          "suite": "Meridian.Mediator.FluentValidation.Tests",
+          "minimum": 11
+        },
+        {
+          "suite": "Meridian.Mediator.Generators.Tests",
+          "minimum": 97
+        },
+        {
+          "suite": "Meridian.Mediator.Redis.Tests",
+          "minimum": 1
+        },
+        {
+          "suite": "Meridian.Mediator.Tests",
+          "minimum": 544
+        }
+      ]
+    },
+    "servicing": {
+      "net8.0": [
+        {
+          "suite": "Meridian.Mapping.EntityFramework.Tests",
+          "minimum": 90
+        },
+        {
+          "suite": "Meridian.Mapping.Tests",
+          "minimum": 780
+        },
+        {
+          "suite": "Meridian.Mediator.AspNetCore.Tests",
+          "minimum": 26
+        },
+        {
+          "suite": "Meridian.Mediator.Caching.Tests",
+          "minimum": 99
+        },
+        {
+          "suite": "Meridian.Mediator.EntityFrameworkCore.Tests",
+          "minimum": 27
+        },
+        {
+          "suite": "Meridian.Mediator.FluentValidation.Tests",
+          "minimum": 11
+        },
+        {
+          "suite": "Meridian.Mediator.Generators.Tests",
+          "minimum": 97
+        },
+        {
+          "suite": "Meridian.Mediator.Redis.Tests",
+          "minimum": 1
+        },
+        {
+          "suite": "Meridian.Mediator.Tests",
+          "minimum": 544
+        }
+      ],
+      "net9.0": [
+        {
+          "suite": "Meridian.Mapping.EntityFramework.Tests",
+          "minimum": 90
+        },
+        {
+          "suite": "Meridian.Mapping.Tests",
+          "minimum": 780
+        },
+        {
+          "suite": "Meridian.Mediator.AspNetCore.Tests",
+          "minimum": 26
+        },
+        {
+          "suite": "Meridian.Mediator.Caching.Tests",
+          "minimum": 99
+        },
+        {
+          "suite": "Meridian.Mediator.EntityFrameworkCore.Tests",
+          "minimum": 27
+        },
+        {
+          "suite": "Meridian.Mediator.FluentValidation.Tests",
+          "minimum": 11
+        },
+        {
+          "suite": "Meridian.Mediator.Generators.Tests",
+          "minimum": 97
+        },
+        {
+          "suite": "Meridian.Mediator.Redis.Tests",
+          "minimum": 1
+        },
+        {
+          "suite": "Meridian.Mediator.Tests",
+          "minimum": 544
+        }
+      ],
+      "net10.0": [
+        {
+          "suite": "Meridian.Mapping.EntityFramework.Tests",
+          "minimum": 90
+        },
+        {
+          "suite": "Meridian.Mapping.Tests",
+          "minimum": 780
+        },
+        {
+          "suite": "Meridian.Mediator.AspNetCore.Tests",
+          "minimum": 26
+        },
+        {
+          "suite": "Meridian.Mediator.Caching.Tests",
+          "minimum": 99
+        },
+        {
+          "suite": "Meridian.Mediator.EntityFrameworkCore.Tests",
+          "minimum": 27
+        },
+        {
+          "suite": "Meridian.Mediator.FluentValidation.Tests",
+          "minimum": 11
+        },
+        {
+          "suite": "Meridian.Mediator.Generators.Tests",
+          "minimum": 97
+        },
+        {
+          "suite": "Meridian.Mediator.Redis.Tests",
+          "minimum": 1
+        },
+        {
+          "suite": "Meridian.Mediator.Tests",
+          "minimum": 544
+        }
+      ]
+    }
+  },
+  "coverage": {
+    "baseline": "eng/coverage-baseline.json",
+    "tool": "coverlet.collector 10.0.1 (nuget.org, pinned in each test project)",
+    "frameworks": [
+      "net10.0"
+    ],
+    "note": "The coverage lane runs every runtime-profile suite without provider filters (real Redis and PostgreSQL) with coverlet, retains the Cobertura documents and TRX files, and the evaluator recomputes the gate against this baseline. No waivers."
+  },
+  "lanes": [
+    {
+      "id": "runtime-tests/linux/net8.0",
+      "kind": "runtime-tests",
+      "check": "build + test (ubuntu-latest, net8.0)",
+      "framework": "net8.0",
+      "host": {
+        "os": "linux",
+        "arch": "x64"
+      },
+      "countsProfile": "runtime",
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "build",
+        "matrix": {
+          "os": "ubuntu-latest",
+          "framework": "net8.0"
+        }
+      }
+    },
+    {
+      "id": "runtime-tests/linux/net9.0",
+      "kind": "runtime-tests",
+      "check": "build + test (ubuntu-latest, net9.0)",
+      "framework": "net9.0",
+      "host": {
+        "os": "linux",
+        "arch": "x64"
+      },
+      "countsProfile": "runtime",
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "build",
+        "matrix": {
+          "os": "ubuntu-latest",
+          "framework": "net9.0"
+        }
+      }
+    },
+    {
+      "id": "runtime-tests/linux/net10.0",
+      "kind": "runtime-tests",
+      "check": "build + test (ubuntu-latest, net10.0)",
+      "framework": "net10.0",
+      "host": {
+        "os": "linux",
+        "arch": "x64"
+      },
+      "countsProfile": "runtime",
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "build",
+        "matrix": {
+          "os": "ubuntu-latest",
+          "framework": "net10.0"
+        }
+      }
+    },
+    {
+      "id": "runtime-tests/win/net8.0",
+      "kind": "runtime-tests",
+      "check": "build + test (windows-latest, net8.0)",
+      "framework": "net8.0",
+      "host": {
+        "os": "win",
+        "arch": "x64"
+      },
+      "countsProfile": "runtime",
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "build",
+        "matrix": {
+          "os": "windows-latest",
+          "framework": "net8.0"
+        }
+      }
+    },
+    {
+      "id": "runtime-tests/win/net9.0",
+      "kind": "runtime-tests",
+      "check": "build + test (windows-latest, net9.0)",
+      "framework": "net9.0",
+      "host": {
+        "os": "win",
+        "arch": "x64"
+      },
+      "countsProfile": "runtime",
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "build",
+        "matrix": {
+          "os": "windows-latest",
+          "framework": "net9.0"
+        }
+      }
+    },
+    {
+      "id": "runtime-tests/win/net10.0",
+      "kind": "runtime-tests",
+      "check": "build + test (windows-latest, net10.0)",
+      "framework": "net10.0",
+      "host": {
+        "os": "win",
+        "arch": "x64"
+      },
+      "countsProfile": "runtime",
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "build",
+        "matrix": {
+          "os": "windows-latest",
+          "framework": "net10.0"
+        }
+      }
+    },
+    {
+      "id": "runtime-tests/osx/net8.0",
+      "kind": "runtime-tests",
+      "check": "build + test (macos-latest, net8.0)",
+      "framework": "net8.0",
+      "host": {
+        "os": "osx",
+        "arch": "arm64"
+      },
+      "countsProfile": "runtime",
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "build",
+        "matrix": {
+          "os": "macos-latest",
+          "framework": "net8.0"
+        }
+      }
+    },
+    {
+      "id": "runtime-tests/osx/net9.0",
+      "kind": "runtime-tests",
+      "check": "build + test (macos-latest, net9.0)",
+      "framework": "net9.0",
+      "host": {
+        "os": "osx",
+        "arch": "arm64"
+      },
+      "countsProfile": "runtime",
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "build",
+        "matrix": {
+          "os": "macos-latest",
+          "framework": "net9.0"
+        }
+      }
+    },
+    {
+      "id": "runtime-tests/osx/net10.0",
+      "kind": "runtime-tests",
+      "check": "build + test (macos-latest, net10.0)",
+      "framework": "net10.0",
+      "host": {
+        "os": "osx",
+        "arch": "arm64"
+      },
+      "countsProfile": "runtime",
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "build",
+        "matrix": {
+          "os": "macos-latest",
+          "framework": "net10.0"
+        }
+      }
+    },
+    {
+      "id": "package-consumers/linux/net8.0",
+      "kind": "package-consumers",
+      "check": "package consumers (ubuntu-latest, SDK 8.0.421)",
+      "framework": "net8.0",
+      "sdk": "8.0.421",
+      "host": {
+        "os": "linux",
+        "arch": "x64"
+      },
+      "consumerScope": "partial",
+      "omittedConsumerIds": [
+        "Meridian.RedisIdempotencyConsumer",
+        "Meridian.EfTransactionsConsumer"
+      ],
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "package-compatibility",
+        "matrix": {
+          "os": "ubuntu-latest",
+          "host": {
+            "framework": "net8.0",
+            "sdk": "8.0.421"
+          }
+        }
+      }
+    },
+    {
+      "id": "package-consumers/linux/net9.0",
+      "kind": "package-consumers",
+      "check": "package consumers (ubuntu-latest, SDK 9.0.318)",
+      "framework": "net9.0",
+      "sdk": "9.0.318",
+      "host": {
+        "os": "linux",
+        "arch": "x64"
+      },
+      "consumerScope": "partial",
+      "omittedConsumerIds": [
+        "Meridian.RedisIdempotencyConsumer",
+        "Meridian.EfTransactionsConsumer"
+      ],
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "package-compatibility",
+        "matrix": {
+          "os": "ubuntu-latest",
+          "host": {
+            "framework": "net9.0",
+            "sdk": "9.0.318"
+          }
+        }
+      }
+    },
+    {
+      "id": "package-consumers/linux/net10.0",
+      "kind": "package-consumers",
+      "check": "package consumers (ubuntu-latest, SDK 10.0.300)",
+      "framework": "net10.0",
+      "sdk": "10.0.300",
+      "host": {
+        "os": "linux",
+        "arch": "x64"
+      },
+      "consumerScope": "partial",
+      "omittedConsumerIds": [
+        "Meridian.RedisIdempotencyConsumer",
+        "Meridian.EfTransactionsConsumer"
+      ],
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "package-compatibility",
+        "matrix": {
+          "os": "ubuntu-latest",
+          "host": {
+            "framework": "net10.0",
+            "sdk": "10.0.300"
+          }
+        }
+      }
+    },
+    {
+      "id": "package-consumers/win/net8.0",
+      "kind": "package-consumers",
+      "check": "package consumers (windows-latest, SDK 8.0.421)",
+      "framework": "net8.0",
+      "sdk": "8.0.421",
+      "host": {
+        "os": "win",
+        "arch": "x64"
+      },
+      "consumerScope": "partial",
+      "omittedConsumerIds": [
+        "Meridian.RedisIdempotencyConsumer",
+        "Meridian.EfTransactionsConsumer"
+      ],
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "package-compatibility",
+        "matrix": {
+          "os": "windows-latest",
+          "host": {
+            "framework": "net8.0",
+            "sdk": "8.0.421"
+          }
+        }
+      }
+    },
+    {
+      "id": "package-consumers/win/net9.0",
+      "kind": "package-consumers",
+      "check": "package consumers (windows-latest, SDK 9.0.318)",
+      "framework": "net9.0",
+      "sdk": "9.0.318",
+      "host": {
+        "os": "win",
+        "arch": "x64"
+      },
+      "consumerScope": "partial",
+      "omittedConsumerIds": [
+        "Meridian.RedisIdempotencyConsumer",
+        "Meridian.EfTransactionsConsumer"
+      ],
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "package-compatibility",
+        "matrix": {
+          "os": "windows-latest",
+          "host": {
+            "framework": "net9.0",
+            "sdk": "9.0.318"
+          }
+        }
+      }
+    },
+    {
+      "id": "package-consumers/win/net10.0",
+      "kind": "package-consumers",
+      "check": "package consumers (windows-latest, SDK 10.0.300)",
+      "framework": "net10.0",
+      "sdk": "10.0.300",
+      "host": {
+        "os": "win",
+        "arch": "x64"
+      },
+      "consumerScope": "partial",
+      "omittedConsumerIds": [
+        "Meridian.RedisIdempotencyConsumer",
+        "Meridian.EfTransactionsConsumer"
+      ],
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "package-compatibility",
+        "matrix": {
+          "os": "windows-latest",
+          "host": {
+            "framework": "net10.0",
+            "sdk": "10.0.300"
+          }
+        }
+      }
+    },
+    {
+      "id": "package-consumers/osx/net8.0",
+      "kind": "package-consumers",
+      "check": "package consumers (macos-latest, SDK 8.0.421)",
+      "framework": "net8.0",
+      "sdk": "8.0.421",
+      "host": {
+        "os": "osx",
+        "arch": "arm64"
+      },
+      "consumerScope": "partial",
+      "omittedConsumerIds": [
+        "Meridian.RedisIdempotencyConsumer",
+        "Meridian.EfTransactionsConsumer"
+      ],
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "package-compatibility",
+        "matrix": {
+          "os": "macos-latest",
+          "host": {
+            "framework": "net8.0",
+            "sdk": "8.0.421"
+          }
+        }
+      }
+    },
+    {
+      "id": "package-consumers/osx/net9.0",
+      "kind": "package-consumers",
+      "check": "package consumers (macos-latest, SDK 9.0.318)",
+      "framework": "net9.0",
+      "sdk": "9.0.318",
+      "host": {
+        "os": "osx",
+        "arch": "arm64"
+      },
+      "consumerScope": "partial",
+      "omittedConsumerIds": [
+        "Meridian.RedisIdempotencyConsumer",
+        "Meridian.EfTransactionsConsumer"
+      ],
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "package-compatibility",
+        "matrix": {
+          "os": "macos-latest",
+          "host": {
+            "framework": "net9.0",
+            "sdk": "9.0.318"
+          }
+        }
+      }
+    },
+    {
+      "id": "package-consumers/osx/net10.0",
+      "kind": "package-consumers",
+      "check": "package consumers (macos-latest, SDK 10.0.300)",
+      "framework": "net10.0",
+      "sdk": "10.0.300",
+      "host": {
+        "os": "osx",
+        "arch": "arm64"
+      },
+      "consumerScope": "partial",
+      "omittedConsumerIds": [
+        "Meridian.RedisIdempotencyConsumer",
+        "Meridian.EfTransactionsConsumer"
+      ],
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "package-compatibility",
+        "matrix": {
+          "os": "macos-latest",
+          "host": {
+            "framework": "net10.0",
+            "sdk": "10.0.300"
+          }
+        }
+      }
+    },
+    {
+      "id": "package-consumers-redis/net8.0",
+      "kind": "package-consumers",
+      "check": "Required Redis all-package consumers (net8.0)",
+      "framework": "net8.0",
+      "sdk": "8.0.421",
+      "host": {
+        "os": "linux",
+        "arch": "x64"
+      },
+      "consumerScope": "all",
+      "services": [
+        "redis",
+        "postgres"
+      ],
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "redis-package-compatibility",
+        "matrix": {
+          "host": {
+            "framework": "net8.0",
+            "sdk": "8.0.421"
+          }
+        }
+      }
+    },
+    {
+      "id": "package-consumers-redis/net9.0",
+      "kind": "package-consumers",
+      "check": "Required Redis all-package consumers (net9.0)",
+      "framework": "net9.0",
+      "sdk": "9.0.318",
+      "host": {
+        "os": "linux",
+        "arch": "x64"
+      },
+      "consumerScope": "all",
+      "services": [
+        "redis",
+        "postgres"
+      ],
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "redis-package-compatibility",
+        "matrix": {
+          "host": {
+            "framework": "net9.0",
+            "sdk": "9.0.318"
+          }
+        }
+      }
+    },
+    {
+      "id": "package-consumers-redis/net10.0",
+      "kind": "package-consumers",
+      "check": "Required Redis all-package consumers (net10.0)",
+      "framework": "net10.0",
+      "sdk": "10.0.300",
+      "host": {
+        "os": "linux",
+        "arch": "x64"
+      },
+      "consumerScope": "all",
+      "services": [
+        "redis",
+        "postgres"
+      ],
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "redis-package-compatibility",
+        "matrix": {
+          "host": {
+            "framework": "net10.0",
+            "sdk": "10.0.300"
+          }
+        }
+      }
+    },
+    {
+      "id": "provider-postgres/net8.0",
+      "kind": "provider",
+      "check": "PostgreSQL projections (net8.0)",
+      "framework": "net8.0",
+      "services": [
+        "postgres"
+      ],
+      "countsProfile": "postgres",
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "projection-postgresql",
+        "matrix": {
+          "framework": "net8.0"
+        }
+      }
+    },
+    {
+      "id": "provider-postgres/net9.0",
+      "kind": "provider",
+      "check": "PostgreSQL projections (net9.0)",
+      "framework": "net9.0",
+      "services": [
+        "postgres"
+      ],
+      "countsProfile": "postgres",
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "projection-postgresql",
+        "matrix": {
+          "framework": "net9.0"
+        }
+      }
+    },
+    {
+      "id": "provider-postgres/net10.0",
+      "kind": "provider",
+      "check": "PostgreSQL projections (net10.0)",
+      "framework": "net10.0",
+      "services": [
+        "postgres"
+      ],
+      "countsProfile": "postgres",
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "projection-postgresql",
+        "matrix": {
+          "framework": "net10.0"
+        }
+      }
+    },
+    {
+      "id": "provider-redis-cache/net8.0",
+      "kind": "provider",
+      "check": "Distributed cache Redis (net8.0)",
+      "framework": "net8.0",
+      "services": [
+        "redis"
+      ],
+      "countsProfile": "redis-cache",
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "caching-redis",
+        "matrix": {
+          "framework": "net8.0"
+        }
+      }
+    },
+    {
+      "id": "provider-redis-cache/net9.0",
+      "kind": "provider",
+      "check": "Distributed cache Redis (net9.0)",
+      "framework": "net9.0",
+      "services": [
+        "redis"
+      ],
+      "countsProfile": "redis-cache",
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "caching-redis",
+        "matrix": {
+          "framework": "net9.0"
+        }
+      }
+    },
+    {
+      "id": "provider-redis-cache/net10.0",
+      "kind": "provider",
+      "check": "Distributed cache Redis (net10.0)",
+      "framework": "net10.0",
+      "services": [
+        "redis"
+      ],
+      "countsProfile": "redis-cache",
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "caching-redis",
+        "matrix": {
+          "framework": "net10.0"
+        }
+      }
+    },
+    {
+      "id": "ef-transactions/net8.0",
+      "kind": "provider",
+      "check": "EF transactions (net8.0)",
+      "framework": "net8.0",
+      "services": [
+        "postgres",
+        "redis"
+      ],
+      "countsProfile": "ef-transactions",
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "ef-transactions",
+        "matrix": {
+          "framework": "net8.0"
+        }
+      }
+    },
+    {
+      "id": "ef-transactions/net9.0",
+      "kind": "provider",
+      "check": "EF transactions (net9.0)",
+      "framework": "net9.0",
+      "services": [
+        "postgres",
+        "redis"
+      ],
+      "countsProfile": "ef-transactions",
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "ef-transactions",
+        "matrix": {
+          "framework": "net9.0"
+        }
+      }
+    },
+    {
+      "id": "ef-transactions/net10.0",
+      "kind": "provider",
+      "check": "EF transactions (net10.0)",
+      "framework": "net10.0",
+      "services": [
+        "postgres",
+        "redis"
+      ],
+      "countsProfile": "ef-transactions",
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "ef-transactions",
+        "matrix": {
+          "framework": "net10.0"
+        }
+      }
+    },
+    {
+      "id": "ef10-compatibility/net10.0",
+      "kind": "provider",
+      "check": "EF10 compatibility (net10.0)",
+      "framework": "net10.0",
+      "services": [
+        "postgres",
+        "redis"
+      ],
+      "countsProfile": "ef10",
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "ef10-compatibility",
+        "matrix": {}
+      }
+    },
+    {
+      "id": "http-integration/net10.0",
+      "kind": "provider",
+      "check": "HTTP orders, real Redis and SQLite (net10.0)",
+      "framework": "net10.0",
+      "services": [
+        "redis"
+      ],
+      "countsProfile": "http",
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "http-integration",
+        "matrix": {}
+      },
+      "httpSmoke": true
+    },
+    {
+      "id": "native-aot/linux-x64/net8.0",
+      "kind": "native-aot",
+      "check": "native AOT linux-x64 (net8.0)",
+      "framework": "net8.0",
+      "sdk": "8.0.428",
+      "rid": "linux-x64",
+      "host": {
+        "os": "linux",
+        "arch": "x64"
+      },
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "native-aot",
+        "matrix": {
+          "rid": "linux-x64",
+          "host": {
+            "framework": "net8.0",
+            "sdk": "8.0.428"
+          }
+        }
+      }
+    },
+    {
+      "id": "native-aot/linux-x64/net9.0",
+      "kind": "native-aot",
+      "check": "native AOT linux-x64 (net9.0)",
+      "framework": "net9.0",
+      "sdk": "9.0.321",
+      "rid": "linux-x64",
+      "host": {
+        "os": "linux",
+        "arch": "x64"
+      },
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "native-aot",
+        "matrix": {
+          "rid": "linux-x64",
+          "host": {
+            "framework": "net9.0",
+            "sdk": "9.0.321"
+          }
+        }
+      }
+    },
+    {
+      "id": "native-aot/linux-x64/net10.0",
+      "kind": "native-aot",
+      "check": "native AOT linux-x64 (net10.0)",
+      "framework": "net10.0",
+      "sdk": "10.0.404",
+      "rid": "linux-x64",
+      "host": {
+        "os": "linux",
+        "arch": "x64"
+      },
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "native-aot",
+        "matrix": {
+          "rid": "linux-x64",
+          "host": {
+            "framework": "net10.0",
+            "sdk": "10.0.404"
+          }
+        }
+      }
+    },
+    {
+      "id": "native-aot/osx-arm64/net8.0",
+      "kind": "native-aot",
+      "check": "native AOT osx-arm64 (net8.0)",
+      "framework": "net8.0",
+      "sdk": "8.0.428",
+      "rid": "osx-arm64",
+      "host": {
+        "os": "osx",
+        "arch": "arm64"
+      },
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "native-aot",
+        "matrix": {
+          "rid": "osx-arm64",
+          "host": {
+            "framework": "net8.0",
+            "sdk": "8.0.428"
+          }
+        }
+      }
+    },
+    {
+      "id": "native-aot/osx-arm64/net9.0",
+      "kind": "native-aot",
+      "check": "native AOT osx-arm64 (net9.0)",
+      "framework": "net9.0",
+      "sdk": "9.0.321",
+      "rid": "osx-arm64",
+      "host": {
+        "os": "osx",
+        "arch": "arm64"
+      },
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "native-aot",
+        "matrix": {
+          "rid": "osx-arm64",
+          "host": {
+            "framework": "net9.0",
+            "sdk": "9.0.321"
+          }
+        }
+      }
+    },
+    {
+      "id": "native-aot/osx-arm64/net10.0",
+      "kind": "native-aot",
+      "check": "native AOT osx-arm64 (net10.0)",
+      "framework": "net10.0",
+      "sdk": "10.0.404",
+      "rid": "osx-arm64",
+      "host": {
+        "os": "osx",
+        "arch": "arm64"
+      },
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "native-aot",
+        "matrix": {
+          "rid": "osx-arm64",
+          "host": {
+            "framework": "net10.0",
+            "sdk": "10.0.404"
+          }
+        }
+      }
+    },
+    {
+      "id": "property-counts/net10.0",
+      "kind": "property-counts",
+      "check": "property counts (net10.0)",
+      "framework": "net10.0",
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "property-counts",
+        "matrix": {}
+      },
+      "countsProfile": "property"
+    },
+    {
+      "id": "coverage/net10.0",
+      "kind": "coverage",
+      "check": "coverage gate (net10.0)",
+      "framework": "net10.0",
+      "services": [
+        "redis",
+        "postgres"
+      ],
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "coverage",
+        "matrix": {}
+      },
+      "countsProfile": "coverage"
+    },
+    {
+      "id": "warning-ratchet/net10.0",
+      "kind": "warning-ratchet",
+      "check": "warning ratchet (net10.0)",
+      "framework": "net10.0",
+      "ci": {
+        "workflow": "ci.yml",
+        "job": "warning-ratchet",
+        "matrix": {}
+      }
+    },
+    {
+      "id": "current-servicing/net8.0",
+      "kind": "current-servicing",
+      "check": "current servicing (net8.0)",
+      "framework": "net8.0",
+      "sdk": "10.0.404",
+      "runtime": "8.0.34",
+      "services": [
+        "postgres",
+        "redis"
+      ],
+      "countsProfile": "servicing",
+      "toolchainRootEnvironment": "MERIDIAN_SERVICING_DOTNET_ROOT",
+      "ci": null
+    },
+    {
+      "id": "current-servicing/net9.0",
+      "kind": "current-servicing",
+      "check": "current servicing (net9.0)",
+      "framework": "net9.0",
+      "sdk": "10.0.404",
+      "runtime": "9.0.23",
+      "services": [
+        "postgres",
+        "redis"
+      ],
+      "countsProfile": "servicing",
+      "toolchainRootEnvironment": "MERIDIAN_SERVICING_DOTNET_ROOT",
+      "ci": null
+    },
+    {
+      "id": "current-servicing/net10.0",
+      "kind": "current-servicing",
+      "check": "current servicing (net10.0)",
+      "framework": "net10.0",
+      "sdk": "10.0.404",
+      "runtime": "10.0.15",
+      "services": [
+        "postgres",
+        "redis"
+      ],
+      "countsProfile": "servicing",
+      "toolchainRootEnvironment": "MERIDIAN_SERVICING_DOTNET_ROOT",
+      "ci": null
+    },
+    {
+      "id": "current-servicing-consumers/net8.0",
+      "kind": "package-consumers",
+      "check": "current servicing package consumers (net8.0)",
+      "framework": "net8.0",
+      "sdk": "8.0.428",
+      "consumerScope": "all",
+      "services": [
+        "redis",
+        "postgres"
+      ],
+      "toolchainRootEnvironment": "MERIDIAN_SERVICING_DOTNET_ROOT",
+      "ci": null
+    },
+    {
+      "id": "current-servicing-consumers/net9.0",
+      "kind": "package-consumers",
+      "check": "current servicing package consumers (net9.0)",
+      "framework": "net9.0",
+      "sdk": "9.0.321",
+      "consumerScope": "all",
+      "services": [
+        "redis",
+        "postgres"
+      ],
+      "toolchainRootEnvironment": "MERIDIAN_SERVICING_DOTNET_ROOT",
+      "ci": null
+    },
+    {
+      "id": "current-servicing-consumers/net10.0",
+      "kind": "package-consumers",
+      "check": "current servicing package consumers (net10.0)",
+      "framework": "net10.0",
+      "sdk": "10.0.404",
+      "consumerScope": "all",
+      "services": [
+        "redis",
+        "postgres"
+      ],
+      "toolchainRootEnvironment": "MERIDIAN_SERVICING_DOTNET_ROOT",
+      "ci": null
+    }
+  ],
+  "packageInventory": "eng/packages.json",
+  "sampleNames": {
+    "net8.0": [
+      "Showcase",
+      "CleanArchitecture",
+      "EventDrivenCqrs",
+      "ModularMonolith",
+      "VerticalSlice",
+      "Hexagonal"
+    ],
+    "net9.0": [
+      "Showcase",
+      "CleanArchitecture",
+      "EventDrivenCqrs",
+      "ModularMonolith",
+      "VerticalSlice",
+      "Hexagonal"
+    ],
+    "net10.0": [
+      "QuickStart",
+      "Showcase",
+      "CleanArchitecture",
+      "EventDrivenCqrs",
+      "ModularMonolith",
+      "VerticalSlice",
+      "Hexagonal"
+    ]
+  },
+  "warnings": {
+    "baseline": "eng/warning-baseline.json",
+    "solution": "Meridian.sln",
+    "note": "Non-incremental Release build of every Meridian.sln project with buildSdk. Consumers, samples/Meridian.NativeAot and tests/compatibility are outside the solution and therefore outside the ratchet."
+  }
+}

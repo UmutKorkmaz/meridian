@@ -2,7 +2,7 @@ namespace Meridian.Mapping.Tests;
 
 public class ForMemberTests
 {
-    private IMapper CreateMapper(Action<IMapperConfigurationExpression> configure)
+    private static IMapper CreateMapper(Action<IMapperConfigurationExpression> configure)
     {
         var config = new MapperConfiguration(configure);
         return config.CreateMapper();
@@ -192,4 +192,29 @@ public class ForMemberTests
         Assert.Equal(0, result2.Id); // default
         Assert.Equal(string.Empty, result2.Name); // default initializer
     }
+    [Theory]
+    [InlineData(true, 0)]
+    [InlineData(false, 1)]
+    public void PreConditionSkipsResolutionWhileConditionRunsAfterResolution(bool preCondition, int expectedReads)
+    {
+        var mapper = CreateMapper(c => c.CreateMap<ResolutionSource, ResolutionDto>()
+            .ForMember(d => d.Value, o =>
+            {
+                o.MapFrom(s => s.ReadValue());
+                if (preCondition) o.PreCondition(_ => false);
+                else o.Condition(_ => false);
+            }));
+        var source = new ResolutionSource();
+        var destination = new ResolutionDto { Value = 99 };
+        var result = mapper.Map(source, destination);
+        Assert.Same(destination, result);
+        Assert.Equal(99, result.Value);
+        Assert.Equal(expectedReads, source.Reads);
+    }
+    public sealed class ResolutionSource
+    {
+        public int Reads { get; private set; }
+        public int ReadValue() { Reads++; return 42; }
+    }
+    public sealed class ResolutionDto { public int Value { get; set; } }
 }

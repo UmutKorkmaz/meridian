@@ -37,7 +37,7 @@ public class MappingPlanTests
         var config = new MapperConfiguration(cfg =>
         {
             cfg.CreateMap<Source, Destination>()
-               .ForMember(d => d.Name, opt => opt.MapFrom(s => s.Name.ToUpper()));
+               .ForMember(d => d.Name, opt => opt.MapFrom(s => s.Name.ToUpperInvariant()));
         });
 
         var plan = config.GetMappingPlan<Source, Destination>();

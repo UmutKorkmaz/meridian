@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using Meridian.Mediator.Behaviors;
 using Meridian.Mediator.Publishing;
@@ -11,6 +12,28 @@ namespace Meridian.Mediator.Extensions;
 /// </summary>
 public class MeridianMediatorConfiguration
 {
+    internal bool ActivateGeneratedStandardPipeline { get; set; }
+
+    internal List<Generated.IGeneratedMediatorRegistry> GeneratedRegistries { get; } = new();
+
+    /// <summary>
+    /// Gets or sets the opt-in metrics options. When set, the instance is registered (without replacing an
+    /// instance the application already registered) and read once when the provider-owned
+    /// <see cref="Diagnostics.MediatorMetrics"/> component is created. <c>null</c> leaves metrics to the
+    /// <see cref="MediatorMetricsOptions"/> registered in the container, which defaults to disabled.
+    /// </summary>
+    public MediatorMetricsOptions? Metrics { get; set; }
+
+    /// <summary>Requires generated wrapper dispatch. False preserves legacy dispatch.</summary>
+    public bool RequireGeneratedDispatch { get; set; }
+
+    /// <summary>Adds explicit generated closed registrations without assembly scanning.</summary>
+    public MeridianMediatorConfiguration AddGeneratedRegistry<TRegistry>() where TRegistry : class, Generated.IGeneratedMediatorRegistry, new()
+    {
+        if (!GeneratedRegistries.Any(r => r.GetType() == typeof(TRegistry))) GeneratedRegistries.Add(new TRegistry());
+        return this;
+    }
+
     internal List<Assembly> AssembliesToScan { get; } = new();
 
     /// <summary>
@@ -21,12 +44,14 @@ public class MeridianMediatorConfiguration
 
     internal List<(Type ServiceType, Type ImplementationType, int Order)> ClosedBehaviors { get; } = new();
     internal List<(Type BehaviorType, int Order)> OpenBehaviors { get; } = new();
+    internal List<(Type ServiceType, Type ImplementationType, int Order, int RegistrationIndex, ServiceLifetime Lifetime)> PipelineBehaviorRegistrations { get; } = new();
     internal List<(Type ServiceType, Type ImplementationType)> ClosedStreamBehaviors { get; } = new();
     internal List<Type> OpenStreamBehaviors { get; } = new();
     internal List<Type> PreProcessorTypes { get; } = new();
     internal List<Type> PostProcessorTypes { get; } = new();
     internal bool RegisterPreProcessorBehavior { get; private set; }
     internal bool RegisterPostProcessorBehavior { get; private set; }
+    private int _pipelineBehaviorRegistrationIndex;
 
     /// <summary>
     /// Gets or sets the notification publisher instance. If set, this takes precedence over <see cref="NotificationPublisherType"/>.
@@ -37,6 +62,7 @@ public class MeridianMediatorConfiguration
     /// Gets or sets the notification publisher type. Used when <see cref="NotificationPublisher"/> is not set.
     /// The type must implement <see cref="INotificationPublisher"/>.
     /// </summary>
+    [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)]
     public Type? NotificationPublisherType { get; set; }
 
     /// <summary>
@@ -112,7 +138,7 @@ public class MeridianMediatorConfiguration
     /// <param name="openBehaviorType">The open generic behavior type.</param>
     /// <param name="order">Execution order (lower values run first). Default is 0.</param>
     /// <returns>This configuration instance for fluent chaining.</returns>
-    public MeridianMediatorConfiguration AddOpenBehavior(Type openBehaviorType, int order = 0)
+    public MeridianMediatorConfiguration AddOpenBehavior([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.Interfaces)] Type openBehaviorType, int order = 0)
     {
         ArgumentNullException.ThrowIfNull(openBehaviorType);
 
@@ -130,7 +156,7 @@ public class MeridianMediatorConfiguration
                 nameof(openBehaviorType));
         }
 
-        OpenBehaviors.Add((openBehaviorType, order));
+        RegisterOpenBehavior(openBehaviorType, order);
         return this;
     }
 
@@ -182,7 +208,7 @@ public class MeridianMediatorConfiguration
     /// </summary>
     /// <param name="openBehaviorType">The open generic stream behavior type.</param>
     /// <returns>This configuration instance for fluent chaining.</returns>
-    public MeridianMediatorConfiguration AddOpenStreamBehavior(Type openBehaviorType)
+    public MeridianMediatorConfiguration AddOpenStreamBehavior([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.Interfaces)] Type openBehaviorType)
     {
         ArgumentNullException.ThrowIfNull(openBehaviorType);
 
@@ -238,7 +264,7 @@ public class MeridianMediatorConfiguration
     /// <returns>This configuration instance for fluent chaining.</returns>
     public MeridianMediatorConfiguration AddValidationBehavior(int order = 0)
     {
-        OpenBehaviors.Add((typeof(ValidationBehavior<,>), order));
+        RegisterOpenBehavior(typeof(ValidationBehavior<,>), order);
         return this;
     }
 
@@ -251,7 +277,7 @@ public class MeridianMediatorConfiguration
     /// <returns>This configuration instance for fluent chaining.</returns>
     public MeridianMediatorConfiguration AddLoggingBehavior(int order = 0)
     {
-        OpenBehaviors.Add((typeof(LoggingBehavior<,>), order));
+        RegisterOpenBehavior(typeof(LoggingBehavior<,>), order);
         return this;
     }
 
@@ -264,7 +290,7 @@ public class MeridianMediatorConfiguration
     /// <returns>This configuration instance for fluent chaining.</returns>
     public MeridianMediatorConfiguration AddTransactionBehavior(int order = 0)
     {
-        OpenBehaviors.Add((typeof(TransactionBehavior<,>), order));
+        RegisterOpenBehavior(typeof(TransactionBehavior<,>), order);
         return this;
     }
 
@@ -279,8 +305,8 @@ public class MeridianMediatorConfiguration
     /// <returns>This configuration instance for fluent chaining.</returns>
     public MeridianMediatorConfiguration AddCachingBehavior(int order = 0)
     {
-        OpenBehaviors.Add((typeof(CachingBehavior<,>), order));
-        OpenBehaviors.Add((typeof(CacheInvalidationBehavior<,>), order));
+        RegisterOpenBehavior(typeof(CachingBehavior<,>), order);
+        RegisterOpenBehavior(typeof(CacheInvalidationBehavior<,>), order);
         return this;
     }
 
@@ -293,7 +319,7 @@ public class MeridianMediatorConfiguration
     /// <returns>This configuration instance for fluent chaining.</returns>
     public MeridianMediatorConfiguration AddRetryBehavior(int order = 0)
     {
-        OpenBehaviors.Add((typeof(RetryBehavior<,>), order));
+        RegisterOpenBehavior(typeof(RetryBehavior<,>), order);
         return this;
     }
 
@@ -306,7 +332,7 @@ public class MeridianMediatorConfiguration
     /// <returns>This configuration instance for fluent chaining.</returns>
     public MeridianMediatorConfiguration AddAuthorizationBehavior(int order = 0)
     {
-        OpenBehaviors.Add((typeof(AuthorizationBehavior<,>), order));
+        RegisterOpenBehavior(typeof(AuthorizationBehavior<,>), order);
         return this;
     }
 
@@ -319,7 +345,7 @@ public class MeridianMediatorConfiguration
     /// <returns>This configuration instance for fluent chaining.</returns>
     public MeridianMediatorConfiguration AddCorrelationIdBehavior(int order = 0)
     {
-        OpenBehaviors.Add((typeof(CorrelationIdBehavior<,>), order));
+        RegisterOpenBehavior(typeof(CorrelationIdBehavior<,>), order);
         return this;
     }
 
@@ -332,7 +358,7 @@ public class MeridianMediatorConfiguration
     /// <returns>This configuration instance for fluent chaining.</returns>
     public MeridianMediatorConfiguration AddIdempotencyBehavior(int order = 0)
     {
-        OpenBehaviors.Add((typeof(IdempotencyBehavior<,>), order));
+        RegisterOpenBehavior(typeof(IdempotencyBehavior<,>), order);
         return this;
     }
 
@@ -341,7 +367,7 @@ public class MeridianMediatorConfiguration
     /// the pipeline. Records an <see cref="AuditEntry"/> for every request
     /// via the registered <see cref="IAuditSink"/>. Requires an
     /// <see cref="IAuditSink"/> implementation in DI — register
-    /// <see cref="LoggerAuditSink"/> for the default <see cref="ILogger"/>-based
+    /// <see cref="LoggerAuditSink"/> for the default <see cref="Microsoft.Extensions.Logging.ILogger"/>-based
     /// sink, or your own implementation for a database/SIEM destination.
     /// </summary>
     /// <param name="order">
@@ -353,7 +379,7 @@ public class MeridianMediatorConfiguration
     /// <returns>This configuration instance for fluent chaining.</returns>
     public MeridianMediatorConfiguration AddAuditBehavior(int order = 10)
     {
-        OpenBehaviors.Add((typeof(AuditBehavior<,>), order));
+        RegisterOpenBehavior(typeof(AuditBehavior<,>), order);
         return this;
     }
 
@@ -369,7 +395,7 @@ public class MeridianMediatorConfiguration
     /// <returns>This configuration instance for fluent chaining.</returns>
     public MeridianMediatorConfiguration AddLocalizedValidationBehavior(int order = 0)
     {
-        OpenBehaviors.Add((typeof(LocalizedValidationBehavior<,>), order));
+        RegisterOpenBehavior(typeof(LocalizedValidationBehavior<,>), order);
         return this;
     }
 
@@ -378,6 +404,27 @@ public class MeridianMediatorConfiguration
         EnsureClosedServiceType(serviceType, typeof(Pipeline.IPipelineBehavior<,>), nameof(serviceType));
         EnsureConcreteClosedBehaviorType(serviceType, behaviorType, nameof(behaviorType), "AddOpenBehavior");
         ClosedBehaviors.Add((serviceType, behaviorType, order));
+        PipelineBehaviorRegistrations.Add((serviceType, behaviorType, order, _pipelineBehaviorRegistrationIndex++, ServiceLifetime.Transient));
+    }
+
+    private void RegisterOpenBehavior(Type behaviorType, int order)
+    {
+        OpenBehaviors.Add((behaviorType, order));
+        PipelineBehaviorRegistrations.Add((typeof(Pipeline.IPipelineBehavior<,>), behaviorType, order, _pipelineBehaviorRegistrationIndex++, ServiceLifetime.Transient));
+    }
+
+    internal void RegisterScannedClosedBehavior(Type serviceType, Type behaviorType, ServiceLifetime lifetime)
+    {
+        // An explicit registration has an intentional order and must take precedence over
+        // the scanner's default order. Repeated scans of the same pair are also coalesced.
+        if (PipelineBehaviorRegistrations.Any(behavior =>
+                behavior.ServiceType == serviceType &&
+                behavior.ImplementationType == behaviorType))
+        {
+            return;
+        }
+
+        PipelineBehaviorRegistrations.Add((serviceType, behaviorType, 0, _pipelineBehaviorRegistrationIndex++, lifetime));
     }
 
     private void RegisterClosedStreamBehavior(Type serviceType, Type behaviorType)
@@ -437,7 +484,7 @@ public class MeridianMediatorConfiguration
         !type.ContainsGenericParameters &&
         type.GetGenericTypeDefinition() == openGenericType;
 
-    private static bool ImplementsOpenGenericInterface(Type type, Type openInterfaceType) =>
+    private static bool ImplementsOpenGenericInterface([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.Interfaces)] Type type, Type openInterfaceType) =>
         type.GetInterfaces().Any(i =>
             i.IsGenericType && i.GetGenericTypeDefinition() == openInterfaceType);
 }

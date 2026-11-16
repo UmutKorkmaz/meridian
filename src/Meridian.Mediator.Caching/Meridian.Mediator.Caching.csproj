@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+    <!-- XML reference docs ship beside each runtime assembly (Directory.Build.targets runs after the SDK computes DocumentationFile). -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <IsPackable>true</IsPackable>
+    <PackageId>Meridian.Mediator.Caching</PackageId>
+    <Version>2.1.3</Version>
+    <Description>Memory, allowlisted distributed caching, authenticated key scopes and optional per-provider cache-miss coalescing for Meridian Mediator.</Description>
+    <PackageTags>mediator;caching;memory;distributed;cqrs</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="10.0.9" />
+    <ProjectReference Include="../Meridian.Mediator/Meridian.Mediator.csproj" />
+    <InternalsVisibleTo Include="Meridian.Mediator.Caching.Tests" />
+  </ItemGroup>
+</Project>

@@ -1,11 +1,12 @@
 using Meridian.Mediator;
+using Meridian.Mediator.Behaviors;
 
 namespace Meridian.CleanArchitecture;
 
 public sealed record ReserveInventoryCommand(string Sku, int Quantity, Guid CustomerId)
     : IRequest<ReservationDto>, ICacheInvalidatingRequest, ITransactionalRequest
 {
-    public string[] CacheKeysToInvalidate => [$"catalog:all", $"product:{Sku.ToUpperInvariant()}"];
+    public string[] CacheKeysToInvalidate => [CacheKeyComposer.Compose<BrowseCatalogQuery>("catalog:all"), CacheKeyComposer.Compose<GetProductBySkuQuery>($"product:{Sku.ToUpperInvariant()}")];
 }
 
 public sealed class ReserveInventoryCommandHandler : IRequestHandler<ReserveInventoryCommand, ReservationDto>

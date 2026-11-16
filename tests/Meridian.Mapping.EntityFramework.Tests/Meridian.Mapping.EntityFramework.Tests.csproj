@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <EfVersion Condition="'$(TargetFramework)' != 'net10.0'">8.0.20</EfVersion>
+    <EfVersion Condition="'$(TargetFramework)' == 'net10.0'">10.0.8</EfVersion>
+    <NpgsqlEfVersion Condition="'$(TargetFramework)' != 'net10.0'">8.0.11</NpgsqlEfVersion>
+    <NpgsqlEfVersion Condition="'$(TargetFramework)' == 'net10.0'">10.0.0</NpgsqlEfVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="$(EfVersion)" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="$(EfVersion)" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="$(NpgsqlEfVersion)" />
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="2.1.13" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.7.0" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="coverlet.collector" Version="10.0.1" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" />
+    <Using Include="Xunit" />
+    <ProjectReference Include="../../src/Meridian.Mapping/Meridian.Mapping.csproj" />
+  </ItemGroup>
+</Project>

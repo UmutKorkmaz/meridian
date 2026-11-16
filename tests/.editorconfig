@@ -1,0 +1,11 @@
+# Test projects only (this file does not apply to src/, samples/ or benchmarks/).
+# It inherits everything from the repository root .editorconfig; do not set root = true here.
+
+[*.cs]
+# CA1707 (remove underscores from member names): the suite deliberately names tests and fixtures
+# Subject_Condition_Expected (for example Noncooperative_Renewal_Is_Joined_Even_After_Cleanup_Deadline) so a failing
+# test reads as a sentence in the runner output and in traceability records. About 700 existing names follow the
+# convention and renaming them would break the filter expressions, TRX history and ledger references that cite them.
+# The rule exists for public library API naming; none of these types are shipped. Scope: this directory tree only,
+# this single rule only. Product code under src/ keeps the rule at its default severity.
+dotnet_diagnostic.CA1707.severity = suggestion

@@ -7,6 +7,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- **Authorization now fails closed.** A request marked `IAuthorizedRequest` with no
+  registered `IAuthorizationHandler<TRequest>` previously ran unprotected, because the
+  handler loop simply had nothing to iterate. It now throws
+  `MissingAuthorizationHandlerException` (derived from `UnauthorizedException`, so
+  existing `catch` blocks keep working). Set
+  `AuthorizationBehaviorOptions.AllowRequestsWithoutAuthorizationHandlers = true` to
+  restore the previous behaviour during migration.
+- **Cache and idempotency keys are namespaced by request type.** Two unrelated request
+  types sharing a key string and a response type previously served each other's data —
+  a cross-tenant read when a tenant discriminator was omitted by mistake. Provider keys
+  are now `meridian:{cache|idempotency}:v1:{typeNameLength}:{requestTypeFullName}:{userKey}`.
+  The identity deliberately uses `FullName`, not `AssemblyQualifiedName`, so it stays
+  stable across consumer assembly version bumps and rolling deploys.
+- **String-to-enum mapping rejects undefined values.** `Enum.Parse` accepts any numeric
+  string, so attacker-supplied `"999"` became an enum value for which `Enum.IsDefined`
+  returns false — silently defeating downstream `switch` checks. Undefined values now
+  throw `MeridianEnumMappingException`. Defined names stay case-insensitive; `[Flags]`
+  accepts both name combinations and numeric literals whose bits are all defined. Set
+  `AllowUndefinedEnumValues = true` to restore the previous coercion.
+- **Telemetry stack traces no longer leak exception messages.** With
+  `RecordExceptionMessage = false` and `RecordExceptionStackTrace = true`, the
+  `exception.stacktrace` tag used `ex.ToString()`, which begins with the message — so
+  enabling stack traces re-exposed exactly the text the first flag exists to withhold.
+
+### Fixed
+- **Failed cache invalidation no longer replays a successful command.** Removal failures, including caller cancellation after success, preserve the original exception, suppress Meridian retries and retain an outer atomic idempotency claim for reconciliation. Later keys are not attempted, and the failed removal may have an uncertain outcome. Because Meridian does not identify the failing key, applications must reconcile provider state and re-invalidate all of the request's keys without replaying the completed command.
+- **Idempotent requests are no longer executed concurrently.** `IdempotencyBehavior`
+  checked, ran the handler, then stored, with nothing reserving the key in between, so
+  every concurrent request with the same key executed. Twenty concurrent sends ran the
+  handler twenty times. Implement the new optional `IAtomicIdempotencyStore` to claim a
+  key atomically; concurrent duplicates then raise `IdempotencyInProgressException` and
+  only the claimant executes. Stores that implement only `IIdempotencyStore` keep the
+  previous behaviour. A completed request with a `null` response is now recognised as
+  completed instead of re-executing.
+- **Pipeline behaviours no longer register twice.** A closed behaviour found by assembly
+  scanning and also registered explicitly ran twice, as did every behaviour when
+  `AddMeridianMediator` was called more than once (normal in a modular monolith). For
+  `TransactionBehavior` or `AuditBehavior` that meant nested transactions and duplicate
+  audit records.
+- **`order:` is honoured across every behaviour.** Closed and open behaviours were
+  registered in two separate passes, so every closed behaviour preceded every open one
+  regardless of `order`. Scanned behaviours also bypassed ordering entirely, silently
+  discarding an explicit `order` when the same type appeared in a scanned assembly. All
+  registrations now flow through one pass sorted by `(order, registration index)`, and an
+  explicit registration's order overrides the scanner default.
+- **The compiled fast path matches the interpreter.** `MappingEngine` carried two
+  independent type-conversion ladders; the fast path used the one that could not convert
+  `string` to `enum` and threw `InvalidCastException`, so two identically-shaped maps
+  behaved differently depending on fast-path eligibility. Both paths now share a single
+  conversion routine.
+- **Null nullable sources no longer crash the interpreter.** Mapping a null `int?` onto a
+  non-nullable `int` threw `NullReferenceException` wrapped in `InvalidOperationException`;
+  both paths now assign `default(T)`. Nullable destinations still receive null.
+- Explicit collection-to-collection maps (`CreateMap<List<A>, List<B>>()`) now take
+  precedence over implicit element-wise mapping instead of being silently ignored.
+  Without such a map, a top-level collection map still builds a new collection and
+  enforces `DefaultMaxCollectionItems` as in 2.1.3, including same-type maps such as
+  `Map<List<T>, List<T>>`. Assignable destinations that Meridian cannot construct
+  (for example `ImmutableArray<T>` or `ReadOnlyCollection<T>`) are returned as-is.
+
+### Added
+- `CacheKeyComposer.Compose<TQuery>(userKey)` for composing the namespaced provider key of
+  a cached query, so an invalidating command can target it.
+- `IAtomicIdempotencyStore`, `IdempotencyClaimResult`, `IdempotencyClaimStatus` and
+  `IdempotencyInProgressException` for race-free idempotency.
+- `AuthorizationBehaviorOptions`, `CachingBehaviorOptions`, `IdempotencyBehaviorOptions`
+  and `AllowUndefinedEnumValues` as compatibility opt-outs for the security changes above.
+- Documentation hub under `docs/` (PLAN, ROADMAP, compatibility policy, migration guides).
+- Package-focused READMEs for `Meridian.Mapping` and `Meridian.Mediator` (NuGet readme prefers project-local README when present).
+- `samples/Meridian.Hexagonal` included in the solution and sample index.
+
+### Changed
+- **`ICacheInvalidatingRequest.CacheKeysToInvalidate` now returns provider keys, not raw
+  user keys.** The signature is unchanged, so this does not break the build — but a raw key
+  would silently invalidate nothing. `CacheInvalidationBehavior` therefore rejects
+  non-composed keys with an actionable error naming both remedies rather than failing
+  quietly. Compose keys with `CacheKeyComposer.Compose<TQuery>(key)`, or set
+  `CachingBehaviorOptions.UseRequestTypeNamespacedKeys = false` to keep verbatim keys.
+  Cache entries written by 2.1.3 and earlier miss once after upgrade unless that opt-out is set.
+- `global.json` targets the current 10.0 SDK band with `rollForward: latestMajor` so the
+  repository builds on a released SDK. The `net11.0` leg of the sample projects is opt-in
+  via `MeridianIncludeNet11Samples`, which CI sets after installing the preview SDK.
+- Docs accuracy: NOTICE dependencies, CHANGELOG compare anchors, CONTRIBUTING quality gates, branch-protection check names, docs-site license footer (MIT).
+
 ## [2.1.3] - 2026-06-23
 
 ### Added
@@ -256,7 +341,8 @@ the `GHSA-f5v8-v6q3-q4h6` advisory was published.
 - First public release of `Meridian.Mapping` (profile-based object-to-object
   mapper with reverse maps, resolvers, converters, and queryable projection).
 
-[Unreleased]: https://github.com/UmutKorkmaz/meridian/compare/v2.1.2...HEAD
+[Unreleased]: https://github.com/UmutKorkmaz/meridian/compare/v2.1.3...HEAD
+[2.1.3]: https://github.com/UmutKorkmaz/meridian/compare/v2.1.2...v2.1.3
 [2.1.2]: https://github.com/UmutKorkmaz/meridian/compare/v2.1.1...v2.1.2
 [2.1.1]: https://github.com/UmutKorkmaz/meridian/compare/v2.0.1...v2.1.1
 [2.0.1]: https://github.com/UmutKorkmaz/meridian/compare/v2.0.0...v2.0.1

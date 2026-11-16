@@ -22,4 +22,18 @@
     <ContinuousIntegrationBuild Condition="'$(CI)' == 'true' or '$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
   </PropertyGroup>
 
+  <!--
+    Sample apps demonstrate Meridian on every supported TFM. net11.0 is opt-in
+    because it needs a preview SDK that contributors are not required to have:
+    NETCoreSdkVersion is not populated yet at Directory.Build.props evaluation
+    time, so this cannot be auto-detected here. CI sets
+    MeridianIncludeNet11Samples=true (env var or -p:) after installing the .NET 11
+    SDK, which keeps preview coverage without blocking local builds.
+  -->
+  <PropertyGroup>
+    <MeridianIncludeNet11Samples Condition="'$(MeridianIncludeNet11Samples)' == ''">false</MeridianIncludeNet11Samples>
+    <MeridianSampleTargetFrameworks>net8.0;net9.0;net10.0</MeridianSampleTargetFrameworks>
+    <MeridianSampleTargetFrameworks Condition="'$(MeridianIncludeNet11Samples)' == 'true'">net8.0;net9.0;net10.0;net11.0</MeridianSampleTargetFrameworks>
+  </PropertyGroup>
+
 </Project>
